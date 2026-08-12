@@ -93,4 +93,84 @@ describe('applyMigrations', () => {
     expect(() => upgraded.prepare('INSERT INTO resumes (id, json) VALUES (?, ?)').run('r2', 'not json')).toThrow()
     upgraded.close()
   })
+
+  describe('v9：招聘类型/薪资/BOSS 源/去重键/常用采集（issue #52）', () => {
+    const INSERT_MINIMAL =
+      "INSERT INTO positions (id, company, company_type, title, source, dedupe_key, recruit_season, created_at, updated_at) VALUES (?, ?, '其他', ?, ?, ?, ?, 'now', 'now')"
+
+    it('新库迁移后：source 允许 boss、hire_type 默认校招且 CHECK 生效、薪资列可空可写、crawl_presets 可用', () => {
+      const db = new Database(':memory:')
+      migrate(db)
+
+      // source 'boss' 通过新 CHECK；薪资列可空
+      db.prepare(INSERT_MINIMAL).run('p1', '某公司', '前端', 'boss', '某公司|前端|校招|', '')
+      const row = db.prepare('SELECT * FROM positions WHERE id = ?').get('p1') as Record<string, unknown>
+      expect(row.source).toBe('boss')
+      expect(row.hire_type).toBe('校招') // 未传 → 默认校招
+      expect(row.salary_min).toBeNull()
+      expect(row.salary_max).toBeNull()
+      expect(row.salary_text).toBeNull()
+
+      // 薪资列可写
+      db.prepare('UPDATE positions SET salary_min = ?, salary_max = ?, salary_text = ? WHERE id = ?').run(20, 40, '20-40K·14薪', 'p1')
+      const updated = db.prepare('SELECT salary_min, salary_max, salary_text FROM positions WHERE id = ?').get('p1') as Record<string, unknown>
+      expect(updated).toEqual({ salary_min: 20, salary_max: 40, salary_text: '20-40K·14薪' })
+
+      // hire_type CHECK：社招/实习合法，非法值拒绝
+      db.prepare(INSERT_MINIMAL).run('p2', '乙公司', '后端', 'boss', '乙公司|后端|社招|', '')
+      db.prepare(
+        "INSERT INTO positions (id, company, company_type, title, source, dedupe_key, recruit_season, hire_type, created_at, updated_at) VALUES ('p3', '丙公司', '其他', '运维', 'manual', '丙公司|运维|实习|', '', '实习', 'now', 'now')"
+      ).run()
+      expect(() =>
+        db
+          .prepare(
+            "INSERT INTO positions (id, company, company_type, title, source, dedupe_key, recruit_season, hire_type, created_at, updated_at) VALUES ('p4', '丁公司', '其他', '测试', 'manual', 'x', '', '临时工', 'now', 'now')"
+          )
+          .run()
+      ).toThrow()
+
+      // crawl_presets：可插入（json_valid 校验）、查询与删除
+      db.prepare('INSERT INTO crawl_presets (name, conditions_json, created_at, updated_at) VALUES (?, ?, ?, ?)').run('上海前端', '{"keyword":"前端","city":"101020100"}', 'now', 'now')
+      expect(db.prepare('SELECT name FROM crawl_presets').get()).toEqual({ name: '上海前端' })
+      db.prepare('DELETE FROM crawl_presets WHERE name = ?').run('上海前端')
+      expect(db.prepare('SELECT count(*) AS n FROM crawl_presets').get()).toEqual({ n: 0 })
+      expect(() => db.prepare('INSERT INTO crawl_presets (name, conditions_json, created_at, updated_at) VALUES (?, ?, ?, ?)').run('坏数据', 'not json', 'now', 'now')).toThrow()
+
+      // crawl_runs 重建：source 允许 'boss'
+      db.prepare(
+        "INSERT INTO crawl_runs (source, mode, status, url_count, created_at) VALUES ('boss', 'full', 'success', 1, 'now')"
+      ).run()
+      db.close()
+    })
+
+    it('既有 v8 库升级：职位与投递记录保留（表重建不级联删除）、dedupe_key 按校招重建', () => {
+      const file = openTempFile()
+      tempDirs.add(join(file, '..'))
+
+      // 模拟 v8 库：职位（旧 dedupe_key 组成）+ 投递记录
+      const old = new Database(file)
+      applyMigrations(old, MIGRATIONS.slice(0, 8))
+      old
+        .prepare(
+          "INSERT INTO positions (id, company, company_type, title, jd, source, dedupe_key, recruit_season, status, created_at, updated_at) VALUES ('p1', '腾讯', '大厂', '前端开发工程师', 'jd', 'manual', '腾讯|前端开发工程师|2026秋招', '2026秋招', 'active', 'now', 'now')"
+        )
+        .run()
+      old
+        .prepare(
+          "INSERT INTO applications (id, position_id, status, created_at, updated_at) VALUES ('a1', 'p1', 'planned', 'now', 'now')"
+        )
+        .run()
+      old.close()
+
+      // 升级：数据保留、投递记录不被级联删除、dedupe_key 按校招重建
+      const upgraded = new Database(file)
+      migrate(upgraded)
+      expect(userVersion(upgraded)).toBe(MIGRATIONS.length)
+      const row = upgraded.prepare('SELECT * FROM positions WHERE id = ?').get('p1') as Record<string, unknown>
+      expect(row).toMatchObject({ company: '腾讯', recruit_season: '2026秋招', hire_type: '校招' })
+      expect(row.dedupe_key).toBe('腾讯|前端开发工程师|校招|2026秋招')
+      expect(upgraded.prepare('SELECT count(*) AS n FROM applications').get()).toEqual({ n: 1 })
+      upgraded.close()
+    })
+  })
 })

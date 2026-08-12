@@ -5,6 +5,7 @@ import {
   APPLICATION_TRANSITIONS,
   BATCHES,
   COMPANY_TYPES,
+  HIRE_TYPES,
   POSITION_STATUSES,
   type Application,
   type ApplicationPatch,
@@ -21,11 +22,13 @@ const INSERT = `
   INSERT INTO positions (
     id, company, company_type, title, jd, city, channel, channel_url,
     source, source_url, dedupe_key, recruit_season, batch,
-    start_date, end_date, status, notes, created_at, updated_at
+    start_date, end_date, hire_type, salary_min, salary_max, salary_text,
+    status, notes, created_at, updated_at
   ) VALUES (
     @id, @company, @company_type, @title, @jd, @city, @channel, @channel_url,
     'manual', NULL, @dedupe_key, @recruit_season, @batch,
-    @start_date, @end_date, 'active', @notes, @created_at, @updated_at
+    @start_date, @end_date, @hire_type, @salary_min, @salary_max, @salary_text,
+    'active', @notes, @created_at, @updated_at
   )
 `
 const LIST_SELECT =
@@ -60,8 +63,9 @@ export class PositionError extends Error {
 
 /**
  * 职位卡服务（F-01：手动录入）。
- * 校验：必填=公司+岗位（+秋招季，dedupe_key 组成部分）；企业性质/批次枚举；
- * 网申日期 YYYY-MM-DD。去重：dedupe_key = company|title|recruit_season，
+ * 校验：必填=公司+岗位（+校招时秋招季，dedupe_key 组成部分）；企业性质/批次枚举；
+ * 网申日期 YYYY-MM-DD；薪资为正整数 K（下限 ≤ 上限）。
+ * 去重：dedupe_key = company|title|hire_type|recruit_season（社招/实习 recruit_season 为空串），
  * 命中抛 duplicate（不自动合并——合并更新属采集 upsert 路径，见 #5）。
  */
 export class PositionService {
@@ -71,11 +75,16 @@ export class PositionService {
   create(input: PositionInput): Position {
     const company = input.company.trim()
     const title = input.title.trim()
-    const recruitSeason = input.recruit_season.trim()
+    const hireType = input.hire_type ?? '校招'
+    if (!(HIRE_TYPES as readonly string[]).includes(hireType)) {
+      throw new PositionError('validation', `招聘类型只能是：${HIRE_TYPES.join('/')}`)
+    }
+    // 校招必须有届数；社招/实习无网申窗口，recruit_season 归一为空串（去重键组成部分）
+    const recruitSeason = hireType === '校招' ? (input.recruit_season ?? '').trim() : ''
 
     if (company === '') throw new PositionError('validation', '公司必填')
     if (title === '') throw new PositionError('validation', '岗位必填')
-    if (recruitSeason === '') throw new PositionError('validation', '秋招季必填（去重键组成部分）')
+    if (hireType === '校招' && recruitSeason === '') throw new PositionError('validation', '秋招季必填（去重键组成部分）')
     if (!(COMPANY_TYPES as readonly string[]).includes(input.company_type)) {
       throw new PositionError('validation', `企业性质只能是：${COMPANY_TYPES.join('/')}`)
     }
@@ -88,14 +97,18 @@ export class PositionService {
         throw new PositionError('validation', `${field} 日期必须为 YYYY-MM-DD 格式`)
       }
     }
+    const salaryMin = input.salary_min ?? null
+    const salaryMax = input.salary_max ?? null
+    assertSalary(salaryMin, salaryMax)
 
-    // 语义键去重（#5）：company|title|recruit_season；部分唯一索引 uq_positions_dedupe 兜底
-    const dedupeKey = `${company}|${title}|${recruitSeason}`
+    // 语义键去重（#5 + issue #52）：company|title|hire_type|recruit_season；
+    // 部分唯一索引 uq_positions_dedupe 兜底
+    const dedupeKey = `${company}|${title}|${hireType}|${recruitSeason}`
     const existing = this.db.prepare(BY_DEDUPE).get(dedupeKey)
     if (existing !== undefined) {
       throw new PositionError(
         'duplicate',
-        `已存在相同职位（${company} · ${title} · ${recruitSeason}），请勿重复录入`
+        `已存在相同职位（${company} · ${title} · ${hireType}${recruitSeason === '' ? '' : ` · ${recruitSeason}`}），请勿重复录入`
       )
     }
 
@@ -116,6 +129,10 @@ export class PositionService {
       batch: input.batch ?? null,
       start_date: input.start_date?.trim() || null,
       end_date: input.end_date?.trim() || null,
+      hire_type: hireType,
+      salary_min: salaryMin,
+      salary_max: salaryMax,
+      salary_text: input.salary_text?.trim() || null,
       status: 'active',
       notes: input.notes ?? '',
       created_at: now,
@@ -145,8 +162,15 @@ export class PositionService {
 
     const company = patch.company === undefined ? existing.company : patch.company.trim()
     const title = patch.title === undefined ? existing.title : patch.title.trim()
+    const hireType = patch.hire_type ?? existing.hire_type
+    if (!(HIRE_TYPES as readonly string[]).includes(hireType)) {
+      throw new PositionError('validation', `招聘类型只能是：${HIRE_TYPES.join('/')}`)
+    }
+    // 校招必须有届数；社招/实习无网申窗口，recruit_season 归一为空串
     const recruitSeason =
-      patch.recruit_season === undefined ? existing.recruit_season : patch.recruit_season.trim()
+      hireType === '校招'
+        ? (patch.recruit_season === undefined ? existing.recruit_season : patch.recruit_season.trim())
+        : ''
     const companyType = patch.company_type ?? existing.company_type
     const status = patch.status ?? existing.status
     const jd = patch.jd === undefined ? existing.jd : patch.jd
@@ -154,7 +178,7 @@ export class PositionService {
 
     if (company === '') throw new PositionError('validation', '公司必填')
     if (title === '') throw new PositionError('validation', '岗位必填')
-    if (recruitSeason === '') throw new PositionError('validation', '秋招季必填（去重键组成部分）')
+    if (hireType === '校招' && recruitSeason === '') throw new PositionError('validation', '秋招季必填（去重键组成部分）')
     if (!(COMPANY_TYPES as readonly string[]).includes(companyType)) {
       throw new PositionError('validation', `企业性质只能是：${COMPANY_TYPES.join('/')}`)
     }
@@ -175,15 +199,20 @@ export class PositionService {
         throw new PositionError('validation', `${field} 日期必须为 YYYY-MM-DD 格式`)
       }
     }
+    const salaryMin = patch.salary_min === undefined ? existing.salary_min : patch.salary_min
+    const salaryMax = patch.salary_max === undefined ? existing.salary_max : patch.salary_max
+    assertSalary(salaryMin, salaryMax)
+    const salaryText =
+      patch.salary_text === undefined ? existing.salary_text : patch.salary_text === null || patch.salary_text.trim() === '' ? null : patch.salary_text.trim()
 
     // 语义键变化 → 重算并查重（排除自身；唯一索引 uq_positions_dedupe 兜底并发）
-    const dedupeKey = `${company}|${title}|${recruitSeason}`
+    const dedupeKey = `${company}|${title}|${hireType}|${recruitSeason}`
     if (dedupeKey !== existing.dedupe_key) {
       const conflict = this.db.prepare('SELECT id FROM positions WHERE dedupe_key = ? AND id != ?').get(dedupeKey, id)
       if (conflict !== undefined) {
         throw new PositionError(
           'duplicate',
-          `已存在相同职位（${company} · ${title} · ${recruitSeason}），请勿重复录入`
+          `已存在相同职位（${company} · ${title} · ${hireType}${recruitSeason === '' ? '' : ` · ${recruitSeason}`}），请勿重复录入`
         )
       }
     }
@@ -195,6 +224,7 @@ export class PositionService {
           city=@city, channel=@channel, channel_url=@channel_url,
           dedupe_key=@dedupe_key, recruit_season=@recruit_season, batch=@batch,
           start_date=@start_date, end_date=@end_date, status=@status, notes=@notes,
+          hire_type=@hire_type, salary_min=@salary_min, salary_max=@salary_max, salary_text=@salary_text,
           updated_at=@updated_at
          WHERE id=@id`
       )
@@ -212,6 +242,10 @@ export class PositionService {
         batch,
         start_date: startDate,
         end_date: endDate,
+        hire_type: hireType,
+        salary_min: salaryMin,
+        salary_max: salaryMax,
+        salary_text: salaryText,
         status,
         notes,
         updated_at: now()
@@ -403,6 +437,21 @@ function isIsoDate(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
   const date = new Date(`${value}T00:00:00Z`)
   return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value
+}
+
+/** 薪资校验：null 或正整数 K（下限 ≤ 上限；仅一端提供时另一端可空）。 */
+function assertSalary(min: number | null, max: number | null): void {
+  for (const [value, label] of [
+    [min, '薪资下限'],
+    [max, '薪资上限']
+  ] as const) {
+    if (value !== null && (!Number.isInteger(value) || value <= 0)) {
+      throw new PositionError('validation', `${label}必须为正整数（K/月）`)
+    }
+  }
+  if (min !== null && max !== null && min > max) {
+    throw new PositionError('validation', '薪资下限不能高于上限')
+  }
 }
 
 /** 投递状态 → 状态进入时刻列名（applications 表；复盘数据来源）。

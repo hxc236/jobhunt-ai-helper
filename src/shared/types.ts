@@ -14,8 +14,12 @@ export const BATCHES = ['提前批', '正式批', '补录', '未知'] as const
 export type Batch = (typeof BATCHES)[number]
 
 /** 职位卡来源（positions.source）。 */
-export const POSITION_SOURCES = ['manual', 'nowcoder', 'liepin'] as const
+export const POSITION_SOURCES = ['manual', 'nowcoder', 'liepin', 'boss'] as const
 export type PositionSource = (typeof POSITION_SOURCES)[number]
+
+/** 招聘类型（issue #52：社招/实习无网申窗口，recruit_season 为空串）。 */
+export const HIRE_TYPES = ['校招', '社招', '实习'] as const
+export type HireType = (typeof HIRE_TYPES)[number]
 
 /** 职位卡生命周期状态（positions.status；投递状态机 planned→… 属 applications 表，见 F-05/#21）。 */
 export const POSITION_STATUSES = ['active', 'closed'] as const
@@ -108,8 +112,16 @@ export interface CrawlCandidate {
   channel_url: string | null
   source_url: string
   batch: Batch | null
-  /** 秋招季（如 '2027秋招'；解析器从批次名推导，如牛客 27届秋招 → 2027秋招）。 */
+  /** 秋招季（如 '2027秋招'；解析器从批次名推导，如牛客 27届秋招 → 2027秋招；社招/实习为空串）。 */
   recruit_season?: string | null
+  /** 招聘类型（缺省按校招处理）。 */
+  hire_type?: HireType
+  /** 薪资下限（K/月；可空）。 */
+  salary_min?: number | null
+  /** 薪资上限（K/月；可空）。 */
+  salary_max?: number | null
+  /** 薪资原样文本（如 '20-40K·14薪'）。 */
+  salary_text?: string | null
   /** 网申开始 YYYY-MM-DD。 */
   start_date: string | null
   /** 网申截止 YYYY-MM-DD（null = 待核实，猎聘无截止时间置空）。 */
@@ -317,6 +329,14 @@ export interface Position {
   start_date: string | null
   /** 网申截止 YYYY-MM-DD（null = 待核实）。 */
   end_date: string | null
+  /** 招聘类型（去重键组成部分；社招/实习 recruit_season 为空串）。 */
+  hire_type: HireType
+  /** 薪资下限（K/月；可空，未登录/未填写时为空）。 */
+  salary_min: number | null
+  /** 薪资上限（K/月；可空）。 */
+  salary_max: number | null
+  /** 薪资原样文本（如 '20-40K·14薪'）。 */
+  salary_text: string | null
   status: PositionStatus
   notes: string
   created_at: string
@@ -347,10 +367,19 @@ export interface PositionInput {
   /** 投递渠道：官网/牛客/猎聘/邮箱/内推… */
   channel?: string
   channel_url?: string
-  recruit_season: string
+  /** 校招必填（去重键组成部分）；社招/实习服务端归一为空串。 */
+  recruit_season?: string
   batch?: Batch
   start_date?: string
   end_date?: string
+  /** 招聘类型（缺省校招；社招/实习时 recruit_season 服务端置空串）。 */
+  hire_type?: HireType
+  /** 薪资下限（K/月）。 */
+  salary_min?: number | null
+  /** 薪资上限（K/月）。 */
+  salary_max?: number | null
+  /** 薪资原样文本。 */
+  salary_text?: string
   notes?: string
 }
 
@@ -372,6 +401,14 @@ export interface PositionPatch {
   batch?: Batch | '' | null
   start_date?: string | null
   end_date?: string | null
+  /** 招聘类型变化时重算 dedupe_key（社招/实习 recruit_season 置空串）。 */
+  hire_type?: HireType
+  /** 薪资下限（null → 清空）。 */
+  salary_min?: number | null
+  /** 薪资上限（null → 清空）。 */
+  salary_max?: number | null
+  /** 薪资原样文本（空串或 null → 清空）。 */
+  salary_text?: string | null
   status?: PositionStatus
   notes?: string
 }

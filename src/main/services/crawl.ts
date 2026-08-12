@@ -322,10 +322,10 @@ export class CrawlService {
         if (!selected.has(candidate.source_url)) continue
         const existing = this.findExisting(candidate)
         if (existing === undefined) {
-          this.insertCandidate(candidate)
+          this.insertCandidate(candidate, run.source)
           inserted++
         } else {
-          this.updateCandidate(existing.id, candidate)
+          this.updateCandidate(existing.id, candidate, run.source)
           updated++
         }
       }
@@ -340,24 +340,26 @@ export class CrawlService {
       .prepare('SELECT id FROM positions WHERE source_url = ?')
       .get(candidate.source_url) as { id: string } | undefined
     if (byUrl !== undefined) return byUrl
-    const dedupeKey = `${candidate.company}|${candidate.title}|${candidate.recruit_season ?? ''}`
-    return this.db.prepare('SELECT id FROM positions WHERE dedupe_key = ?').get(dedupeKey) as
+    return this.db.prepare('SELECT id FROM positions WHERE dedupe_key = ?').get(dedupeKeyOf(candidate)) as
       | { id: string }
       | undefined
   }
 
-  private insertCandidate(candidate: CrawlCandidate): void {
+  private insertCandidate(candidate: CrawlCandidate, source: PositionSource): void {
     const now = new Date().toISOString()
+    const hireType = candidate.hire_type ?? '校招'
     this.db
       .prepare(
         `INSERT INTO positions (
           id, company, company_type, title, jd, city, channel, channel_url,
           source, source_url, dedupe_key, recruit_season, batch,
-          start_date, end_date, status, notes, created_at, updated_at
+          start_date, end_date, hire_type, salary_min, salary_max, salary_text,
+          status, notes, created_at, updated_at
         ) VALUES (
           @id, @company, '其他', @title, @jd, @city, @channel, @channel_url,
           @source, @source_url, @dedupe_key, @recruit_season, @batch,
-          @start_date, @end_date, 'active', '', @now, @now
+          @start_date, @end_date, @hire_type, @salary_min, @salary_max, @salary_text,
+          'active', '', @now, @now
         )`
       )
       .run({
@@ -368,25 +370,32 @@ export class CrawlService {
         city: candidate.city,
         channel: candidate.channel,
         channel_url: candidate.channel_url,
-        source: 'nowcoder',
+        source,
         source_url: candidate.source_url,
-        dedupe_key: `${candidate.company}|${candidate.title}|${candidate.recruit_season ?? ''}`,
-        recruit_season: candidate.recruit_season ?? '未知',
+        dedupe_key: dedupeKeyOf(candidate),
+        recruit_season: candidate.recruit_season ?? (hireType === '校招' ? '未知' : ''),
         batch: candidate.batch,
         start_date: candidate.start_date,
         end_date: candidate.end_date,
+        hire_type: hireType,
+        salary_min: candidate.salary_min ?? null,
+        salary_max: candidate.salary_max ?? null,
+        salary_text: candidate.salary_text ?? null,
         now
       })
   }
 
-  private updateCandidate(id: string, candidate: CrawlCandidate): void {
+  private updateCandidate(id: string, candidate: CrawlCandidate, source: PositionSource): void {
+    const hireType = candidate.hire_type ?? '校招'
     this.db
       .prepare(
         `UPDATE positions SET
           company=@company, title=@title, jd=@jd, city=@city, channel=@channel,
           channel_url=@channel_url, source=@source, source_url=@source_url,
           dedupe_key=@dedupe_key, recruit_season=@recruit_season, batch=@batch,
-          start_date=@start_date, end_date=@end_date, updated_at=@now
+          start_date=@start_date, end_date=@end_date,
+          hire_type=@hire_type, salary_min=@salary_min, salary_max=@salary_max, salary_text=@salary_text,
+          updated_at=@now
          WHERE id=@id`
       )
       .run({
@@ -397,13 +406,17 @@ export class CrawlService {
         city: candidate.city,
         channel: candidate.channel,
         channel_url: candidate.channel_url,
-        source: 'nowcoder',
+        source,
         source_url: candidate.source_url,
-        dedupe_key: `${candidate.company}|${candidate.title}|${candidate.recruit_season ?? ''}`,
-        recruit_season: candidate.recruit_season ?? '未知',
+        dedupe_key: dedupeKeyOf(candidate),
+        recruit_season: candidate.recruit_season ?? (hireType === '校招' ? '未知' : ''),
         batch: candidate.batch,
         start_date: candidate.start_date,
         end_date: candidate.end_date,
+        hire_type: hireType,
+        salary_min: candidate.salary_min ?? null,
+        salary_max: candidate.salary_max ?? null,
+        salary_text: candidate.salary_text ?? null,
         now: new Date().toISOString()
       })
   }
@@ -416,4 +429,13 @@ function missingFieldsOf(candidate: CrawlCandidate): string[] {
   if (candidate.title.trim() === '') missing.push('title')
   if (candidate.end_date === null || candidate.end_date.trim() === '') missing.push('end_date')
   return missing
+}
+
+/**
+ * 候选去重键（issue #52）：company|title|hire_type|recruit_season。
+ * 缺省招聘类型按校招；社招/实习 recruit_season 为空串（与手动录入一致）。
+ */
+function dedupeKeyOf(candidate: CrawlCandidate): string {
+  const hireType = candidate.hire_type ?? '校招'
+  return `${candidate.company}|${candidate.title}|${hireType}|${candidate.recruit_season ?? ''}`
 }

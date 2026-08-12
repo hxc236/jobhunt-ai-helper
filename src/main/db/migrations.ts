@@ -141,6 +141,82 @@ export const MIGRATIONS: readonly string[] = [
     updated_at TEXT NOT NULL
   );
   CREATE INDEX idx_interviews_created ON interviews(created_at DESC);
+  `,
+  // v9: positions 支持招聘类型/薪资/BOSS 源 + crawl_presets 表（issue #52）。
+  // SQLite 无法改 CHECK 约束，重建 positions：source 新 CHECK 含 'boss'；
+  // 新增 hire_type（默认校招，CHECK 三值）与薪资列（可空）；
+  // dedupe_key 新组成 company|title|hire_type|recruit_season，存量行按校招重建
+  // （社招/实习 recruit_season 为空串）。重建在 foreign_keys=OFF 下执行
+  // （applyMigrations 临时关闭），避免 DROP 父表时隐式级联删除 applications。
+  `
+  CREATE TABLE positions_new (
+    id             TEXT PRIMARY KEY,
+    company        TEXT NOT NULL,
+    company_type   TEXT NOT NULL CHECK (company_type IN ('央企','国企','大厂','私企','外企','事业单位','其他')),
+    title          TEXT NOT NULL,
+    jd             TEXT NOT NULL DEFAULT '',
+    city           TEXT,
+    channel        TEXT,
+    channel_url    TEXT,
+    source         TEXT NOT NULL CHECK (source IN ('manual','nowcoder','liepin','boss')),
+    source_url     TEXT,
+    dedupe_key     TEXT NOT NULL,
+    recruit_season TEXT NOT NULL,
+    batch          TEXT CHECK (batch IN ('提前批','正式批','补录','未知')),
+    start_date     TEXT,
+    end_date       TEXT,
+    status         TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','closed')),
+    notes          TEXT DEFAULT '',
+    hire_type      TEXT NOT NULL DEFAULT '校招' CHECK (hire_type IN ('校招','社招','实习')),
+    salary_min     INTEGER,
+    salary_max     INTEGER,
+    salary_text    TEXT,
+    jd_analysis    TEXT,
+    created_at     TEXT NOT NULL,
+    updated_at     TEXT NOT NULL
+  );
+  INSERT INTO positions_new (
+    id, company, company_type, title, jd, city, channel, channel_url,
+    source, source_url, dedupe_key, recruit_season, batch, start_date, end_date,
+    status, notes, hire_type, salary_min, salary_max, salary_text, jd_analysis, created_at, updated_at
+  )
+  SELECT
+    id, company, company_type, title, jd, city, channel, channel_url,
+    source, source_url, company || '|' || title || '|校招|' || recruit_season,
+    recruit_season, batch, start_date, end_date,
+    status, notes, '校招', NULL, NULL, NULL, jd_analysis, created_at, updated_at
+  FROM positions;
+  DROP TABLE positions;
+  ALTER TABLE positions_new RENAME TO positions;
+  CREATE UNIQUE INDEX uq_positions_source_url ON positions(source_url) WHERE source_url IS NOT NULL;
+  CREATE UNIQUE INDEX uq_positions_dedupe    ON positions(dedupe_key) WHERE source_url IS NULL;
+  CREATE INDEX idx_positions_season ON positions(recruit_season, company_type);
+  CREATE TABLE crawl_presets (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    name            TEXT NOT NULL,
+    conditions_json TEXT NOT NULL CHECK (json_valid(conditions_json)),
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL
+  );
+  -- crawl_runs 重建：source CHECK 增加 'boss'（采集留痕记录 BOSS 运行）。
+  CREATE TABLE crawl_runs_new (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    source          TEXT NOT NULL CHECK (source IN ('nowcoder','liepin','boss')),
+    mode            TEXT NOT NULL CHECK (mode IN ('filter','full')),
+    filter          TEXT,
+    status          TEXT NOT NULL CHECK (status IN ('running','success','partial','failed')),
+    url_count       INTEGER NOT NULL,
+    fetched_count   INTEGER NOT NULL DEFAULT 0,
+    candidate_count INTEGER NOT NULL DEFAULT 0,
+    truncated       INTEGER NOT NULL DEFAULT 0,
+    candidates_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(candidates_json)),
+    errors_json     TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(errors_json)),
+    created_at      TEXT NOT NULL
+  );
+  INSERT INTO crawl_runs_new SELECT * FROM crawl_runs;
+  DROP TABLE crawl_runs;
+  ALTER TABLE crawl_runs_new RENAME TO crawl_runs;
+  CREATE INDEX idx_crawl_runs_created ON crawl_runs(created_at DESC);
   `
 ]
 
@@ -157,10 +233,17 @@ export function applyMigrations(db: Db, migrations: readonly string[]): void {
     if (sql === undefined) {
       throw new Error(`迁移数组缺项：index ${i}`)
     }
-    db.transaction(() => {
-      db.exec(sql)
-      db.pragma(`user_version = ${i + 1}`)
-    })()
+    // 表重建类迁移需临时关闭外键：DROP 父表（positions）会触发隐式级联删除
+    // 子行（applications）；PRAGMA foreign_keys 在事务内是 no-op，故在事务外切换。
+    db.pragma('foreign_keys = OFF')
+    try {
+      db.transaction(() => {
+        db.exec(sql)
+        db.pragma(`user_version = ${i + 1}`)
+      })()
+    } finally {
+      db.pragma('foreign_keys = ON')
+    }
   }
 }
 

@@ -45,7 +45,8 @@ const runsError = ref('')
 const SOURCE_LABELS: Record<PositionSource, string> = {
   manual: '手动',
   nowcoder: '牛客校招日程',
-  liepin: '猎聘校招'
+  liepin: '猎聘校招',
+  boss: 'BOSS直聘'
 }
 
 const CRAWL_RUN_STATUS_LABELS: Record<CrawlRun['status'], string> = {

@@ -32,8 +32,12 @@ describe('PositionService.create', () => {
     expect(row.status).toBe('active')
     expect(row.created_at).toBeTruthy()
     expect(row.updated_at).toBe(row.created_at)
-    // dedupe_key = company|title|recruit_season（#5 语义键；字段首尾空白已去除）
-    expect(row.dedupe_key).toBe('腾讯|前端开发工程师|2026秋招')
+    // dedupe_key = company|title|hire_type|recruit_season（#5 语义键 + issue #52 招聘类型；字段首尾空白已去除）
+    expect(row.dedupe_key).toBe('腾讯|前端开发工程师|校招|2026秋招')
+    expect(row.hire_type).toBe('校招') // 缺省默认校招
+    expect(row.salary_min).toBeNull()
+    expect(row.salary_max).toBeNull()
+    expect(row.salary_text).toBeNull()
 
     const listed = svc.list()
     expect(listed).toHaveLength(1)
@@ -70,9 +74,52 @@ describe('PositionService.create', () => {
     expect(svc.list()).toHaveLength(0)
   })
 
+  it('社招/实习：recruit_season 置空串（无网申窗口），dedupe_key 含招聘类型', () => {
+    const svc = makeService()
+    const social = svc.create({ ...validInput, hire_type: '社招', recruit_season: '2026秋招' })
+    expect(social.hire_type).toBe('社招')
+    expect(social.recruit_season).toBe('')
+    expect(social.dedupe_key).toBe('腾讯|前端开发工程师|社招|')
+
+    const intern = svc.create({ ...validInput, hire_type: '实习', company: '字节', recruit_season: '2025实习' })
+    expect(intern.hire_type).toBe('实习')
+    expect(intern.recruit_season).toBe('')
+    expect(intern.dedupe_key).toBe('字节|前端开发工程师|实习|')
+  })
+
+  it('招聘类型非法值 → validation 错误', () => {
+    const svc = makeService()
+    expect(() => svc.create({ ...validInput, hire_type: '外包' as never })).toThrowError(/招聘类型只能是/)
+  })
+
+  it('薪资字段：落库；非法值（0/负数/小数）→ validation 错误', () => {
+    const svc = makeService()
+    const row = svc.create({ ...validInput, salary_min: 20, salary_max: 40, salary_text: '20-40K·14薪' })
+    expect(row.salary_min).toBe(20)
+    expect(row.salary_max).toBe(40)
+    expect(row.salary_text).toBe('20-40K·14薪')
+
+    expect(() => svc.create({ ...validInput, company: 'A1', salary_min: 0 })).toThrowError(/薪资/)
+    expect(() => svc.create({ ...validInput, company: 'A2', salary_min: -5 })).toThrowError(/薪资/)
+    expect(() => svc.create({ ...validInput, company: 'A3', salary_min: 20.5 })).toThrowError(/薪资/)
+    expect(() => svc.create({ ...validInput, company: 'A4', salary_min: 50, salary_max: 40 })).toThrowError(/薪资下限/)
+    expect(() => svc.create({ ...validInput, company: 'A5', salary_max: 100 })).not.toThrow()
+  })
+
+  it('校招与社招同公司同岗位不重复（去重键含招聘类型）', () => {
+    const svc = makeService()
+    const campus = svc.create({ ...validInput, recruit_season: '2026秋招' })
+    expect(campus.dedupe_key).toBe('腾讯|前端开发工程师|校招|2026秋招')
+    const social = svc.create({ ...validInput, hire_type: '社招', recruit_season: '2026秋招' })
+    expect(social.dedupe_key).toBe('腾讯|前端开发工程师|社招|')
+    expect(svc.list()).toHaveLength(2)
+  })
+
   it('秋招季必填（dedupe_key 组成部分）', () => {
     const svc = makeService()
     expect(() => svc.create({ ...validInput, recruit_season: '  ' })).toThrowError(/秋招季必填/)
+    // 社招不要求秋招季
+    expect(() => svc.create({ ...validInput, hire_type: '社招', recruit_season: '  ' })).not.toThrow()
   })
 
   it('企业性质只能是枚举值，其余抛校验错误', () => {
@@ -216,8 +263,37 @@ describe('PositionService.update（F-03/#20）', () => {
     svc.create({ ...validInput, title: '后端开发工程师' })
 
     const updated = svc.update(a.id, { company: '腾讯云' })
-    expect(updated.dedupe_key).toBe('腾讯云|前端开发工程师|2026秋招')
+    expect(updated.dedupe_key).toBe('腾讯云|前端开发工程师|校招|2026秋招')
     expect(() => svc.update(a.id, { jd: 'x' })).not.toThrow()
+  })
+
+  it('改招聘类型 → dedupe_key 重算；社招/实习时 recruit_season 置空串', () => {
+    const { svc, id } = seed()
+    const social = svc.update(id, { hire_type: '社招' })
+    expect(social.hire_type).toBe('社招')
+    expect(social.recruit_season).toBe('')
+    expect(social.dedupe_key).toBe('腾讯|前端开发工程师|社招|')
+
+    // 校招 vs 社招互不重复
+    svc.create(validInput) // 腾讯|前端开发工程师|校招|2026秋招
+    expect(() => svc.update(id, { hire_type: '校招', recruit_season: '2026秋招' })).toThrowError(/已存在相同职位/)
+    // 改回校招需秋招季非空
+    expect(() => svc.update(id, { hire_type: '校招', recruit_season: '' })).toThrowError(/秋招季必填/)
+  })
+
+  it('薪资 patch：可设置、null 清空、undefined 保持', () => {
+    const { svc, id } = seed()
+    const set = svc.update(id, { salary_min: 20, salary_max: 40, salary_text: '20-40K·14薪' })
+    expect(set.salary_min).toBe(20)
+    expect(set.salary_max).toBe(40)
+    expect(set.salary_text).toBe('20-40K·14薪')
+
+    const cleared = svc.update(id, { salary_min: null, salary_text: '' })
+    expect(cleared.salary_min).toBeNull()
+    expect(cleared.salary_max).toBe(40) // 未传保持
+    expect(cleared.salary_text).toBeNull()
+
+    expect(() => svc.update(id, { salary_max: 0 })).toThrowError(/薪资/)
   })
 
   it('状态可编辑（active ↔ closed，列表状态筛选用）', () => {

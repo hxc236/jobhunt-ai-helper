@@ -196,7 +196,8 @@ const form = reactive<EditFormState>({
 const SOURCE_LABELS: Record<Position['source'], string> = {
   manual: '手动录入',
   nowcoder: '牛客采集',
-  liepin: '猎聘采集'
+  liepin: '猎聘采集',
+  boss: 'BOSS直聘采集'
 }
 
 const STATUS_TS_KEY: Record<ApplicationStatus, keyof Application> = {

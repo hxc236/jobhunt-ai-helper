@@ -170,3 +170,68 @@ describe('CrawlService.confirmImport upsert（F-11/#29 验收）', () => {
     expect(() => svc.confirmImport(99999, [URL_A])).toThrowError(/不存在/)
   })
 })
+
+describe('CrawlService 导入新字段（issue #52：招聘类型/薪资/BOSS 源/去重键）', () => {
+  /** boss 源抓取：任意 URL 返回页面（本组只测解析/入库，不测抓取）。 */
+  const anyPageFetcher: CrawlFetcher = {
+    async fetch() {
+      return '<html>page</html>'
+    }
+  }
+
+  const bossParser = (): CrawlParser => ({
+    source: 'boss',
+    buildUrls: () => ['https://boss.test/list'],
+    parseList: () => [
+      candidate('某公司', '后端工程师', 'https://boss.test/job/1', {
+        hire_type: '社招',
+        recruit_season: '',
+        salary_min: 20,
+        salary_max: 40,
+        salary_text: '20-40K·14薪',
+        end_date: null
+      })
+    ]
+  })
+
+  it('候选 hire_type/薪资/源 → 入库落 hire_type/salary/source；dedupe_key 含招聘类型', async () => {
+    const db = openDatabase(':memory:')
+    const svc = new CrawlService(db, anyPageFetcher)
+    svc.registerParser(bossParser())
+    const { run } = await svc.run('boss', { mode: 'full' })
+
+    const result = svc.confirmImport(run.id, ['https://boss.test/job/1'])
+    expect(result).toEqual({ inserted: 1, updated: 0 })
+    const row = db.prepare('SELECT * FROM positions WHERE company = ?').get('某公司') as Record<string, unknown>
+    expect(row.source).toBe('boss') // 源来自运行（修正硬编码 nowcoder）
+    expect(row.hire_type).toBe('社招')
+    expect(row.recruit_season).toBe('')
+    expect(row.dedupe_key).toBe('某公司|后端工程师|社招|')
+    expect(row.salary_min).toBe(20)
+    expect(row.salary_max).toBe(40)
+    expect(row.salary_text).toBe('20-40K·14薪')
+  })
+
+  it('社招候选与手动社招职位 dedupe 兜底命中 → 合并更新（不新建）', async () => {
+    const db = openDatabase(':memory:')
+    const positions = new PositionService(db)
+    positions.create({
+      company: '某公司',
+      company_type: '其他',
+      title: '后端工程师',
+      hire_type: '社招',
+      jd: '手动 JD'
+    })
+
+    const svc = new CrawlService(db, anyPageFetcher)
+    svc.registerParser(bossParser())
+    const { run } = await svc.run('boss', { mode: 'full' })
+
+    const result = svc.confirmImport(run.id, ['https://boss.test/job/1'])
+    expect(result).toEqual({ inserted: 0, updated: 1 })
+    const rows = positions.list()
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.jd).toBe('某公司-后端工程师 JD') // 采集内容刷新
+    expect(rows[0]?.hire_type).toBe('社招')
+  })
+})
