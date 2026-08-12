@@ -8,10 +8,14 @@ import {
   type TopicSource,
   type TopicStatus
 } from '@shared/types'
+import Modal from '../components/Modal.vue'
+import Resizer from '../components/Resizer.vue'
+import Icon from '../components/Icon.vue'
+import Pill from '../components/Pill.vue'
 
 /**
- * 学习清单（F-21/#35）：分组展示（按三态，组内优先级升序）+ 增删改 + 三态切换 +
- * 无缺口降级提示（未提供缺口/项目技术栈时，服务端降级为仅 JD 分析来源）。
+ * 学习模块（#42 T4）：双栏 = 清单（三态分组，组内优先级升序）+ teach 聊天列。
+ * 功能 = 原 LearnView（F-21/#35 清单 + F-22/#36 teach 聊天 + suggestLearn 回填展示）。
  */
 
 const topics = ref<Topic[]>([])
@@ -47,7 +51,6 @@ const chatMessages = ref<ChatMessage[]>([])
 const chatInput = ref('')
 const chatSending = ref(false)
 const chatError = ref('')
-/** 流式缓冲：当前 assistant 回复增量（agent:delta 逐块追加）。 */
 const streamingText = ref('')
 
 async function openChat(topic: Topic): Promise<void> {
@@ -59,7 +62,7 @@ async function openChat(topic: Topic): Promise<void> {
   try {
     const started = await window.api.learn.start(topic.id)
     chatSessionId.value = started.sessionId
-    chatResumed.value = started.resumed // 续接提示（continueRecent 跨次续接）
+    chatResumed.value = started.resumed
   } catch (err) {
     chatError.value = String(err)
   }
@@ -85,7 +88,6 @@ async function sendChat(): Promise<void> {
 
 onMounted(() => {
   void load()
-  // agent:delta 流式增量：仅消费当前 learn 会话的增量（打字机）
   const unsubscribe = window.api.on(IpcEvent.AgentDelta, (payload) => {
     if (payload.sessionId !== chatSessionId.value || !chatOpen.value) return
     streamingText.value += payload.delta
@@ -93,12 +95,17 @@ onMounted(() => {
   onUnmounted(unsubscribe)
 })
 
+/** 三态分组（保持既有分组语义；组内优先级升序）。 */
 const groups = computed(() =>
   TOPIC_STATUSES.map((status) => ({
     status,
-    items: topics.value.filter((t) => t.status === status)
+    items: topics.value
+      .filter((t) => t.status === status)
+      .sort((a, b) => a.priority - b.priority || a.created_at.localeCompare(b.created_at))
   }))
 )
+
+const todoCount = computed(() => topics.value.filter((t) => t.status === 'todo').length)
 
 /** 降级提示：生成结果全部来自 JD 分析（无缺口/项目来源）且职位存在分析缓存。 */
 const degradeHint = ref('')
@@ -131,7 +138,6 @@ async function generate(): Promise<void> {
   try {
     const result = await window.api.topics.generate(selectedJobId.value)
     successMessage.value = `已生成 ${result.created.length} 条（跳过重复 ${result.skipped} 条）`
-    // 降级提示：无缺口/项目来源（#35 验收：无缺口时降级提示显示）
     if (
       result.created.length > 0 &&
       result.created.every((t) => t.source === 'hard' || t.source === 'mentioned')
@@ -187,6 +193,7 @@ async function saveEdit(): Promise<void> {
   }
 }
 
+const createOpen = ref(false)
 const creating = ref(false)
 const createForm = reactive({ title: '', note: '' })
 
@@ -204,6 +211,7 @@ async function createTopic(): Promise<void> {
     })
     createForm.title = ''
     createForm.note = ''
+    createOpen.value = false
     await load()
   } catch (err) {
     errorMessage.value = String(err)
@@ -224,342 +232,516 @@ async function confirmDelete(): Promise<void> {
   }
 }
 
-
+function fmtDate(iso: string): string {
+  return iso.slice(0, 10)
+}
 </script>
 
 <template>
-  <section class="learn-view">
-    <h1 class="page-title">学习</h1>
+  <section class="view cols">
+    <!-- ===== 清单列 ===== -->
+    <div class="col">
+      <div class="col-head">
+        <div>
+          <div class="col-title">学习清单</div>
+          <div class="col-count">{{ topics.length }} 项 · 待学 {{ todoCount }}</div>
+        </div>
+        <button class="btn" type="button" @click="createOpen = true">
+          <Icon name="plus" />添加
+        </button>
+      </div>
 
-    <section class="card">
-      <h2 class="card-title">生成学习清单</h2>
-      <div class="gen-bar">
-        <select v-model="selectedJobId" class="input">
-          <option value="" disabled>选择职位…</option>
+      <!-- 生成清单 -->
+      <div class="gen-box">
+        <div class="gen-bar">
+          <select v-model="selectedJobId">
+            <option value="" disabled>选择职位…</option>
+            <option v-for="p in positions" :key="p.id" :value="p.id">
+              {{ p.company }} · {{ p.title }}
+            </option>
+          </select>
+          <button class="btn primary" type="button" :disabled="generating || selectedJobId === ''" @click="generate">
+            {{ generating ? '生成中…' : '按 JD 生成' }}
+          </button>
+        </div>
+        <p v-if="successMessage" class="gen-msg ok">{{ successMessage }}</p>
+        <p v-if="errorMessage" class="gen-msg err">{{ errorMessage }}</p>
+        <p v-if="degradeHint" class="gen-msg warn">{{ degradeHint }}</p>
+        <p v-if="positions.length === 0" class="gen-msg">
+          暂无职位——先在「职位」模块录入/采集，并在职位详情执行「按 JD 优化简历」生成 JD 分析。
+        </p>
+      </div>
+
+      <p v-if="loading" class="empty">加载中…</p>
+
+      <div v-for="g in groups" :key="g.status" class="tgroup">
+        <div class="tg-head">
+          <span>{{ STATUS_LABELS[g.status] }}</span>
+          <span class="tg-count">{{ g.items.length }} 项</span>
+        </div>
+        <div v-if="g.items.length === 0" class="empty" style="margin-top: 4px">暂无条目</div>
+        <div
+          v-for="t in g.items"
+          :key="t.id"
+          class="topic-row"
+          :class="{ sel: chatOpen && chatTopic === t.title }"
+        >
+          <div class="tr-main">
+            <span class="tr-name">{{ t.title }}</span>
+            <Pill tone="tint">{{ SOURCE_LABELS[t.source] }}</Pill>
+            <span class="prio-pill" :class="`prio-${t.priority}`">{{ PRIORITY_LABELS[t.priority] }}</span>
+          </div>
+          <div class="tr-sub">
+            <span class="tr-src">{{ t.source === 'manual' ? '手动添加' : '自动生成' }} · {{ fmtDate(t.created_at) }}</span>
+            <div class="seg">
+              <button
+                v-for="s in TOPIC_STATUSES"
+                :key="s"
+                class="seg-btn"
+                :class="{ on: t.status === s }"
+                type="button"
+                @click="setStatus(t, s)"
+              >
+                {{ STATUS_LABELS[s] }}
+              </button>
+            </div>
+            <div class="tr-actions">
+              <button class="icon-btn" type="button" title="聊天学习" @click="openChat(t)"><Icon name="send" /></button>
+              <button class="icon-btn" type="button" title="编辑" @click="startEdit(t)"><Icon name="edit" /></button>
+              <button class="icon-btn" type="button" title="删除" @click="deleteTarget = t"><Icon name="trash" /></button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <Resizer mode="col" />
+
+    <!-- ===== 教学会话列 ===== -->
+    <div class="chat-col">
+      <template v-if="chatOpen">
+        <div class="chat-head">
+          <h2>教学会话</h2>
+          <span class="pill ghost chat-topic">{{ chatTopic }}</span>
+          <span style="flex: 1"></span>
+          <button class="btn ghost" type="button" @click="chatOpen = false">关闭</button>
+        </div>
+        <div v-if="chatResumed" class="resume-bar">
+          <Icon name="clock" />
+          已续接上次对话（跨次续接）
+        </div>
+        <p v-if="chatError" class="gen-msg err" style="padding: 8px 14px">{{ chatError }}</p>
+        <div class="chat-flow">
+          <div v-for="(m, i) in chatMessages" :key="i" class="msg" :class="m.role">
+            <span class="msg-role">{{ m.role === 'user' ? '我' : '助教' }}</span>
+            <span class="msg-text">{{ m.text }}</span>
+          </div>
+          <div v-if="streamingText !== ''" class="msg ai">
+            <span class="msg-role">助教</span>
+            <span class="msg-text">{{ streamingText }}</span>
+            <span class="caret"></span>
+          </div>
+        </div>
+        <div class="chat-input">
+          <input
+            v-model="chatInput"
+            placeholder="输入你的问题，或直接说你的理解…"
+            aria-label="输入你的问题或理解"
+            :disabled="chatSending || chatSessionId === ''"
+            @keyup.enter="sendChat"
+          />
+          <button class="btn primary" type="button" aria-label="发送" :disabled="chatSending || chatSessionId === ''" @click="sendChat">
+            <Icon name="send" />
+          </button>
+        </div>
+      </template>
+      <div v-else class="chat-empty">
+        <p class="hint">从左侧选择一条学习条目开始教学会话（流式输出，跨次续接）。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 弹窗：添加学习条目 ===== -->
+  <Modal :open="createOpen" title="添加学习条目" @close="createOpen = false">
+    <div class="form-grid">
+      <label class="field span2">
+        <span class="label">学习内容 <em class="required">*</em></span>
+        <input v-model="createForm.title" placeholder="例如：RocketMQ 事务消息原理" @keyup.enter="createTopic" />
+      </label>
+      <label class="field span2">
+        <span class="label">备注</span>
+        <input v-model="createForm.note" placeholder="选填" />
+      </label>
+      <label class="field span2">
+        <span class="label">关联职位</span>
+        <select v-model="selectedJobId">
+          <option value="">不关联</option>
           <option v-for="p in positions" :key="p.id" :value="p.id">
             {{ p.company }} · {{ p.title }}
           </option>
         </select>
-        <button class="btn btn-primary" type="button" :disabled="generating || selectedJobId === ''" @click="generate">
-          {{ generating ? '生成中…' : '按 JD 生成清单' }}
-        </button>
-      </div>
-      <p v-if="errorMessage" class="message error">{{ errorMessage }}</p>
-      <p v-if="successMessage" class="message success">{{ successMessage }}</p>
-      <p v-if="degradeHint" class="hint degrade-hint">{{ degradeHint }}</p>
-      <p v-if="positions.length === 0" class="hint">
-        暂无职位——请先在「职位」模块录入或采集职位卡，并在职位详情中执行「按 JD 优化简历」以生成 JD 分析。
-      </p>
-    </section>
-
-    <section class="card">
-      <h2 class="card-title">手动添加条目</h2>
-      <div class="gen-bar">
-        <input v-model="createForm.title" class="input" placeholder="要学习的内容，如：Redis 持久化原理" @keyup.enter="createTopic" />
-        <input v-model="createForm.note" class="input" placeholder="备注（选填）" />
-        <button class="btn" type="button" :disabled="creating" @click="createTopic">添加</button>
-      </div>
-    </section>
-
-    <div v-for="g in groups" :key="g.status" class="card">
-      <h2 class="card-title">
-        {{ STATUS_LABELS[g.status] }}
-        <span class="count">{{ g.items.length }}</span>
-      </h2>
-
-      <p v-if="loading" class="hint">加载中…</p>
-      <p v-else-if="g.items.length === 0" class="hint">暂无条目。</p>
-      <ul v-else class="topic-list">
-        <li v-for="t in g.items" :key="t.id" class="topic-row">
-          <span class="pill" :class="`prio-${t.priority}`">{{ PRIORITY_LABELS[t.priority] }}</span>
-          <span class="topic-title">{{ t.title }}</span>
-          <span class="pill pill-source">{{ SOURCE_LABELS[t.source] }}</span>
-          <span v-if="t.note !== ''" class="meta">{{ t.note }}</span>
-          <span class="row-actions">
-            <template v-if="t.status === 'todo'">
-              <button class="btn" type="button" @click="setStatus(t, 'learning')">标记学习中</button>
-            </template>
-            <template v-else-if="t.status === 'learning'">
-              <button class="btn btn-primary" type="button" @click="setStatus(t, 'learned')">标记已掌握</button>
-              <button class="btn" type="button" @click="setStatus(t, 'todo')">回到待学习</button>
-            </template>
-            <template v-else>
-              <button class="btn" type="button" @click="setStatus(t, 'todo')">重置</button>
-            </template>
-            <button class="btn btn-primary" type="button" @click="openChat(t)">聊天学习</button>
-            <button class="btn" type="button" @click="startEdit(t)">编辑</button>
-            <button class="btn btn-danger-ghost" type="button" @click="deleteTarget = t">删除</button>
-          </span>
-        </li>
-      </ul>
+      </label>
     </div>
+    <template #foot>
+      <button class="btn" type="button" @click="createOpen = false">取消</button>
+      <button class="btn primary" type="button" :disabled="creating" @click="createTopic">
+        {{ creating ? '添加中…' : '添加' }}
+      </button>
+    </template>
+  </Modal>
 
-    <!-- 编辑弹层 -->
-    <div v-if="editing" class="edit-overlay" @click.self="editing = null">
-      <div class="edit-panel">
-        <h3 class="edit-title">编辑条目</h3>
-        <label class="field">
-          <span class="label">名称</span>
-          <input v-model="editForm.title" class="input" />
-        </label>
-        <label class="field">
-          <span class="label">备注</span>
-          <input v-model="editForm.note" class="input" />
-        </label>
-        <label class="field">
-          <span class="label">优先级（1-5，1 最高）</span>
-          <select v-model="editForm.priority" class="input">
-            <option v-for="i in 5" :key="i" :value="i">{{ i }} - {{ PRIORITY_LABELS[i] }}</option>
-          </select>
-        </label>
-        <div class="form-actions">
-          <button class="btn btn-primary" type="button" :disabled="saving" @click="saveEdit">保存</button>
-          <button class="btn" type="button" :disabled="saving" @click="editing = null">取消</button>
-        </div>
-      </div>
+  <!-- ===== 弹窗：编辑条目 ===== -->
+  <Modal :open="editing !== null" title="编辑学习条目" @close="editing = null">
+    <div class="form-grid">
+      <label class="field span2">
+        <span class="label">名称</span>
+        <input v-model="editForm.title" />
+      </label>
+      <label class="field span2">
+        <span class="label">备注</span>
+        <input v-model="editForm.note" />
+      </label>
+      <label class="field span2">
+        <span class="label">优先级（1-5，1 最高）</span>
+        <select v-model="editForm.priority">
+          <option v-for="i in 5" :key="i" :value="i">{{ i }} - {{ PRIORITY_LABELS[i] }}</option>
+        </select>
+      </label>
     </div>
+    <template #foot>
+      <button class="btn" type="button" :disabled="saving" @click="editing = null">取消</button>
+      <button class="btn primary" type="button" :disabled="saving" @click="saveEdit">
+        {{ saving ? '保存中…' : '保存' }}
+      </button>
+    </template>
+  </Modal>
 
-        <!-- teach 聊天（F-22/#36） -->
-    <div v-if="chatOpen" class="edit-overlay" @click.self="chatOpen = false">
-      <div class="chat-panel">
-        <div class="chat-head">
-          <span class="chat-title">学习：{{ chatTopic }}</span>
-          <button class="btn" type="button" @click="chatOpen = false">关闭</button>
-        </div>
-        <p v-if="chatResumed" class="chat-resume-hint">已续接上次对话（跨次续接）</p>
-        <p v-if="chatError" class="message error">{{ chatError }}</p>
-        <div class="chat-body">
-          <div v-for="(m, i) in chatMessages" :key="i" class="chat-msg" :class="m.role">
-            <span class="chat-role">{{ m.role === 'user' ? '我' : '助教' }}</span>
-            <span class="chat-text">{{ m.text }}</span>
-          </div>
-          <div v-if="streamingText !== ''" class="chat-msg assistant">
-            <span class="chat-role">助教</span>
-            <span class="chat-text">{{ streamingText }}</span>
-            <span class="chat-cursor">▌</span>
-          </div>
-        </div>
-        <div class="chat-input-bar">
-          <input
-            v-model="chatInput"
-            class="input"
-            placeholder="输入问题，回车发送…"
-            :disabled="chatSending || chatSessionId === ''"
-            @keyup.enter="sendChat"
-          />
-          <button class="btn btn-primary" type="button" :disabled="chatSending || chatSessionId === ''" @click="sendChat">
-            {{ chatSending ? '思考中…' : '发送' }}
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- 删除确认 -->
-    <div v-if="deleteTarget" class="confirm-box">
-      <p class="confirm-text">确认删除「{{ deleteTarget.title }}」？</p>
-      <div class="confirm-actions">
-        <button class="btn btn-danger" type="button" @click="confirmDelete">确认删除</button>
-        <button class="btn" type="button" @click="deleteTarget = null">取消</button>
-      </div>
-    </div>
-  </section>
+  <!-- ===== 弹窗：删除确认 ===== -->
+  <Modal :open="deleteTarget !== null" title="删除学习条目" @close="deleteTarget = null">
+    <p class="hint">确认删除「{{ deleteTarget?.title }}」？</p>
+    <template #foot>
+      <button class="btn" type="button" @click="deleteTarget = null">取消</button>
+      <button class="btn primary" type="button" @click="confirmDelete">确认删除</button>
+    </template>
+  </Modal>
 </template>
 
 <style scoped>
-.learn-view {
-  max-width: 880px;
+.required {
+  color: #dc2626;
+  font-style: normal;
 }
 
-.page-title {
-  margin: 0 0 16px;
-  font-size: 20px;
+.hint {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
 }
 
-.card {
-  padding: 16px 20px;
-  margin-bottom: 16px;
-  background: #fff;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-}
-
-.card-title {
-  margin: 0 0 12px;
-  font-size: 15px;
-}
-
-.count {
-  margin-left: 4px;
-  color: #6b7280;
-  font-weight: 400;
+/* 生成区 */
+.gen-box {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  margin-bottom: 10px;
 }
 
 .gen-bar {
   display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  align-items: center;
-}
-
-.gen-bar .input {
-  flex: 1;
-  min-width: 200px;
-}
-
-.topic-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.topic-row {
-  display: flex;
-  align-items: center;
   gap: 8px;
-  padding: 9px 0;
-  border-bottom: 1px solid #f0f1f3;
-  font-size: 13px;
 }
 
-.topic-row:last-child {
-  border-bottom: none;
+.gen-bar select {
+  flex: 1;
+  min-width: 0;
 }
 
-.topic-title {
-  font-weight: 600;
+.gen-msg {
+  font-size: 11.5px;
+  margin-top: 8px;
+  line-height: 1.6;
 }
 
-.pill {
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 12px;
-  white-space: nowrap;
+.gen-msg.ok {
+  color: #059669;
 }
 
-.prio-1 {
-  background: #fee2e2;
+.gen-msg.err {
   color: #dc2626;
 }
 
-.prio-2 {
-  background: #fef3c7;
-  color: #b45309;
+.gen-msg.warn {
+  color: #92400e;
+  background: color-mix(in srgb, #d97706 10%, #ffffff);
+  border: 1px solid color-mix(in srgb, #d97706 30%, #dbdbdb);
+  border-radius: var(--radius);
+  padding: 6px 8px;
 }
 
-.prio-3 {
-  background: #eff6ff;
-  color: #1d4ed8;
+/* 分组（原型 tgroup） */
+.tgroup {
+  margin-top: 12px;
 }
 
-.prio-4,
-.prio-5 {
-  background: #f3f4f6;
-  color: #6b7280;
-}
-
-.pill-source {
-  background: #f5f3ff;
-  color: #6d28d9;
-}
-
-.row-actions {
-  margin-left: auto;
+.tg-head {
   display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.tg-count {
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+/* 条目行（原型 topic-row） */
+.topic-row {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 9px 12px;
+  margin-bottom: 6px;
+  background: var(--bg);
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+
+.topic-row:hover {
+  border-color: var(--muted);
+}
+
+.topic-row.sel {
+  background: color-mix(in srgb, var(--accent) 6%, #ffffff);
+  border-color: color-mix(in srgb, var(--accent) 45%, #dbdbdb);
+}
+
+.topic-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.tr-main {
+  display: flex;
+  align-items: center;
   gap: 6px;
   flex-wrap: wrap;
 }
 
-.degrade-hint {
-  margin-top: 10px;
-  padding: 8px 12px;
-  background: #fef3c7;
-  border: 1px solid #fde68a;
-  border-radius: 6px;
-  color: #92400e;
+.tr-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  min-width: 0;
 }
 
-.chat-panel {
-  background: #fff;
-  border-radius: 8px;
-  width: min(640px, 100%);
-  height: min(520px, 90%);
+.prio-pill {
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  line-height: 18px;
+  letter-spacing: 0.02em;
+  margin-left: auto;
+}
+
+.prio-1 {
+  background: color-mix(in srgb, #dc2626 12%, #ffffff);
+  color: #dc2626;
+  border: 1px solid color-mix(in srgb, #dc2626 32%, #dbdbdb);
+}
+
+.prio-2 {
+  background: color-mix(in srgb, #d97706 12%, #ffffff);
+  color: #b45309;
+  border: 1px solid color-mix(in srgb, #d97706 32%, #dbdbdb);
+}
+
+.prio-3 {
+  background: color-mix(in srgb, var(--accent) 10%, #ffffff);
+  color: color-mix(in srgb, var(--accent) 78%, #000000);
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, #dbdbdb);
+}
+
+.prio-4,
+.prio-5 {
+  background: var(--surface);
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+
+.tr-sub {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+
+.tr-src {
+  font-size: 10.5px;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+}
+
+/* 三态切换（原型 seg） */
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.seg-btn {
+  height: 20px;
+  padding: 0 8px;
+  border: none;
+  background: var(--bg);
+  font-family: var(--font);
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  cursor: pointer;
+  line-height: 1;
+}
+
+.seg-btn + .seg-btn {
+  border-left: 1px solid var(--border);
+}
+
+.seg-btn:hover {
+  color: var(--fg);
+}
+
+.seg-btn.on {
+  background: var(--fg);
+  color: #ffffff;
+}
+
+.seg-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.tr-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
+}
+
+.tr-actions .icon-btn {
+  width: 22px;
+  height: 22px;
+}
+
+.tr-actions .icon-btn .ic {
+  width: 12px;
+  height: 12px;
+}
+
+/* 教学会话列（原型 chat-col） */
+.chat-col {
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  min-width: 0;
+  background: var(--bg);
+  border-left: none;
 }
 
 .chat-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 10px 14px;
-  border-bottom: 1px solid #e5e7eb;
+  gap: 8px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
 }
 
-.chat-title {
+.chat-head h2 {
+  font-size: 13.5px;
   font-weight: 600;
-  font-size: 14px;
+  letter-spacing: -0.01em;
 }
 
-.chat-resume-hint {
-  margin: 0;
-  padding: 6px 14px;
-  background: #eff6ff;
-  color: #1d4ed8;
+.chat-topic {
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.resume-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 18px;
+  background: color-mix(in srgb, var(--accent) 7%, #ffffff);
+  border-bottom: 1px solid var(--border);
   font-size: 12px;
+  color: color-mix(in srgb, var(--accent) 80%, #000000);
 }
 
-.chat-body {
+.resume-bar .ic {
+  width: 13px;
+  height: 13px;
+}
+
+.chat-flow {
   flex: 1;
   overflow-y: auto;
-  padding: 12px 14px;
+  padding: 16px 18px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
 }
 
-.chat-msg {
+.msg {
   display: flex;
   gap: 8px;
-  font-size: 13px;
+  font-size: 12.5px;
   line-height: 1.7;
+  max-width: 88%;
 }
 
-.chat-msg.user {
+.msg.user {
+  align-self: flex-end;
   flex-direction: row-reverse;
 }
 
-.chat-role {
+.msg-role {
   flex-shrink: 0;
-  font-size: 11px;
-  color: #6b7280;
-  background: #f3f4f6;
+  font-size: 10.5px;
+  color: var(--muted);
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 4px;
-  padding: 2px 6px;
+  padding: 1px 6px;
   height: fit-content;
 }
 
-.chat-msg.user .chat-role {
-  background: #eff6ff;
-  color: #1d4ed8;
+.msg.user .msg-role {
+  background: color-mix(in srgb, var(--accent) 10%, #ffffff);
+  border-color: color-mix(in srgb, var(--accent) 28%, #dbdbdb);
+  color: color-mix(in srgb, var(--accent) 78%, #000000);
 }
 
-.chat-text {
+.msg-text {
   white-space: pre-wrap;
   word-break: break-word;
-  background: #fafbfc;
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 6px 10px;
-  max-width: 80%;
+  padding: 7px 10px;
 }
 
-.chat-msg.user .chat-text {
-  background: #eff6ff;
+.msg.user .msg-text {
+  background: color-mix(in srgb, var(--accent) 8%, #ffffff);
+  border-color: color-mix(in srgb, var(--accent) 24%, #dbdbdb);
 }
 
-.chat-cursor {
+.caret {
   animation: blink 1s step-end infinite;
-  color: #2b5ca8;
+  color: var(--accent);
 }
 
 @keyframes blink {
@@ -568,135 +750,18 @@ async function confirmDelete(): Promise<void> {
   }
 }
 
-.chat-input-bar {
+.chat-input {
   display: flex;
   gap: 8px;
-  padding: 10px 14px;
-  border-top: 1px solid #e5e7eb;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
 }
 
-.chat-input-bar .input {
+.chat-input input {
   flex: 1;
 }
 
-.edit-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(17, 24, 39, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 50;
-}
-
-.edit-panel {
-  background: #fff;
-  border-radius: 8px;
-  padding: 18px 20px;
-  width: 420px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.edit-title {
-  margin: 0;
-  font-size: 15px;
-}
-
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.label {
-  font-size: 13px;
-  color: #374151;
-}
-
-.input {
-  padding: 6px 10px;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
-  font-size: 13px;
-  font-family: inherit;
-}
-
-.form-actions,
-.confirm-actions {
-  display: flex;
-  gap: 10px;
-}
-
-.btn {
-  padding: 6px 14px;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
-  background: #fff;
-  color: #374151;
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.btn-primary {
-  background: #2b5ca8;
-  border-color: #2b5ca8;
-  color: #fff;
-}
-
-.btn-primary:hover:not(:disabled) {
-  background: #244e8f;
-}
-
-.btn-danger {
-  background: #dc2626;
-  border-color: #dc2626;
-  color: #fff;
-}
-
-.btn-danger-ghost {
-  border-color: transparent;
-  color: #dc2626;
-  background: transparent;
-}
-
-.btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.message {
-  margin: 10px 0;
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-.error {
-  color: #dc2626;
-}
-
-.success {
-  color: #059669;
-}
-
-.hint {
-  margin: 0;
-  color: #6b7280;
-  line-height: 1.7;
-}
-
-.confirm-box {
-  margin-top: 12px;
-  padding: 12px 14px;
-  background: #fef2f2;
-  border: 1px solid #fecaca;
-  border-radius: 6px;
-}
-
-.confirm-text {
-  margin: 0 0 10px;
-  font-size: 13px;
-  color: #991b1b;
+.chat-empty {
+  padding: 40px 24px;
 }
 </style>
