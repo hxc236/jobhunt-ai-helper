@@ -149,6 +149,30 @@ describe('createRendererApi（渲染侧 api 客户端）', () => {
     ])
   })
 
+  it('crawls.run 映射到 crawl:run 并传 { source, options }', async () => {
+    const fake = makeFakeBridge()
+    const api = createRendererApi(fake.bridge)
+    const options = { mode: 'filter', filter: '腾讯' } as const
+    await api.crawls.run('nowcoder', options)
+    expect(fake.invocations).toEqual([
+      { channel: IpcChannel.CrawlRun, args: [{ source: 'nowcoder', options }] }
+    ])
+  })
+
+  it('crawls.runs 映射到 crawl:runs，不带参数', async () => {
+    const fake = makeFakeBridge()
+    const api = createRendererApi(fake.bridge)
+    await api.crawls.runs()
+    expect(fake.invocations).toEqual([{ channel: IpcChannel.CrawlRuns, args: [] }])
+  })
+
+  it('crawls.getRun 映射到 crawl:get-run 并传 { id }', async () => {
+    const fake = makeFakeBridge()
+    const api = createRendererApi(fake.bridge)
+    await api.crawls.getRun(7)
+    expect(fake.invocations).toEqual([{ channel: IpcChannel.CrawlGetRun, args: [{ id: 7 }] }])
+  })
+
   it('resumes.list 映射到 resumes:list，不带参数', async () => {
     const fake = makeFakeBridge()
     const api = createRendererApi(fake.bridge)

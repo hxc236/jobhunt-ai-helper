@@ -14,11 +14,15 @@
 import type {
   Application,
   ApplicationPatch,
+  CrawlRun,
+  CrawlRunOptions,
+  CrawlRunResult,
   Position,
   PositionFilters,
   PositionInput,
   PositionListItem,
-  PositionPatch
+  PositionPatch,
+  PositionSource
 } from './types'
 import type { Resume, StoredResume } from './types/resume'
 
@@ -57,6 +61,7 @@ export const IpcChannel = {
   CrawlRun: 'crawl:run',
   CrawlConfirmImport: 'crawl:confirm-import',
   CrawlRuns: 'crawl:runs',
+  CrawlGetRun: 'crawl:get-run',
   AsrStart: 'asr:start',
   AsrStop: 'asr:stop'
 } as const
@@ -108,6 +113,11 @@ export interface IpcProtocol {
     request: { positionId: string; patch: ApplicationPatch }
     response: Application
   }
+  // F-08（#22）：采集执行框架 —— run 返回留痕行 + 候选快照（#29 预览数据源）；
+  // runs 为留痕列表；get-run 按 id 查单次运行。
+  [IpcChannel.CrawlRun]: { request: { source: PositionSource; options: CrawlRunOptions }; response: CrawlRunResult }
+  [IpcChannel.CrawlRuns]: { request: void; response: CrawlRun[] }
+  [IpcChannel.CrawlGetRun]: { request: { id: number }; response: CrawlRun | null }
   // F-12（issue #19）：简历 CRUD —— 入库前服务层做 resume.schema.json 校验；
   // 删除语义：删除基准简历不影响已存派生稿（独立副本）。
   [IpcChannel.ResumesList]: { request: void; response: StoredResume[] }
@@ -179,6 +189,16 @@ export interface PositionsApi {
   setApplication: (positionId: string, patch: ApplicationPatch) => Promise<Application>
 }
 
+/** 渲染进程可见的 crawls api 表面（F-08/#22：执行框架 + 留痕；#29 预览确认后续补 confirmImport）。 */
+export interface CrawlApi {
+  /** 执行一次采集（节流/重试/上限框架内完成；返回留痕 + 候选，供预览）。 */
+  run: (source: PositionSource, options: CrawlRunOptions) => Promise<CrawlRunResult>
+  /** 采集留痕列表（倒序）。 */
+  runs: () => Promise<CrawlRun[]>
+  /** 单次留痕（#29 预览用）。 */
+  getRun: (id: number) => Promise<CrawlRun | null>
+}
+
 /** 渲染进程可见的 resumes api 表面（F-12：多份基准简历 CRUD + 删除语义）。 */
 export interface ResumeApi {
   list: () => Promise<StoredResume[]>
@@ -196,6 +216,7 @@ export interface RendererApi {
   settings: SettingsApi
   positions: PositionsApi
   resumes: ResumeApi
+  crawls: CrawlApi
   /** 订阅主进程事件推送；返回取消订阅函数。 */
   on: <E extends IpcEventName>(event: E, listener: (payload: IpcEventMap[E]) => void) => () => void
 }

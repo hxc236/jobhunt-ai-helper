@@ -10,6 +10,7 @@ import {
 } from '../../shared/protocol'
 import { ping } from '../services/ping'
 import type { AgentService } from '../services/agent'
+import type { CrawlService } from '../services/crawl'
 import type { PositionService } from '../services/position'
 import type { ResumeService } from '../services/resume'
 import type { SettingsService } from '../services/settings'
@@ -28,13 +29,14 @@ export interface IpcDeps {
   agent: AgentService
   positions: PositionService
   resumes: ResumeService
+  crawls: CrawlService
 }
 
 /**
  * 注册全部 IPC handler（薄层：仅参数校验 + 转调服务）。
  * 主进程启动时调用一次；后续通道（EF-04 起）在此追加。
  */
-export function registerIpcHandlers({ settings, agent, positions, resumes }: IpcDeps): void {
+export function registerIpcHandlers({ settings, agent, positions, resumes, crawls }: IpcDeps): void {
   handleRequest(IpcChannel.Ping, (): PingResponse => ping())
 
   handleRequest(IpcChannel.SettingsGet, (request) => settings.get(request.key))
@@ -65,6 +67,13 @@ export function registerIpcHandlers({ settings, agent, positions, resumes }: Ipc
   handleRequest(IpcChannel.PositionsSetApplication, (request) =>
     positions.setApplicationState(request.positionId, request.patch)
   )
+
+  // F-08（#22）：采集执行框架 —— 进度经 crawl:progress 事件推送（服务层 onProgress 回调接入）
+  handleRequest(IpcChannel.CrawlRun, (request) =>
+    crawls.run(request.source, request.options)
+  )
+  handleRequest(IpcChannel.CrawlRuns, () => crawls.runs())
+  handleRequest(IpcChannel.CrawlGetRun, (request) => crawls.getRun(request.id))
 
   // F-12（issue #19）：简历 CRUD —— 服务层负责 schema 校验与删除语义（基准删除不影响派生稿）
   handleRequest(IpcChannel.ResumesList, () => resumes.list())

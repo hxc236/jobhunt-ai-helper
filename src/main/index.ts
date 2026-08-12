@@ -6,6 +6,8 @@ import { IpcEvent } from '../shared/protocol'
 import { pushEvent } from './ipc/events'
 import { AgentService, type AgentEvent } from './services/agent'
 import { PiAgentProvider } from './services/pi-agent-provider'
+import { BrowserWindowFetcher } from './services/browser-window-fetcher'
+import { CrawlService } from './services/crawl'
 import { PositionService } from './services/position'
 import { ResumeService } from './services/resume'
 import { SettingsService } from './services/settings'
@@ -69,6 +71,11 @@ app.whenReady().then(() => {
   const positions = new PositionService(db)
   // F-12（issue #19）：简历 CRUD（schema 校验 + 删除语义，见 services/resume.ts）
   const resumes = new ResumeService(db)
+  // F-08（#22）：采集执行框架（隐藏 BrowserWindow 抓取 + 节流/重试/上限 + 留痕；
+  // 解析器由 #23 牛客 / #24 猎聘 注册；进度经 crawl:progress 事件推送）
+  const crawls = new CrawlService(db, new BrowserWindowFetcher(), {
+    onProgress: ({ runId, done, total }) => pushEvent(IpcEvent.CrawlProgress, { runId, done, total })
+  })
 
   // EF-04：AgentService（pi SDK 封装 + fake 可注入）。认证目录为应用自有 userData/pi
   // （auth.json/models.json/sessions），不依赖用户 ~/.pi/agent；teach 技能用仓库内置副本。
@@ -81,7 +88,7 @@ app.whenReady().then(() => {
     { onEvent: forwardAgentEvent }
   )
 
-  registerIpcHandlers({ settings, agent, positions, resumes })
+  registerIpcHandlers({ settings, agent, positions, resumes, crawls })
   createWindow()
 
   app.on('activate', () => {
