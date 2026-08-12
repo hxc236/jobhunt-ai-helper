@@ -200,6 +200,12 @@ export class InterviewService {
   }
 
   /** 打断当前生成并插队（abort + steer）。 */
+  /** 补充说明：当前生成完全结束后排队投递（面试补充）。 */
+  async followUp(sessionId: string, text: string): Promise<void> {
+    const state = this.requireSession(sessionId)
+    await state.session.followUp(text)
+  }
+
   async interrupt(sessionId: string): Promise<void> {
     const state = this.requireSession(sessionId)
     await state.session.abort()

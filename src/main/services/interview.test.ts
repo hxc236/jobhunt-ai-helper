@@ -165,6 +165,15 @@ describe('InterviewService 会话编排（F-23/#37）', () => {
     expect(basicPrompt).toContain('难度：basic') // 答得不好 → 降级
   })
 
+  it('followUp：当前生成结束后排队投递补充说明', async () => {
+    const h = makeHarness()
+    const { sessionId } = await h.start()
+    await h.svc.followUp(sessionId, '补充一点：我熟悉 Kafka')
+
+    const session = h.provider.sessions[0]!
+    expect(session.followUps).toEqual(['补充一点：我熟悉 Kafka'])
+  })
+
   it('interrupt：打断当前生成并插队提示（abort + steer）', async () => {
     const h = makeHarness()
     const { sessionId } = await h.start()
