@@ -4,40 +4,14 @@ import type { PositionService } from './position'
 import type { ResumeService } from './resume'
 import { assertValidResume, ResumeValidationError } from './resume-schema'
 import type { Resume } from '../../shared/types/resume'
-import type { Position } from '../../shared/types'
+import type {
+  JdAnalysis,
+  OptimizationMode,
+  OptimizeChange,
+  OptimizeResult,
+  Position
+} from '../../shared/types'
 
-/** 优化模式（ADR-0004：strict 默认——不虚构；balanced——适度润色）。 */
-export type OptimizationMode = 'strict' | 'balanced'
-
-/** JD 分析缓存（positions.jd_analysis JSON 列；JD 指纹变化失效重算）。 */
-export interface JdAnalysis {
-  skills: string[]
-  keywords: string[]
-  requirements: string[]
-  hardRequirements: string[]
-  parsedAt: string
-  /** JD 文本指纹：缓存有效性判断。 */
-  jdFingerprint: string
-}
-
-/** 优化稿改动说明（UI 对比展示 + 防幻觉依据）。 */
-export interface OptimizeChange {
-  section: string
-  before: string
-  after: string
-  reason: string
-}
-
-/** 优化流程输出（不落库——确认入库属 #32/#34 UI 流程）。 */
-export interface OptimizeResult {
-  jobId: string
-  resumeId: string
-  mode: OptimizationMode
-  jdAnalysis: JdAnalysis
-  gaps: string[]
-  optimizedResume: Resume
-  changes: OptimizeChange[]
-}
 
 /** 优化服务错误：code 供渲染层区分提示。 */
 export class OptimizeError extends Error {
@@ -92,13 +66,23 @@ export function extractJson(reply: string): unknown {
  * 3) 生成优化稿 + changes[]（strict/balanced 约束；输出过 resume.schema.json 校验，
  * 首次非法自动修正一轮）。
  */
+export interface OptimizeServiceOptions {
+  /** 轮次进度回调（IPC 层接事件推送 optimize:progress，UI 流式展示三轮进度）。 */
+  onProgress?: (info: { jobId: string; round: 1 | 2 | 3; phase: string }) => void
+}
+
 export class OptimizeService {
+  private readonly onProgress: OptimizeServiceOptions['onProgress']
+
   constructor(
     private readonly db: Db,
     private readonly positions: PositionService,
     private readonly resumes: ResumeService,
-    private readonly agent: AgentService
-  ) {}
+    private readonly agent: AgentService,
+    options: OptimizeServiceOptions = {}
+  ) {
+    this.onProgress = options.onProgress
+  }
 
   async run(jobId: string, resumeId: string, mode: OptimizationMode = 'strict'): Promise<OptimizeResult> {
     const position = this.positions.get(jobId) // 职位不存在 → not-found
@@ -110,8 +94,11 @@ export class OptimizeService {
 
     const session = await this.agent.createSession('optimize')
     try {
+      this.onProgress?.({ jobId, round: 1, phase: 'JD 解析' })
       const jdAnalysis = await this.analyzeJd(session, position)
+      this.onProgress?.({ jobId, round: 2, phase: '缺口评估' })
       const gaps = await this.assessGaps(session, jdAnalysis, resume)
+      this.onProgress?.({ jobId, round: 3, phase: '生成优化稿' })
       const { optimizedResume, changes } = await this.generate(session, jdAnalysis, gaps, resume, mode)
       return { jobId, resumeId, mode, jdAnalysis, gaps, optimizedResume, changes }
     } finally {

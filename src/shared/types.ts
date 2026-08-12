@@ -1,3 +1,5 @@
+import type { Resume } from './types/resume'
+
 /**
  * 领域实体类型（shared）—— 主进程服务与渲染进程共用，是 SQLite 行结构与
  * IPC 载荷的唯一事实来源（docs/architecture.md：shared/types/）。
@@ -146,6 +148,39 @@ export interface CrawlRunOptions {
 export interface CrawlRunResult {
   run: CrawlRun
   candidates: CrawlCandidate[]
+}
+
+/** 优化模式（ADR-0004：strict 默认——不虚构；balanced——适度润色）。 */
+export type OptimizationMode = 'strict' | 'balanced'
+
+/** JD 分析缓存（positions.jd_analysis JSON 列；JD 指纹变化失效重算）。 */
+export interface JdAnalysis {
+  skills: string[]
+  keywords: string[]
+  requirements: string[]
+  hardRequirements: string[]
+  parsedAt: string
+  /** JD 文本指纹：缓存有效性判断。 */
+  jdFingerprint: string
+}
+
+/** 优化稿改动说明（UI 对比展示 + 防幻觉依据）。 */
+export interface OptimizeChange {
+  section: string
+  before: string
+  after: string
+  reason: string
+}
+
+/** 优化流程输出（不落库——确认入库属 #34 UI 流程）。 */
+export interface OptimizeResult {
+  jobId: string
+  resumeId: string
+  mode: OptimizationMode
+  jdAnalysis: JdAnalysis
+  gaps: string[]
+  optimizedResume: Resume
+  changes: OptimizeChange[]
 }
 
 /** 预览行（F-11/#29）：候选 + 预测动作 + 缺字段标记。 */

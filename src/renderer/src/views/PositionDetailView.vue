@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   APPLICATION_STATUSES,
@@ -17,6 +17,8 @@ import {
 } from '@shared/types'
 import type { StoredResume } from '@shared/types/resume'
 import { score, type FitScore } from '@shared/score'
+import type { OptimizeResult, OptimizationMode } from '@shared/types'
+import { IpcEvent } from '@shared/protocol'
 
 const route = useRoute()
 const router = useRouter()
@@ -71,6 +73,47 @@ function totalClass(scoreValue: number): string {
   if (scoreValue >= 60) return 'ring-blue'
   return 'ring-red'
 }
+
+/** 优化触发与结果（F-07/#32）：三轮进度流式 + 优化稿 JSON + changes 列表。 */
+const optimizeMode = ref<OptimizationMode>('strict')
+const optimizing = ref(false)
+const optimizeError = ref('')
+const optimizeResult = ref<OptimizeResult | null>(null)
+/** 轮次进度：1/2/3 → 阶段名；完成态标记。 */
+const optimizeProgress = ref<Array<{ round: number; phase: string; done: boolean }>>([])
+
+const OPTIMIZE_PHASES: Record<number, string> = { 1: 'JD 解析', 2: '缺口评估', 3: '生成优化稿' }
+
+async function runOptimize(): Promise<void> {
+  const resume = resumes.value.find((r) => r.meta.id === selectedResumeId.value)
+  if (resume === undefined) {
+    optimizeError.value = '请先选择基准简历'
+    return
+  }
+  optimizeError.value = ''
+  optimizeResult.value = null
+  optimizeProgress.value = [1, 2, 3].map((round) => ({ round, phase: OPTIMIZE_PHASES[round]!, done: false }))
+  optimizing.value = true
+  try {
+    optimizeResult.value = await window.api.optimize.run(positionId, resume.meta.id as string, optimizeMode.value)
+  } catch (err) {
+    optimizeError.value = String(err)
+  } finally {
+    optimizing.value = false
+    optimizeProgress.value = optimizeProgress.value.map((p) => ({ ...p, done: true }))
+  }
+}
+
+/** 三轮进度事件（主 → 渲染）：当前轮完成标记。 */
+onMounted(() => {
+  const unsubscribe = window.api.on(IpcEvent.OptimizeProgress, (payload) => {
+    if (payload.jobId !== positionId) return
+    optimizeProgress.value = optimizeProgress.value.map((p) =>
+      p.round === payload.round ? { ...p, phase: payload.phase, done: true } : p
+    )
+  })
+  onUnmounted(unsubscribe)
+})
 
 function toggleDim(name: string): void {
   const next = new Set(expandedDims.value)
@@ -511,6 +554,63 @@ onMounted(() => void load())
         </div>
       </section>
 
+      <!-- 优化触发与结果（F-07/#32） -->
+      <section class="card">
+        <h2 class="card-title">按 JD 优化简历</h2>
+        <div class="score-bar">
+          <select v-model="selectedResumeId" class="input">
+            <option value="" disabled>选择基准简历…</option>
+            <option v-for="r in resumes" :key="r.meta.id" :value="r.meta.id">
+              {{ r.meta.title ?? '未命名简历' }}
+            </option>
+          </select>
+          <select v-model="optimizeMode" class="input">
+            <option value="strict">strict（不虚构，默认）</option>
+            <option value="balanced">balanced（适度润色）</option>
+          </select>
+          <button class="btn btn-primary" type="button" :disabled="optimizing || selectedResumeId === ''" @click="runOptimize">
+            {{ optimizing ? '优化中…' : '开始优化' }}
+          </button>
+        </div>
+
+        <!-- 三轮进度流式 -->
+        <ul v-if="optimizeProgress.length > 0" class="opt-progress">
+          <li v-for="p in optimizeProgress" :key="p.round" :class="{ done: p.done }">
+            <span class="opt-round">{{ p.done ? '✓' : '…' }}</span>
+            {{ p.phase }}
+          </li>
+        </ul>
+        <p v-if="optimizeError" class="message error">{{ optimizeError }}</p>
+
+        <!-- 结果：changes 列表 + 优化稿 JSON -->
+        <div v-if="optimizeResult" class="opt-result">
+          <p class="message success">优化完成（{{ optimizeResult.mode }}）：缺口 {{ optimizeResult.gaps.length }} 项，改动 {{ optimizeResult.changes.length }} 处</p>
+          <ul v-if="optimizeResult.gaps.length > 0" class="opt-gaps">
+            <li v-for="(g, i) in optimizeResult.gaps" :key="i">{{ g }}</li>
+          </ul>
+          <div v-for="(c, i) in optimizeResult.changes" :key="i" class="change">
+            <div class="change-head">
+              <span class="pill pill-batch">{{ c.section }}</span>
+              <span class="change-reason">{{ c.reason }}</span>
+            </div>
+            <div class="change-body">
+              <div class="change-col">
+                <span class="change-label">原文</span>
+                <pre class="change-text">{{ c.before }}</pre>
+              </div>
+              <div class="change-col">
+                <span class="change-label">改后</span>
+                <pre class="change-text">{{ c.after }}</pre>
+              </div>
+            </div>
+          </div>
+          <details class="opt-json">
+            <summary>优化稿 JSON（{{ optimizeResult.optimizedResume.basics?.name }}）</summary>
+            <pre class="json-pre">{{ JSON.stringify(optimizeResult.optimizedResume, null, 2) }}</pre>
+          </details>
+        </div>
+      </section>
+
       <!-- 编辑表单卡片 -->
       <section v-if="editing" class="card">
         <h2 class="card-title">编辑职位卡</h2>
@@ -836,6 +936,98 @@ onMounted(() => void load())
 .app-edit .input {
   flex: 1;
   min-width: 160px;
+}
+
+/* 优化触发与结果（F-07/#32） */
+.opt-progress {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  display: flex;
+  gap: 16px;
+  font-size: 13px;
+  color: #6b7280;
+}
+
+.opt-round {
+  display: inline-block;
+  width: 18px;
+  text-align: center;
+}
+
+.opt-progress .done {
+  color: #059669;
+}
+
+.opt-gaps {
+  margin: 0 0 10px;
+  padding-left: 20px;
+  font-size: 13px;
+  color: #b45309;
+}
+
+.change {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  background: #fafbfc;
+  border: 1px solid #eef0f3;
+  border-radius: 6px;
+}
+
+.change-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.change-reason {
+  font-size: 12px;
+  color: #374151;
+}
+
+.change-body {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.change-label {
+  font-size: 11px;
+  color: #6b7280;
+}
+
+.change-text {
+  margin: 2px 0 0;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: #fff;
+  border: 1px solid #f0f1f3;
+  border-radius: 4px;
+  padding: 6px 8px;
+}
+
+.opt-json {
+  margin-top: 10px;
+  font-size: 13px;
+}
+
+.opt-json summary {
+  cursor: pointer;
+  color: #2b5ca8;
+}
+
+.json-pre {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  background: #f8fafc;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.6;
+  overflow: auto;
+  max-height: 360px;
 }
 
 /* 匹配度仪表（F-06/#27） */
