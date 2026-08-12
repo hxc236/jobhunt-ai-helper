@@ -664,6 +664,78 @@ onMounted(() => {
 </template>
 
 <style scoped>
+/* 职位行卡片（原型 pos-row） */
+.pos-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.pos-row {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  cursor: pointer;
+  transition:
+    border-color 0.12s,
+    background 0.12s;
+  background: var(--bg);
+}
+
+.pos-row:hover {
+  border-color: var(--muted);
+}
+
+.pos-row.active {
+  background: color-mix(in srgb, var(--accent) 6%, #ffffff);
+  border-color: color-mix(in srgb, var(--accent) 45%, #dbdbdb);
+}
+
+.pr-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.pr-company {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pr-title {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 1px 0 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pr-meta,
+.pr-foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.pr-city {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.pr-date {
+  font-size: 10.5px;
+  color: var(--muted);
+  margin-left: auto;
+  letter-spacing: 0.02em;
+}
+
 .detail {
   overflow-y: auto;
   padding: 20px 24px;
