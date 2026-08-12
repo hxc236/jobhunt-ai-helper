@@ -106,6 +106,8 @@ export interface CrawlCandidate {
   channel_url: string | null
   source_url: string
   batch: Batch | null
+  /** 秋招季（如 '2027秋招'；解析器从批次名推导，如牛客 27届秋招 → 2027秋招）。 */
+  recruit_season?: string | null
   /** 网申开始 YYYY-MM-DD。 */
   start_date: string | null
   /** 网申截止 YYYY-MM-DD（null = 待核实，猎聘无截止时间置空）。 */
