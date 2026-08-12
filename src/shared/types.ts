@@ -205,6 +205,23 @@ export interface CrawlImportResult {
   updated: number
 }
 
+/** 复盘维度（F-25/#39：技术深度/表达逻辑/应变/匹配度）。 */
+export interface ReviewDimension {
+  name: string
+  /** 0-100。 */
+  score: number
+  comment: string
+}
+
+/** 面试复盘（F-25/#39：LLM 生成，结构校验后存 interviews.review）。 */
+export interface InterviewReview {
+  total: number
+  dimensions: ReviewDimension[]
+  strengths: string[]
+  weaknesses: Array<{ item: string; reference: string }>
+  nextSteps: string[]
+}
+
 /** 学习条目三态（topics.status；F-19/#33）。 */
 export const TOPIC_STATUSES = ['todo', 'learning', 'learned'] as const
 export type TopicStatus = (typeof TOPIC_STATUSES)[number]
