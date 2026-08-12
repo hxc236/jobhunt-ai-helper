@@ -43,7 +43,8 @@ export class BossLoginService {
   }
 
   /**
-   * 登录状态检测：分区内隐藏窗口加载搜索页，页面内 fetch getUserInfo。
+   * 登录状态检测：分区内隐藏窗口加载搜索页，页面内 fetch getUserInfo
+   * （真实端点 /wapi/zpuser/wap/getUserInfo.json，网络捕获实测；code===0 = 已登录）。
    * 等待 settleMs 让页面 XHR 自然执行（与采集抓取同一节奏）；任何异常 → false。
    */
   async isLoggedIn(settleMs = 1500): Promise<boolean> {
@@ -59,7 +60,7 @@ export class BossLoginService {
         await new Promise((resolve) => setTimeout(resolve, settleMs))
       }
       const result = (await win.webContents.executeJavaScript(
-        `fetch('/wapi/zpgeek/common/data/getUserInfo.json')
+        `fetch('/wapi/zpuser/wap/getUserInfo.json')
            .then((r) => r.json())
            .catch(() => ({ code: -1 }))`
       )) as { code?: number }
