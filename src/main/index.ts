@@ -1,6 +1,8 @@
 import { app, BrowserWindow, shell } from 'electron'
 import { join } from 'node:path'
+import { openDatabase } from './db/database'
 import { registerIpcHandlers } from './ipc'
+import { SettingsService } from './services/settings'
 
 function createWindow(): void {
   const win = new BrowserWindow({
@@ -36,7 +38,9 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
-  registerIpcHandlers()
+  // 单文件本地库：userData/jobhunt.db（EF-02；测试注入 :memory: 见 db/database.ts）
+  const db = openDatabase(join(app.getPath('userData'), 'jobhunt.db'))
+  registerIpcHandlers({ settings: new SettingsService(db) })
   createWindow()
 
   app.on('activate', () => {

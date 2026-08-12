@@ -1,17 +1,104 @@
 /**
- * IPC 协议（shared/protocol.ts）— 主/渲染进程共用。
+ * IPC 协议（shared/protocol.ts）— 主/渲染进程共用，是类型化 IPC 的唯一事实来源。
  *
- * EF-01 脚手架阶段仅含一条示例通道（ping）；
- * EF-03 将在此扩展为类型化 channel 清单（settings:* / positions:* / resumes:* …）。
+ * EF-02/EF-03（issue #15）：db 层 + IPC 协议框架。
+ * - IpcChannel：通道常量（invoke/handle 两侧共用，避免字符串散落）；
+ * - IpcProtocol：已实现通道 → 请求/响应类型映射。「无类型绕过」的保证：
+ *   preload api 客户端与主进程 handler 注册都从该映射推导类型，渲染层不出现裸 channel 字符串；
+ * - IpcEvent / IpcEventMap：主 → 渲染事件推送契约。
+ *
+ * 未实现通道（positions:* 等）的常量按 docs/architecture.md 契约列全，
+ * 作为后续服务 ticket（EF-04 起）的协议预留；请求/响应类型随各 ticket 逐个补齐。
  */
 
-/** 通道常量：ipcMain.handle / ipcRenderer.invoke 两侧共用，避免字符串散落。 */
+/** 请求-响应通道常量。 */
 export const IpcChannel = {
-  Ping: 'ping'
+  Ping: 'ping',
+  // settings（EF-03 本 ticket 实现）
+  SettingsGet: 'settings:get',
+  SettingsSet: 'settings:set',
+  SettingsGetAll: 'settings:get-all',
+  // ---- 以下为协议预留（docs/architecture.md 契约），随服务 ticket 逐个实现 ----
+  SettingsGetStatus: 'settings:get-status',
+  SettingsConfigureProvider: 'settings:configure-provider',
+  PositionsList: 'positions:list',
+  PositionsCreate: 'positions:create',
+  PositionsUpdate: 'positions:update',
+  PositionsSetApplication: 'positions:set-application',
+  ResumesList: 'resumes:list',
+  ResumesCreate: 'resumes:create',
+  ResumesUpdate: 'resumes:update',
+  ResumesUploadParse: 'resumes:upload-parse',
+  ResumesRenderHtml: 'resumes:render-html',
+  ResumesExportPdf: 'resumes:export-pdf',
+  OptimizeRun: 'optimize:run',
+  TopicsGenerate: 'topics:generate',
+  TopicsUpdate: 'topics:update',
+  InterviewStart: 'interview:start',
+  InterviewAnswer: 'interview:answer',
+  InterviewInterrupt: 'interview:interrupt',
+  InterviewEnd: 'interview:end',
+  InterviewHistory: 'interview:history',
+  CrawlRun: 'crawl:run',
+  CrawlConfirmImport: 'crawl:confirm-import',
+  CrawlRuns: 'crawl:runs',
+  AsrStart: 'asr:start',
+  AsrStop: 'asr:stop'
 } as const
 
 /** ping 响应类型：渲染进程调用主进程 ping 的返回。 */
 export type PingResponse = 'pong'
+
+/**
+ * 已实现通道的类型映射：channel → { request, response }。
+ * preload invoke、渲染 api 客户端、主进程 handler 均从此映射推导类型。
+ */
+export interface IpcProtocol {
+  [IpcChannel.Ping]: { request: void; response: PingResponse }
+  [IpcChannel.SettingsGet]: { request: { key: string }; response: unknown }
+  [IpcChannel.SettingsSet]: { request: { key: string; value: unknown }; response: void }
+  [IpcChannel.SettingsGetAll]: { request: void; response: Record<string, unknown> }
+}
+
+export type IpcChannelName = keyof IpcProtocol
+export type IpcRequest<C extends IpcChannelName> = IpcProtocol[C]['request']
+export type IpcResponse<C extends IpcChannelName> = IpcProtocol[C]['response']
+
+/** 类型化 invoke 签名：void 请求不带参数，其余请求带单个对象。 */
+export type IpcInvoker = <C extends IpcChannelName>(
+  channel: C,
+  ...args: IpcRequest<C> extends void ? [] : [IpcRequest<C>]
+) => Promise<IpcResponse<C>>
+
+/** 事件推送通道常量（主 → 渲染）。 */
+export const IpcEvent = {
+  SettingsChanged: 'settings:changed', // EF-03 本 ticket 实现
+  AgentDelta: 'agent:delta', // EF-04 起：agent 流式文本
+  AgentStatus: 'agent:status',
+  InterviewTurnEnd: 'interview:turn-end',
+  CrawlProgress: 'crawl:progress'
+} as const
+
+/** agent 会话状态（agent:status 载荷）。 */
+export type AgentStatusValue = 'running' | 'idle' | 'error'
+
+/** 事件 → 载荷类型映射。 */
+export interface IpcEventMap {
+  [IpcEvent.SettingsChanged]: { key: string; value: unknown }
+  [IpcEvent.AgentDelta]: { sessionId: string; delta: string }
+  [IpcEvent.AgentStatus]: { sessionId: string; status: AgentStatusValue; detail?: string }
+  [IpcEvent.InterviewTurnEnd]: { sessionId: string }
+  [IpcEvent.CrawlProgress]: { runId: number; done: number; total: number }
+}
+
+export type IpcEventName = keyof IpcEventMap
+
+/** 渲染进程可见的 settings api 表面。 */
+export interface SettingsApi {
+  get: (key: string) => Promise<unknown>
+  set: (key: string, value: unknown) => Promise<void>
+  getAll: () => Promise<Record<string, unknown>>
+}
 
 /**
  * 渲染进程可见的 api 表面（经 contextBridge 暴露为 `window.api`）。
@@ -19,4 +106,7 @@ export type PingResponse = 'pong'
  */
 export interface RendererApi {
   ping: () => Promise<PingResponse>
+  settings: SettingsApi
+  /** 订阅主进程事件推送；返回取消订阅函数。 */
+  on: <E extends IpcEventName>(event: E, listener: (payload: IpcEventMap[E]) => void) => () => void
 }
