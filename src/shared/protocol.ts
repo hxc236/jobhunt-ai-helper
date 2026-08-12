@@ -27,6 +27,10 @@ import type {
   OptimizationMode,
   OptimizeResult,
   PositionSource,
+  Topic,
+  TopicGenerateInput,
+  TopicInput,
+  TopicStatus,
   ResumeDraft
 } from './types'
 import type { Resume, StoredResume } from './types/resume'
@@ -56,8 +60,12 @@ export const IpcChannel = {
   ResumesRenderHtml: 'resumes:render-html',
   ResumesExportPdf: 'resumes:export-pdf',
   OptimizeRun: 'optimize:run',
+  TopicsList: 'topics:list',
   TopicsGenerate: 'topics:generate',
+  TopicsCreate: 'topics:create',
   TopicsUpdate: 'topics:update',
+  TopicsDelete: 'topics:delete',
+  TopicsSetStatus: 'topics:set-status',
   InterviewStart: 'interview:start',
   InterviewAnswer: 'interview:answer',
   InterviewInterrupt: 'interview:interrupt',
@@ -141,6 +149,20 @@ export interface IpcProtocol {
     request: { jobId: string; resumeId: string; mode: OptimizationMode }
     response: OptimizeResult
   }
+  // F-19（#33）：学习清单 —— generate 从 jd_analysis 生成（优先级 1-5/来源/去重/降级）；
+  // create/update/delete/set-status 人工 CRUD 与三态（todo/learning/learned）。
+  [IpcChannel.TopicsList]: { request: { status?: TopicStatus; jobId?: string }; response: Topic[] }
+  [IpcChannel.TopicsGenerate]: {
+    request: { jobId: string; extras?: TopicGenerateInput }
+    response: { created: Topic[]; skipped: number }
+  }
+  [IpcChannel.TopicsCreate]: { request: { input: TopicInput }; response: Topic }
+  [IpcChannel.TopicsUpdate]: {
+    request: { id: string; patch: { title?: string; note?: string; priority?: number } }
+    response: Topic
+  }
+  [IpcChannel.TopicsDelete]: { request: { id: string }; response: void }
+  [IpcChannel.TopicsSetStatus]: { request: { id: string; status: TopicStatus }; response: Topic }
   // F-12（issue #19）：简历 CRUD —— 入库前服务层做 resume.schema.json 校验；
   // 删除语义：删除基准简历不影响已存派生稿（独立副本）。
   [IpcChannel.ResumesList]: { request: void; response: StoredResume[] }
@@ -214,6 +236,16 @@ export interface PositionsApi {
   setApplication: (positionId: string, patch: ApplicationPatch) => Promise<Application>
 }
 
+/** 渲染进程可见的 topics api 表面（F-19/#33：清单生成 + 人工 CRUD + 三态）。 */
+export interface TopicsApi {
+  list: (filters?: { status?: TopicStatus; jobId?: string }) => Promise<Topic[]>
+  generate: (jobId: string, extras?: TopicGenerateInput) => Promise<{ created: Topic[]; skipped: number }>
+  create: (input: TopicInput) => Promise<Topic>
+  update: (id: string, patch: { title?: string; note?: string; priority?: number }) => Promise<Topic>
+  delete: (id: string) => Promise<void>
+  setStatus: (id: string, status: TopicStatus) => Promise<Topic>
+}
+
 /** 渲染进程可见的 optimize api 表面（#32：触发优化流程；进度经 optimize:progress 事件）。 */
 export interface OptimizeApi {
   run: (jobId: string, resumeId: string, mode: OptimizationMode) => Promise<OptimizeResult>
@@ -258,6 +290,7 @@ export interface RendererApi {
   resumes: ResumeApi
   crawls: CrawlApi
   optimize: OptimizeApi
+  topics: TopicsApi
   /** 订阅主进程事件推送；返回取消订阅函数。 */
   on: <E extends IpcEventName>(event: E, listener: (payload: IpcEventMap[E]) => void) => () => void
 }

@@ -9,6 +9,7 @@ import { PiAgentProvider } from './services/pi-agent-provider'
 import { BrowserWindowFetcher } from './services/browser-window-fetcher'
 import { CrawlService } from './services/crawl'
 import { OptimizeService } from './services/optimize'
+import { TopicService } from './services/topic'
 import { NowcoderParser } from './services/parsers/nowcoder'
 import { LiepinParser } from './services/parsers/liepin'
 import { PositionService } from './services/position'
@@ -99,7 +100,10 @@ app.whenReady().then(() => {
   const optimize = new OptimizeService(db, positions, resumes, agent, {
     onProgress: ({ jobId, round, phase }) => pushEvent(IpcEvent.OptimizeProgress, { jobId, round, phase })
   })
-  registerIpcHandlers({ settings, agent, positions, resumes, crawls, optimize })
+  // F-19（#33）：学习清单服务（jd_analysis → 优先级 1-5 清单 + 人工 CRUD + 三态）
+  const topics = new TopicService(db, positions)
+
+  registerIpcHandlers({ settings, agent, positions, resumes, crawls, optimize, topics })
   createWindow()
 
   app.on('activate', () => {

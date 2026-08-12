@@ -12,6 +12,7 @@ import { ping } from '../services/ping'
 import type { AgentService } from '../services/agent'
 import type { CrawlService } from '../services/crawl'
 import type { OptimizeService } from '../services/optimize'
+import type { TopicService } from '../services/topic'
 import type { PositionService } from '../services/position'
 import { exportResumePdf } from '../services/resume-export'
 import type { ResumeService } from '../services/resume'
@@ -33,13 +34,14 @@ export interface IpcDeps {
   resumes: ResumeService
   crawls: CrawlService
   optimize: OptimizeService
+  topics: TopicService
 }
 
 /**
  * 注册全部 IPC handler（薄层：仅参数校验 + 转调服务）。
  * 主进程启动时调用一次；后续通道（EF-04 起）在此追加。
  */
-export function registerIpcHandlers({ settings, agent, positions, resumes, crawls, optimize }: IpcDeps): void {
+export function registerIpcHandlers({ settings, agent, positions, resumes, crawls, optimize, topics }: IpcDeps): void {
   handleRequest(IpcChannel.Ping, (): PingResponse => ping())
 
   handleRequest(IpcChannel.SettingsGet, (request) => settings.get(request.key))
@@ -83,6 +85,15 @@ export function registerIpcHandlers({ settings, agent, positions, resumes, crawl
   handleRequest(IpcChannel.OptimizeRun, (request) =>
     optimize.run(request.jobId, request.resumeId, request.mode)
   )
+  // F-19（#33）：学习清单生成与人工 CRUD
+  handleRequest(IpcChannel.TopicsList, (request) => topics.list(request))
+  handleRequest(IpcChannel.TopicsGenerate, (request) =>
+    topics.generateFromJob(request.jobId, request.extras)
+  )
+  handleRequest(IpcChannel.TopicsCreate, (request) => topics.create(request.input))
+  handleRequest(IpcChannel.TopicsUpdate, (request) => topics.update(request.id, request.patch))
+  handleRequest(IpcChannel.TopicsDelete, (request) => topics.delete(request.id))
+  handleRequest(IpcChannel.TopicsSetStatus, (request) => topics.setStatus(request.id, request.status))
   handleRequest(IpcChannel.CrawlConfirmImport, (request) =>
     crawls.confirmImport(request.runId, request.sourceUrls)
   )

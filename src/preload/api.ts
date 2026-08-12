@@ -58,6 +58,14 @@ export function createRendererApi(bridge: IpcBridge): RendererApi {
       run: (jobId, resumeId, mode) =>
         bridge.invoke(IpcChannel.OptimizeRun, { jobId, resumeId, mode })
     },
+    topics: {
+      list: (filters) => bridge.invoke(IpcChannel.TopicsList, filters ?? {}),
+      generate: (jobId, extras) => bridge.invoke(IpcChannel.TopicsGenerate, { jobId, extras }),
+      create: (input) => bridge.invoke(IpcChannel.TopicsCreate, { input }),
+      update: (id, patch) => bridge.invoke(IpcChannel.TopicsUpdate, { id, patch }),
+      delete: (id) => bridge.invoke(IpcChannel.TopicsDelete, { id }),
+      setStatus: (id, status) => bridge.invoke(IpcChannel.TopicsSetStatus, { id, status })
+    },
     on: <E extends IpcEventName>(event: E, listener: (payload: IpcEventMap[E]) => void) =>
       bridge.on(event, (payload) => listener(payload as IpcEventMap[E]))
   }

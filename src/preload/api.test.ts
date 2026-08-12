@@ -232,6 +232,25 @@ describe('createRendererApi（渲染侧 api 客户端）', () => {
     expect(fake.invocations).toEqual([{ channel: IpcChannel.ResumesDelete, args: [{ id: 'res-1' }] }])
   })
 
+  it('topics.generate 映射到 topics:generate 并传 { jobId, extras }', async () => {
+    const fake = makeFakeBridge()
+    const api = createRendererApi(fake.bridge)
+    const extras = { gaps: ['缺口'], techStack: ['Java'] }
+    await api.topics.generate('job-1', extras)
+    expect(fake.invocations).toEqual([
+      { channel: IpcChannel.TopicsGenerate, args: [{ jobId: 'job-1', extras }] }
+    ])
+  })
+
+  it('topics.setStatus 映射到 topics:set-status 并传 { id, status }', async () => {
+    const fake = makeFakeBridge()
+    const api = createRendererApi(fake.bridge)
+    await api.topics.setStatus('t-1', 'learned')
+    expect(fake.invocations).toEqual([
+      { channel: IpcChannel.TopicsSetStatus, args: [{ id: 't-1', status: 'learned' }] }
+    ])
+  })
+
   it('on 订阅事件推送：收到载荷；取消订阅后不再送达', () => {
     const fake = makeFakeBridge()
     const api = createRendererApi(fake.bridge)
