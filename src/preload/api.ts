@@ -58,6 +58,10 @@ export function createRendererApi(bridge: IpcBridge): RendererApi {
       run: (jobId, resumeId, mode) =>
         bridge.invoke(IpcChannel.OptimizeRun, { jobId, resumeId, mode })
     },
+    learn: {
+      start: (topicId) => bridge.invoke(IpcChannel.LearnStart, { topicId }),
+      send: (sessionId, text) => bridge.invoke(IpcChannel.LearnSend, { sessionId, text })
+    },
     topics: {
       list: (filters) => bridge.invoke(IpcChannel.TopicsList, filters ?? {}),
       generate: (jobId, extras) => bridge.invoke(IpcChannel.TopicsGenerate, { jobId, extras }),

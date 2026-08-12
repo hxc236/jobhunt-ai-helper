@@ -13,6 +13,7 @@ import type { AgentService } from '../services/agent'
 import type { CrawlService } from '../services/crawl'
 import type { OptimizeService } from '../services/optimize'
 import type { TopicService } from '../services/topic'
+import type { LearnService } from '../services/learn'
 import type { PositionService } from '../services/position'
 import { exportResumePdf } from '../services/resume-export'
 import type { ResumeService } from '../services/resume'
@@ -35,13 +36,14 @@ export interface IpcDeps {
   crawls: CrawlService
   optimize: OptimizeService
   topics: TopicService
+  learn: LearnService
 }
 
 /**
  * 注册全部 IPC handler（薄层：仅参数校验 + 转调服务）。
  * 主进程启动时调用一次；后续通道（EF-04 起）在此追加。
  */
-export function registerIpcHandlers({ settings, agent, positions, resumes, crawls, optimize, topics }: IpcDeps): void {
+export function registerIpcHandlers({ settings, agent, positions, resumes, crawls, optimize, topics, learn }: IpcDeps): void {
   handleRequest(IpcChannel.Ping, (): PingResponse => ping())
 
   handleRequest(IpcChannel.SettingsGet, (request) => settings.get(request.key))
@@ -94,6 +96,9 @@ export function registerIpcHandlers({ settings, agent, positions, resumes, crawl
   handleRequest(IpcChannel.TopicsUpdate, (request) => topics.update(request.id, request.patch))
   handleRequest(IpcChannel.TopicsDelete, (request) => topics.delete(request.id))
   handleRequest(IpcChannel.TopicsSetStatus, (request) => topics.setStatus(request.id, request.status))
+  // F-22（#36）：teach 聊天会话（流式增量经全局 agent:delta 推送，UI 打字机消费）
+  handleRequest(IpcChannel.LearnStart, (request) => learn.start(request.topicId))
+  handleRequest(IpcChannel.LearnSend, (request) => learn.send(request.sessionId, request.text))
   handleRequest(IpcChannel.CrawlConfirmImport, (request) =>
     crawls.confirmImport(request.runId, request.sourceUrls)
   )

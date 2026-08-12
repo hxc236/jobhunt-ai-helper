@@ -10,6 +10,7 @@ import { BrowserWindowFetcher } from './services/browser-window-fetcher'
 import { CrawlService } from './services/crawl'
 import { OptimizeService } from './services/optimize'
 import { TopicService } from './services/topic'
+import { LearnService } from './services/learn'
 import { NowcoderParser } from './services/parsers/nowcoder'
 import { LiepinParser } from './services/parsers/liepin'
 import { PositionService } from './services/position'
@@ -102,8 +103,10 @@ app.whenReady().then(() => {
   })
   // F-19（#33）：学习清单服务（jd_analysis → 优先级 1-5 清单 + 人工 CRUD + 三态）
   const topics = new TopicService(db, positions)
+  // F-22（#36）：teach 聊天会话（learn 任务 /skill:teach + continueRecent 跨次续接）
+  const learn = new LearnService(agent, topics)
 
-  registerIpcHandlers({ settings, agent, positions, resumes, crawls, optimize, topics })
+  registerIpcHandlers({ settings, agent, positions, resumes, crawls, optimize, topics, learn })
   createWindow()
 
   app.on('activate', () => {
