@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { IpcEvent } from '@shared/protocol'
 import {
   TOPIC_STATUSES,
   type PositionListItem,
@@ -31,6 +32,66 @@ const SOURCE_LABELS: Record<TopicSource, string> = {
   interview: '复盘回填'
 }
 const PRIORITY_LABELS: Record<number, string> = { 1: 'P1', 2: 'P2', 3: 'P3', 4: 'P4', 5: 'P5' }
+
+/** teach 聊天（F-22/#36）：流式打字机 + 续接提示。 */
+interface ChatMessage {
+  role: 'user' | 'assistant'
+  text: string
+}
+
+const chatOpen = ref(false)
+const chatTopic = ref('')
+const chatSessionId = ref('')
+const chatResumed = ref(false)
+const chatMessages = ref<ChatMessage[]>([])
+const chatInput = ref('')
+const chatSending = ref(false)
+const chatError = ref('')
+/** 流式缓冲：当前 assistant 回复增量（agent:delta 逐块追加）。 */
+const streamingText = ref('')
+
+async function openChat(topic: Topic): Promise<void> {
+  chatError.value = ''
+  chatTopic.value = topic.title
+  chatMessages.value = []
+  streamingText.value = ''
+  chatOpen.value = true
+  try {
+    const started = await window.api.learn.start(topic.id)
+    chatSessionId.value = started.sessionId
+    chatResumed.value = started.resumed // 续接提示（continueRecent 跨次续接）
+  } catch (err) {
+    chatError.value = String(err)
+  }
+}
+
+async function sendChat(): Promise<void> {
+  const text = chatInput.value.trim()
+  if (text === '' || chatSending.value) return
+  chatInput.value = ''
+  chatMessages.value.push({ role: 'user', text })
+  chatSending.value = true
+  streamingText.value = ''
+  try {
+    const reply = await window.api.learn.send(chatSessionId.value, text)
+    chatMessages.value.push({ role: 'assistant', text: reply })
+  } catch (err) {
+    chatError.value = String(err)
+  } finally {
+    streamingText.value = ''
+    chatSending.value = false
+  }
+}
+
+onMounted(() => {
+  void load()
+  // agent:delta 流式增量：仅消费当前 learn 会话的增量（打字机）
+  const unsubscribe = window.api.on(IpcEvent.AgentDelta, (payload) => {
+    if (payload.sessionId !== chatSessionId.value || !chatOpen.value) return
+    streamingText.value += payload.delta
+  })
+  onUnmounted(unsubscribe)
+})
 
 const groups = computed(() =>
   TOPIC_STATUSES.map((status) => ({
@@ -163,7 +224,7 @@ async function confirmDelete(): Promise<void> {
   }
 }
 
-onMounted(() => void load())
+
 </script>
 
 <template>
@@ -216,7 +277,7 @@ onMounted(() => void load())
           <span v-if="t.note !== ''" class="meta">{{ t.note }}</span>
           <span class="row-actions">
             <template v-if="t.status === 'todo'">
-              <button class="btn" type="button" @click="setStatus(t, 'learning')">开始学习</button>
+              <button class="btn" type="button" @click="setStatus(t, 'learning')">标记学习中</button>
             </template>
             <template v-else-if="t.status === 'learning'">
               <button class="btn btn-primary" type="button" @click="setStatus(t, 'learned')">标记已掌握</button>
@@ -225,6 +286,7 @@ onMounted(() => void load())
             <template v-else>
               <button class="btn" type="button" @click="setStatus(t, 'todo')">重置</button>
             </template>
+            <button class="btn btn-primary" type="button" @click="openChat(t)">聊天学习</button>
             <button class="btn" type="button" @click="startEdit(t)">编辑</button>
             <button class="btn btn-danger-ghost" type="button" @click="deleteTarget = t">删除</button>
           </span>
@@ -253,6 +315,41 @@ onMounted(() => void load())
         <div class="form-actions">
           <button class="btn btn-primary" type="button" :disabled="saving" @click="saveEdit">保存</button>
           <button class="btn" type="button" :disabled="saving" @click="editing = null">取消</button>
+        </div>
+      </div>
+    </div>
+
+        <!-- teach 聊天（F-22/#36） -->
+    <div v-if="chatOpen" class="edit-overlay" @click.self="chatOpen = false">
+      <div class="chat-panel">
+        <div class="chat-head">
+          <span class="chat-title">学习：{{ chatTopic }}</span>
+          <button class="btn" type="button" @click="chatOpen = false">关闭</button>
+        </div>
+        <p v-if="chatResumed" class="chat-resume-hint">已续接上次对话（跨次续接）</p>
+        <p v-if="chatError" class="message error">{{ chatError }}</p>
+        <div class="chat-body">
+          <div v-for="(m, i) in chatMessages" :key="i" class="chat-msg" :class="m.role">
+            <span class="chat-role">{{ m.role === 'user' ? '我' : '助教' }}</span>
+            <span class="chat-text">{{ m.text }}</span>
+          </div>
+          <div v-if="streamingText !== ''" class="chat-msg assistant">
+            <span class="chat-role">助教</span>
+            <span class="chat-text">{{ streamingText }}</span>
+            <span class="chat-cursor">▌</span>
+          </div>
+        </div>
+        <div class="chat-input-bar">
+          <input
+            v-model="chatInput"
+            class="input"
+            placeholder="输入问题，回车发送…"
+            :disabled="chatSending || chatSessionId === ''"
+            @keyup.enter="sendChat"
+          />
+          <button class="btn btn-primary" type="button" :disabled="chatSending || chatSessionId === ''" @click="sendChat">
+            {{ chatSending ? '思考中…' : '发送' }}
+          </button>
         </div>
       </div>
     </div>
@@ -379,6 +476,107 @@ onMounted(() => void load())
   border: 1px solid #fde68a;
   border-radius: 6px;
   color: #92400e;
+}
+
+.chat-panel {
+  background: #fff;
+  border-radius: 8px;
+  width: min(640px, 100%);
+  height: min(520px, 90%);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.chat-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.chat-title {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.chat-resume-hint {
+  margin: 0;
+  padding: 6px 14px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+}
+
+.chat-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chat-msg {
+  display: flex;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.chat-msg.user {
+  flex-direction: row-reverse;
+}
+
+.chat-role {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: #6b7280;
+  background: #f3f4f6;
+  border-radius: 4px;
+  padding: 2px 6px;
+  height: fit-content;
+}
+
+.chat-msg.user .chat-role {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.chat-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: #fafbfc;
+  border-radius: 6px;
+  padding: 6px 10px;
+  max-width: 80%;
+}
+
+.chat-msg.user .chat-text {
+  background: #eff6ff;
+}
+
+.chat-cursor {
+  animation: blink 1s step-end infinite;
+  color: #2b5ca8;
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+.chat-input-bar {
+  display: flex;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid #e5e7eb;
+}
+
+.chat-input-bar .input {
+  flex: 1;
 }
 
 .edit-overlay {

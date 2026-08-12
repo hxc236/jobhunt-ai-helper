@@ -66,6 +66,8 @@ export const IpcChannel = {
   TopicsUpdate: 'topics:update',
   TopicsDelete: 'topics:delete',
   TopicsSetStatus: 'topics:set-status',
+  LearnStart: 'learn:start',
+  LearnSend: 'learn:send',
   InterviewStart: 'interview:start',
   InterviewAnswer: 'interview:answer',
   InterviewInterrupt: 'interview:interrupt',
@@ -163,6 +165,13 @@ export interface IpcProtocol {
   }
   [IpcChannel.TopicsDelete]: { request: { id: string }; response: void }
   [IpcChannel.TopicsSetStatus]: { request: { id: string; status: TopicStatus }; response: Topic }
+  // F-22（#36）：teach 聊天会话 —— start 按条目开 learn 会话（/skill:teach + continueRecent），
+  // send 发送消息（流式增量经 agent:delta 事件推送；返回整轮回复）。
+  [IpcChannel.LearnStart]: {
+    request: { topicId: string }
+    response: { sessionId: string; topicTitle: string; resumed: boolean }
+  }
+  [IpcChannel.LearnSend]: { request: { sessionId: string; text: string }; response: string }
   // F-12（issue #19）：简历 CRUD —— 入库前服务层做 resume.schema.json 校验；
   // 删除语义：删除基准简历不影响已存派生稿（独立副本）。
   [IpcChannel.ResumesList]: { request: void; response: StoredResume[] }
@@ -236,6 +245,12 @@ export interface PositionsApi {
   setApplication: (positionId: string, patch: ApplicationPatch) => Promise<Application>
 }
 
+/** 渲染进程可见的 learn api 表面（F-22/#36：teach 会话）。 */
+export interface LearnApi {
+  start: (topicId: string) => Promise<{ sessionId: string; topicTitle: string; resumed: boolean }>
+  send: (sessionId: string, text: string) => Promise<string>
+}
+
 /** 渲染进程可见的 topics api 表面（F-19/#33：清单生成 + 人工 CRUD + 三态）。 */
 export interface TopicsApi {
   list: (filters?: { status?: TopicStatus; jobId?: string }) => Promise<Topic[]>
@@ -291,6 +306,7 @@ export interface RendererApi {
   crawls: CrawlApi
   optimize: OptimizeApi
   topics: TopicsApi
+  learn: LearnApi
   /** 订阅主进程事件推送；返回取消订阅函数。 */
   on: <E extends IpcEventName>(event: E, listener: (payload: IpcEventMap[E]) => void) => () => void
 }
