@@ -14,6 +14,8 @@
 import type {
   Application,
   ApplicationPatch,
+  CrawlImportResult,
+  CrawlPreview,
   CrawlRun,
   CrawlRunOptions,
   CrawlRunResult,
@@ -61,6 +63,7 @@ export const IpcChannel = {
   InterviewHistory: 'interview:history',
   CrawlRun: 'crawl:run',
   CrawlConfirmImport: 'crawl:confirm-import',
+  CrawlPreview: 'crawl:preview',
   CrawlRuns: 'crawl:runs',
   CrawlGetRun: 'crawl:get-run',
   AsrStart: 'asr:start',
@@ -119,6 +122,12 @@ export interface IpcProtocol {
   [IpcChannel.CrawlRun]: { request: { source: PositionSource; options: CrawlRunOptions }; response: CrawlRunResult }
   [IpcChannel.CrawlRuns]: { request: void; response: CrawlRun[] }
   [IpcChannel.CrawlGetRun]: { request: { id: number }; response: CrawlRun | null }
+  // F-11（#29）：采集预览与确认导入 —— preview 预测入库动作 + 缺字段；confirm-import upsert
+  [IpcChannel.CrawlPreview]: { request: { runId: number }; response: CrawlPreview }
+  [IpcChannel.CrawlConfirmImport]: {
+    request: { runId: number; sourceUrls: string[] }
+    response: CrawlImportResult
+  }
   // F-14（#26）：简历上传解析 —— docx/pdf → 文本 → 结构化草稿（置信度/待确认标记；扫描件降级）
   [IpcChannel.ResumesUploadParse]: { request: { filePath: string }; response: ResumeDraft }
   // F-12（issue #19）：简历 CRUD —— 入库前服务层做 resume.schema.json 校验；
@@ -192,7 +201,7 @@ export interface PositionsApi {
   setApplication: (positionId: string, patch: ApplicationPatch) => Promise<Application>
 }
 
-/** 渲染进程可见的 crawls api 表面（F-08/#22：执行框架 + 留痕；#29 预览确认后续补 confirmImport）。 */
+/** 渲染进程可见的 crawls api 表面（F-08/#22：执行框架 + 留痕；F-11/#29：预览 + 确认导入）。 */
 export interface CrawlApi {
   /** 执行一次采集（节流/重试/上限框架内完成；返回留痕 + 候选，供预览）。 */
   run: (source: PositionSource, options: CrawlRunOptions) => Promise<CrawlRunResult>
@@ -200,6 +209,10 @@ export interface CrawlApi {
   runs: () => Promise<CrawlRun[]>
   /** 单次留痕（#29 预览用）。 */
   getRun: (id: number) => Promise<CrawlRun | null>
+  /** 预览（F-11：新增/更新/缺字段统计 + 候选逐条动作预测）。 */
+  preview: (runId: number) => Promise<CrawlPreview>
+  /** 确认导入（F-11：勾选候选 upsert 入库——重复 URL 更新而非新建）。 */
+  confirmImport: (runId: number, sourceUrls: string[]) => Promise<CrawlImportResult>
 }
 
 /** 渲染进程可见的 resumes api 表面（F-12：多份基准简历 CRUD + 删除语义；F-14：上传解析）。 */

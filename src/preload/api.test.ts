@@ -182,6 +182,22 @@ describe('createRendererApi（渲染侧 api 客户端）', () => {
     ])
   })
 
+  it('crawls.preview 映射到 crawl:preview 并传 { runId }', async () => {
+    const fake = makeFakeBridge()
+    const api = createRendererApi(fake.bridge)
+    await api.crawls.preview(3)
+    expect(fake.invocations).toEqual([{ channel: IpcChannel.CrawlPreview, args: [{ runId: 3 }] }])
+  })
+
+  it('crawls.confirmImport 映射到 crawl:confirm-import 并传 { runId, sourceUrls }', async () => {
+    const fake = makeFakeBridge()
+    const api = createRendererApi(fake.bridge)
+    await api.crawls.confirmImport(3, ['u1', 'u2'])
+    expect(fake.invocations).toEqual([
+      { channel: IpcChannel.CrawlConfirmImport, args: [{ runId: 3, sourceUrls: ['u1', 'u2'] }] }
+    ])
+  })
+
   it('resumes.list 映射到 resumes:list，不带参数', async () => {
     const fake = makeFakeBridge()
     const api = createRendererApi(fake.bridge)

@@ -148,6 +148,28 @@ export interface CrawlRunResult {
   candidates: CrawlCandidate[]
 }
 
+/** 预览行（F-11/#29）：候选 + 预测动作 + 缺字段标记。 */
+export interface CrawlPreviewItem {
+  candidate: CrawlCandidate
+  /** 入库动作预测：source_url 或 dedupe_key 命中 → update。 */
+  action: 'new' | 'update'
+  /** 缺字段（title/end_date 为空；UI 标「待补全/待核实」）。 */
+  missingFields: string[]
+}
+
+/** 采集预览（F-11/#29：「将新增 N / 更新 M / 缺字段 K」摘要 + 候选勾选）。 */
+export interface CrawlPreview {
+  run: CrawlRun
+  items: CrawlPreviewItem[]
+  stats: { inserted: number; updated: number; missing: number }
+}
+
+/** 确认导入结果（upsert 计数）。 */
+export interface CrawlImportResult {
+  inserted: number
+  updated: number
+}
+
 /**
  * 上传解析草稿（F-14/#26：docx/pdf → 文本 → 结构化字段 + 置信度）。
  * 渲染层（#31 上传草稿确认 UI）据此展示待确认字段；扫描件走降级提示。
