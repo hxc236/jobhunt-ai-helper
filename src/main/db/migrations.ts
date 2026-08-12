@@ -83,10 +83,10 @@ export const MIGRATIONS: readonly string[] = [
   );
   CREATE INDEX idx_applications_status ON applications(status);
   `,
-  // v6: positions 增 jd_analysis 列（F-07/#28）—— JD 分析缓存（skills/keywords/requirements/
+  // v5: positions 增 jd_analysis 列（F-07/#28）—— JD 分析缓存（skills/keywords/requirements/
   // hardRequirements/parsedAt/jdFingerprint JSON）；JD 变更（指纹不一致）失效重算。
   `ALTER TABLE positions ADD COLUMN jd_analysis TEXT`,
-  // v7: crawl_runs 表（F-08 / issue #22）—— 采集留痕（spec #13-23）。
+  // v6: crawl_runs 表（F-08 / issue #22）—— 采集留痕（spec #13-23）。
   // - candidates_json：候选快照（预览确认入库的数据源，#29 消费）；
   // - errors_json：失败 URL 列表（含原因）；truncated：达上限截断标志；
   // - status：running（执行中）→ success/partial/failed（留痕终态）。
@@ -106,6 +106,25 @@ export const MIGRATIONS: readonly string[] = [
     created_at      TEXT NOT NULL
   );
   CREATE INDEX idx_crawl_runs_created ON crawl_runs(created_at DESC);
+  `,
+  // v7: topics 表（F-19 / issue #33）—— 学习清单条目。
+  // - 优先级 1-5：hard（硬性要求）1 / mentioned（JD 提及技能）2 / gap（简历缺口）3 /
+  //   project（项目 techStack）4 / manual（人工添加）5（interview 为复盘回填来源，#39）；
+  // - 三态 status：todo / learning / learned；去重：同 job 下 title 唯一（应用层先查后插）。
+  `
+  CREATE TABLE topics (
+    id         TEXT PRIMARY KEY,
+    title      TEXT NOT NULL,
+    status     TEXT NOT NULL DEFAULT 'todo' CHECK (status IN ('todo','learning','learned')),
+    priority   INTEGER NOT NULL CHECK (priority BETWEEN 1 AND 5),
+    source     TEXT NOT NULL CHECK (source IN ('hard','mentioned','gap','project','manual','interview')),
+    job_id     TEXT,
+    note       TEXT DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX idx_topics_status ON topics(status);
+  CREATE INDEX idx_topics_job ON topics(job_id);
   `
 ]
 

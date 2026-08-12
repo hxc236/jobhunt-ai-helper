@@ -205,6 +205,46 @@ export interface CrawlImportResult {
   updated: number
 }
 
+/** 学习条目三态（topics.status；F-19/#33）。 */
+export const TOPIC_STATUSES = ['todo', 'learning', 'learned'] as const
+export type TopicStatus = (typeof TOPIC_STATUSES)[number]
+
+/** 学习条目来源（topics.source；interview = 复盘回填，#39）。 */
+export const TOPIC_SOURCES = ['hard', 'mentioned', 'gap', 'project', 'manual', 'interview'] as const
+export type TopicSource = (typeof TOPIC_SOURCES)[number]
+
+/**
+ * 学习条目（F-19/#33）：优先级 1-5（hard 1 / mentioned 2 / gap 3 / project 4 / manual 5），
+ * 三态流转 todo → learning → learned。
+ */
+export interface Topic {
+  id: string
+  title: string
+  status: TopicStatus
+  priority: number
+  source: TopicSource
+  /** 关联职位（清单生成来源；人工条目可为 null）。 */
+  job_id: string | null
+  note: string
+  created_at: string
+  updated_at: string
+}
+
+/** 人工创建学习条目（F-19/#33）。 */
+export interface TopicInput {
+  title: string
+  note?: string
+  jobId?: string | null
+}
+
+/** 清单生成输入（F-19/#33）：缺口/项目 techStack 可选——缺省时降级为仅 JD 分析来源。 */
+export interface TopicGenerateInput {
+  /** 缺口项（来自优化流程结果 gaps）。 */
+  gaps?: string[]
+  /** 项目 techStack（来自所选基准简历）。 */
+  techStack?: string[]
+}
+
 /**
  * 上传解析草稿（F-14/#26：docx/pdf → 文本 → 结构化字段 + 置信度）。
  * 渲染层（#31 上传草稿确认 UI）据此展示待确认字段；扫描件走降级提示。
