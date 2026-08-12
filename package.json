@@ -16,7 +16,8 @@
     "typecheck:web": "vue-tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "test": "node scripts/test.mjs run",
-    "test:watch": "node scripts/test.mjs"
+    "test:watch": "node scripts/test.mjs",
+    "postinstall": "node node_modules/electron/install.js"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "0.84.1",
