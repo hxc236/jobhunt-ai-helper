@@ -51,7 +51,9 @@ interface TaskStrategy {
 const TASK_STRATEGIES: Record<AgentTaskType, TaskStrategy> = {
   optimize: { continueRecent: false },
   interview: { continueRecent: false },
-  learn: { tools: ['read', 'write', 'edit', 'bash', 'ls', 'grep', 'find'], continueRecent: true }
+  learn: { tools: ['read', 'write', 'edit', 'bash', 'ls', 'grep', 'find'], continueRecent: true },
+  // 企业性质推断（issue #54）：inMemory 单次会话，无工具（联网搜索由服务层编排，不扩 agent 工具面）
+  company_type: { continueRecent: false }
 }
 
 /** auth.json 里 api_key 凭据的最小形状（与 pi 的 Credential 兼容）。 */
