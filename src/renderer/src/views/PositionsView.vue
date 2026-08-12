@@ -736,6 +736,69 @@ onMounted(() => {
   letter-spacing: 0.02em;
 }
 
+/* 采集候选卡片（原型 crawl-item / crawl-summary） */
+.crawl-summary {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  font-size: 12px;
+}
+
+.crawl-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 0;
+  border-top: 1px solid var(--border);
+}
+
+.crawl-item:first-of-type {
+  border-top: none;
+}
+
+.crawl-item input[type='checkbox'] {
+  width: 15px;
+  height: 15px;
+  margin-top: 3px;
+  accent-color: var(--fg);
+  flex: none;
+}
+
+.ci-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.ci-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.ci-meta {
+  font-size: 11.5px;
+  color: var(--muted);
+  margin-top: 2px;
+  line-height: 1.6;
+}
+
+.ci-meta .pill {
+  margin-left: 6px;
+  vertical-align: 1px;
+}
+
+.ci-tags {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+
 .detail {
   overflow-y: auto;
   padding: 20px 24px;
