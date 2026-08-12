@@ -11,6 +11,8 @@
  * 作为后续服务 ticket（EF-04 起）的协议预留；请求/响应类型随各 ticket 逐个补齐。
  */
 
+import type { Resume, StoredResume } from './types/resume'
+
 /** 请求-响应通道常量。 */
 export const IpcChannel = {
   Ping: 'ping',
@@ -28,6 +30,7 @@ export const IpcChannel = {
   ResumesList: 'resumes:list',
   ResumesCreate: 'resumes:create',
   ResumesUpdate: 'resumes:update',
+  ResumesDelete: 'resumes:delete',
   ResumesUploadParse: 'resumes:upload-parse',
   ResumesRenderHtml: 'resumes:render-html',
   ResumesExportPdf: 'resumes:export-pdf',
@@ -76,6 +79,12 @@ export interface IpcProtocol {
     request: { provider: string; apiKey: string; model?: string }
     response: void
   }
+  // F-12（issue #19）：简历 CRUD —— 入库前服务层做 resume.schema.json 校验；
+  // 删除语义：删除基准简历不影响已存派生稿（独立副本）。
+  [IpcChannel.ResumesList]: { request: void; response: StoredResume[] }
+  [IpcChannel.ResumesCreate]: { request: { resume: Resume }; response: StoredResume }
+  [IpcChannel.ResumesUpdate]: { request: { id: string; resume: Resume }; response: StoredResume }
+  [IpcChannel.ResumesDelete]: { request: { id: string }; response: void }
 }
 
 export type IpcChannelName = keyof IpcProtocol
@@ -122,6 +131,14 @@ export interface SettingsApi {
   configureProvider: (provider: string, apiKey: string, model?: string) => Promise<void>
 }
 
+/** 渲染进程可见的 resumes api 表面（F-12：多份基准简历 CRUD + 删除语义）。 */
+export interface ResumeApi {
+  list: () => Promise<StoredResume[]>
+  create: (resume: Resume) => Promise<StoredResume>
+  update: (id: string, resume: Resume) => Promise<StoredResume>
+  delete: (id: string) => Promise<void>
+}
+
 /**
  * 渲染进程可见的 api 表面（经 contextBridge 暴露为 `window.api`）。
  * 渲染层只通过该对象调用主进程，不裸调 ipcRenderer。
@@ -129,6 +146,7 @@ export interface SettingsApi {
 export interface RendererApi {
   ping: () => Promise<PingResponse>
   settings: SettingsApi
+  resumes: ResumeApi
   /** 订阅主进程事件推送；返回取消订阅函数。 */
   on: <E extends IpcEventName>(event: E, listener: (payload: IpcEventMap[E]) => void) => () => void
 }

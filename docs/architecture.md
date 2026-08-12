@@ -48,7 +48,7 @@ src/
 
 - **SettingsService**: `getStatus(): {configured, provider, model}` · `configureProvider(provider, apiKey, model)`（写应用自有 auth.json 经 ModelRuntime）· `get/set(key, value)`（非敏感设置入 settings 表）
 - **PositionService**: `create(input)`（含 dedupe_key 生成）· `update(id, patch)` · `list(filters)` · `get(id)` · `setApplicationState(positionId, {appliedAt, channel, status})`（状态机校验）
-- **ResumeService**: `list() / create(resume) / update(id, resume)`（schema 校验）· `parseUpload(filePath): Draft`（docx/pdf）· `confirmDraft(draft): id` · `renderHtml(id): string`（A4 模板）· `exportPdf(id): path`
+- **ResumeService**: `list() / get(id) / create(resume) / update(id, resume)`（schema 校验）· `delete(id)`（删除基准不影响已存派生稿——独立副本，F-12 已实现）· `parseUpload(filePath): Draft`（docx/pdf）· `confirmDraft(draft): id` · `renderHtml(id): string`（A4 模板）· `exportPdf(id): path`
 - **ScoreEngine**（纯函数，无依赖）: `score({jdAnalysis, resume}): {total, dimensions[{name,score,evidence}], hits, misses}`
 - **OptimizeService**: `run(jobId, resumeId, mode): OptimizeTask`（三轮 agent：JD 解析→评估→生成优化稿+changes[]；写 jd_analysis 缓存；`optimizationMode: strict|balanced`）
 - **TopicService**: `generateFromJob(jobId)`（jd_analysis + 缺口 + 项目 techStack，优先级 1-5；无缺口来源时降级）· `create/update/delete(id)` · `setStatus(id, status)`
@@ -65,7 +65,7 @@ src/
 请求-响应（invoke/handle）：
   settings:get-status · settings:configure-provider
   positions:list · positions:create · positions:update · positions:set-application
-  resumes:list · resumes:create · resumes:update · resumes:upload-parse
+  resumes:list · resumes:create · resumes:update · resumes:delete · resumes:upload-parse
   resumes:render-html · resumes:export-pdf
   optimize:run · topics:generate · topics:update
   interview:start · interview:answer · interview:interrupt · interview:end · interview:history

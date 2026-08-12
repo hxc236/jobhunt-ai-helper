@@ -10,6 +10,7 @@ import {
 } from '../../shared/protocol'
 import { ping } from '../services/ping'
 import type { AgentService } from '../services/agent'
+import type { ResumeService } from '../services/resume'
 import type { SettingsService } from '../services/settings'
 import { pushEvent } from './events'
 
@@ -24,13 +25,14 @@ function handleRequest<C extends IpcChannelName>(
 export interface IpcDeps {
   settings: SettingsService
   agent: AgentService
+  resumes: ResumeService
 }
 
 /**
  * 注册全部 IPC handler（薄层：仅参数校验 + 转调服务）。
  * 主进程启动时调用一次；后续通道（EF-04 起）在此追加。
  */
-export function registerIpcHandlers({ settings, agent }: IpcDeps): void {
+export function registerIpcHandlers({ settings, agent, resumes }: IpcDeps): void {
   handleRequest(IpcChannel.Ping, (): PingResponse => ping())
 
   handleRequest(IpcChannel.SettingsGet, (request) => settings.get(request.key))
@@ -46,4 +48,10 @@ export function registerIpcHandlers({ settings, agent }: IpcDeps): void {
   handleRequest(IpcChannel.SettingsConfigureProvider, (request) =>
     agent.configureProvider(request.provider, request.apiKey, request.model)
   )
+
+  // F-12（issue #19）：简历 CRUD —— 服务层负责 schema 校验与删除语义（基准删除不影响派生稿）
+  handleRequest(IpcChannel.ResumesList, () => resumes.list())
+  handleRequest(IpcChannel.ResumesCreate, (request) => resumes.create(request.resume))
+  handleRequest(IpcChannel.ResumesUpdate, (request) => resumes.update(request.id, request.resume))
+  handleRequest(IpcChannel.ResumesDelete, (request) => resumes.delete(request.id))
 }

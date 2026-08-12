@@ -27,6 +27,12 @@ export function createRendererApi(bridge: IpcBridge): RendererApi {
       configureProvider: (provider, apiKey, model) =>
         bridge.invoke(IpcChannel.SettingsConfigureProvider, { provider, apiKey, model })
     },
+    resumes: {
+      list: () => bridge.invoke(IpcChannel.ResumesList),
+      create: (resume) => bridge.invoke(IpcChannel.ResumesCreate, { resume }),
+      update: (id, resume) => bridge.invoke(IpcChannel.ResumesUpdate, { id, resume }),
+      delete: (id) => bridge.invoke(IpcChannel.ResumesDelete, { id })
+    },
     on: <E extends IpcEventName>(event: E, listener: (payload: IpcEventMap[E]) => void) =>
       bridge.on(event, (payload) => listener(payload as IpcEventMap[E]))
   }

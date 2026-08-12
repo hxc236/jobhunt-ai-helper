@@ -1,0 +1,118 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "resume.schema.json",
+  "title": "Resume",
+  "description": "校招简历数据模型 v1 定稿（#7 验收，源自 prototype/resume-model 分支）：基准简历与按 JD 优化的派生稿共用此 schema，派生关系记录在 meta 中",
+  "type": "object",
+  "required": ["meta", "basics", "education"],
+  "properties": {
+    "meta": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "简历 id（服务端生成，入库时写入）" },
+        "title": { "type": "string", "description": "简历名，如「基准简历」/「华为-软件开发-优化稿」" },
+        "baseResumeId": { "type": ["string", "null"], "description": "派生自哪个基准简历（优化稿填写；基准简历为 null）" },
+        "targetJobId": { "type": ["string", "null"], "description": "针对哪个职位卡优化（优化稿填写；基准简历为 null）" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "basics": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string" },
+        "location": { "type": "string", "description": "现居城市" },
+        "birthday": { "type": "string", "description": "YYYY-MM（校招简历常用）" },
+        "gender": { "type": "string", "enum": ["男", "女"] },
+        "politicalStatus": { "type": "string", "description": "政治面貌：群众/团员/党员（国企必填项）" },
+        "hometown": { "type": "string", "description": "生源地（国企常用）" },
+        "jobIntention": {
+          "type": "object",
+          "properties": {
+            "position": { "type": "string", "description": "求职意向岗位" },
+            "city": { "type": "array", "items": { "type": "string" }, "description": "期望城市（可多个）" },
+            "salary": { "type": "string", "description": "期望薪资，如「面议」" }
+          }
+        },
+        "links": {
+          "type": "array",
+          "items": { "type": "object", "properties": { "label": { "type": "string" }, "url": { "type": "string" } } },
+          "description": "GitHub / 博客 / 作品链接"
+        }
+      }
+    },
+    "education": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["school", "degree", "major"],
+        "properties": {
+          "school": { "type": "string" },
+          "degree": { "type": "string", "description": "本科/硕士/博士" },
+          "major": { "type": "string" },
+          "startDate": { "type": "string", "description": "YYYY-MM" },
+          "endDate": { "type": ["string", "null"], "description": "YYYY-MM；应届未毕业可留 null" },
+          "gpa": { "type": "string", "description": "如 3.8/4.0" },
+          "rank": { "type": "string", "description": "排名，如 前10%（国企看重）" },
+          "courses": { "type": "array", "items": { "type": "string" }, "description": "相关课程" },
+          "honors": { "type": "array", "items": { "type": "string" }, "description": "奖学金/荣誉" }
+        }
+      }
+    },
+    "skills": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "category": { "type": "string", "description": "分类：编程语言/框架/工具/其他" },
+          "items": { "type": "array", "items": { "type": "string" } },
+          "proficiency": { "type": "string", "enum": ["熟练", "熟悉", "了解"], "description": "熟练度（HR 视角需要）" }
+        }
+      }
+    },
+    "projects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "role": { "type": "string" },
+          "startDate": { "type": "string" },
+          "endDate": { "type": "string" },
+          "description": { "type": "string" },
+          "highlights": { "type": "array", "items": { "type": "string" }, "description": "要点，动词开头、量化优先" },
+          "techStack": { "type": "array", "items": { "type": "string" }, "description": "技术栈（匹配度计算依据）" },
+          "link": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "experience": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "company": { "type": "string" },
+          "title": { "type": "string" },
+          "startDate": { "type": "string" },
+          "endDate": { "type": "string" },
+          "highlights": { "type": "array", "items": { "type": "string" } },
+          "techStack": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "certificates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "issuer": { "type": "string" },
+          "date": { "type": "string" }
+        }
+      }
+    },
+    "selfAssessment": { "type": "string", "description": "自我评价（可留空，优化稿生成）" }
+  }
+}

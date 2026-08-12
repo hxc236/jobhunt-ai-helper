@@ -86,6 +86,40 @@ describe('createRendererApi（渲染侧 api 客户端）', () => {
     ])
   })
 
+  it('resumes.list 映射到 resumes:list，不带参数', async () => {
+    const fake = makeFakeBridge()
+    const api = createRendererApi(fake.bridge)
+    await api.resumes.list()
+    expect(fake.invocations).toEqual([{ channel: IpcChannel.ResumesList, args: [] }])
+  })
+
+  it('resumes.create 映射到 resumes:create 并传 { resume }', async () => {
+    const fake = makeFakeBridge()
+    const api = createRendererApi(fake.bridge)
+    const resume = { meta: {}, basics: { name: '张伟' }, education: [] }
+    await api.resumes.create(resume)
+    expect(fake.invocations).toEqual([{ channel: IpcChannel.ResumesCreate, args: [{ resume }] }])
+  })
+
+  it('resumes.update 映射到 resumes:update 并传 { id, resume }', async () => {
+    const fake = makeFakeBridge()
+    const api = createRendererApi(fake.bridge)
+    await api.resumes.update('res-1', { meta: {}, basics: { name: '张伟' }, education: [] })
+    expect(fake.invocations).toEqual([
+      {
+        channel: IpcChannel.ResumesUpdate,
+        args: [{ id: 'res-1', resume: { meta: {}, basics: { name: '张伟' }, education: [] } }]
+      }
+    ])
+  })
+
+  it('resumes.delete 映射到 resumes:delete 并传 { id }', async () => {
+    const fake = makeFakeBridge()
+    const api = createRendererApi(fake.bridge)
+    await api.resumes.delete('res-1')
+    expect(fake.invocations).toEqual([{ channel: IpcChannel.ResumesDelete, args: [{ id: 'res-1' }] }])
+  })
+
   it('on 订阅事件推送：收到载荷；取消订阅后不再送达', () => {
     const fake = makeFakeBridge()
     const api = createRendererApi(fake.bridge)

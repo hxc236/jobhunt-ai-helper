@@ -6,6 +6,7 @@ import { IpcEvent } from '../shared/protocol'
 import { pushEvent } from './ipc/events'
 import { AgentService, type AgentEvent } from './services/agent'
 import { PiAgentProvider } from './services/pi-agent-provider'
+import { ResumeService } from './services/resume'
 import { SettingsService } from './services/settings'
 
 /** agent 事件 → 主 → 渲染事件推送（agent:delta 流式文本 / agent:status 状态与错误）。 */
@@ -63,6 +64,8 @@ app.whenReady().then(() => {
   // 单文件本地库：userData/jobhunt.db（EF-02；测试注入 :memory: 见 db/database.ts）
   const db = openDatabase(join(app.getPath('userData'), 'jobhunt.db'))
   const settings = new SettingsService(db)
+  // F-12（issue #19）：简历 CRUD（schema 校验 + 删除语义，见 services/resume.ts）
+  const resumes = new ResumeService(db)
 
   // EF-04：AgentService（pi SDK 封装 + fake 可注入）。认证目录为应用自有 userData/pi
   // （auth.json/models.json/sessions），不依赖用户 ~/.pi/agent；teach 技能用仓库内置副本。
@@ -75,7 +78,7 @@ app.whenReady().then(() => {
     { onEvent: forwardAgentEvent }
   )
 
-  registerIpcHandlers({ settings, agent })
+  registerIpcHandlers({ settings, agent, resumes })
   createWindow()
 
   app.on('activate', () => {

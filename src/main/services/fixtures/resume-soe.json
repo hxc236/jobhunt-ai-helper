@@ -1,0 +1,65 @@
+{
+  "meta": {
+    "id": "res-002",
+    "title": "基准简历（国企向）",
+    "baseResumeId": null,
+    "targetJobId": null,
+    "updatedAt": "2026-08-12T00:00:00Z"
+  },
+  "basics": {
+    "name": "李娜",
+    "phone": "139-0000-5678",
+    "email": "lina@example.com",
+    "location": "成都",
+    "birthday": "2003-11",
+    "gender": "女",
+    "politicalStatus": "中共党员",
+    "hometown": "四川绵阳",
+    "jobIntention": {
+      "position": "软件开发工程师（校招）",
+      "city": ["成都", "西安"],
+      "salary": "面议"
+    },
+    "links": []
+  },
+  "education": [
+    {
+      "school": "电子科技大学",
+      "degree": "本科",
+      "major": "软件工程",
+      "startDate": "2022-09",
+      "endDate": "2026-06",
+      "gpa": "3.9/4.0",
+      "rank": "前 5%",
+      "courses": ["软件工程", "计算机网络", "操作系统", "数据库系统"],
+      "honors": ["国家奖学金（2025）", "校级优秀学生干部", "全国大学生数学建模竞赛省一等奖"]
+    }
+  ],
+  "skills": [
+    { "category": "编程语言", "items": ["Java", "Python"], "proficiency": "熟悉" },
+    { "category": "框架", "items": ["Spring Boot", "MyBatis"], "proficiency": "熟悉" },
+    { "category": "数据库", "items": ["MySQL", "Oracle", "SQLite"], "proficiency": "熟悉" }
+  ],
+  "projects": [
+    {
+      "name": "智慧校园一卡通管理系统",
+      "role": "项目负责人",
+      "startDate": "2025-02",
+      "endDate": "2025-07",
+      "description": "与校信息中心合作开发的一卡通数据管理系统（课程设计）",
+      "highlights": [
+        "负责需求分析、数据库设计与核心模块开发，使用 Spring Boot + MyBatis + Oracle",
+        "实现充值/消费流水查询与报表导出，支持 2 万+ 用户数据",
+        "编写系统设计文档与测试用例，项目获学院优秀课程设计"
+      ],
+      "techStack": ["Java", "Spring Boot", "Oracle", "Vue 2"],
+      "link": null
+    }
+  ],
+  "experience": [],
+  "certificates": [
+    { "name": "大学英语六级 CET-6", "issuer": "教育部考试中心", "date": "2024-12" },
+    { "name": "计算机二级（Java）", "issuer": "教育部考试中心", "date": "2024-03" }
+  ],
+  "selfAssessment": "专业基础扎实，成绩优异，责任心强；有社团与班级干部经历，组织协调能力较好，希望长期稳定发展。"
+}

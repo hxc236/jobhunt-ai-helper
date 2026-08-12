@@ -69,4 +69,28 @@ describe('applyMigrations', () => {
     })
     reopened.close()
   })
+
+  it('既有 v1 库（仅 settings）升级到最新版本：旧数据保留、新表可用', () => {
+    const file = openTempFile()
+    tempDirs.add(join(file, '..'))
+
+    // 模拟旧版本库：只应用第一条迁移（v1 settings），写入数据后关闭
+    const old = new Database(file)
+    applyMigrations(old, MIGRATIONS.slice(0, 1))
+    old.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run('k', 'v1')
+    old.close()
+
+    // 重开并全量迁移：user_version 到最新，旧数据保留
+    const upgraded = new Database(file)
+    migrate(upgraded)
+    expect(userVersion(upgraded)).toBe(MIGRATIONS.length)
+    expect(upgraded.prepare('SELECT value FROM settings WHERE key = ?').get('k')).toEqual({ value: 'v1' })
+
+    // 新表（resumes，v3）可用，且 json_valid 约束拒绝非 JSON 文本
+    upgraded
+      .prepare('INSERT INTO resumes (id, json) VALUES (?, ?)')
+      .run('r1', '{"meta":{},"basics":{"name":"张伟"},"education":[]}')
+    expect(() => upgraded.prepare('INSERT INTO resumes (id, json) VALUES (?, ?)').run('r2', 'not json')).toThrow()
+    upgraded.close()
+  })
 })
