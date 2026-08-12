@@ -94,6 +94,78 @@ function pttStop(): void {
   mediaRecorder.value = null
 }
 
+/** 历史回看与复盘（F-27/#41）。 */
+interface HistoryItem {
+  id: string
+  job_id: string | null
+  style: string
+  status: string
+  transcript: Array<{ role: 'user' | 'assistant'; text: string; ts: string }>
+  review: {
+    total: number
+    dimensions: Array<{ name: string; score: number; comment: string }>
+    strengths: string[]
+    weaknesses: Array<{ item: string; reference: string }>
+    nextSteps: string[]
+  } | null
+  created_at: string
+}
+
+const history = ref<HistoryItem[]>([])
+const detail = ref<HistoryItem | null>(null)
+const suggestMessage = ref('')
+const suggesting = ref(false)
+
+const RING_CIRCUMFERENCE = 2 * Math.PI * 42
+
+function ringOffset(scoreValue: number): number {
+  return RING_CIRCUMFERENCE * (1 - scoreValue / 100)
+}
+
+function totalClass(scoreValue: number): string {
+  if (scoreValue >= 80) return 'ring-green'
+  if (scoreValue >= 60) return 'ring-blue'
+  return 'ring-red'
+}
+
+function fmtTime(iso: string): string {
+  return iso.slice(0, 16).replace('T', ' ')
+}
+
+async function loadHistory(): Promise<void> {
+  try {
+    history.value = (await window.api.interview.history()) as HistoryItem[]
+  } catch (err) {
+    errorMessage.value = `加载历史失败：${String(err)}`
+  }
+}
+
+/** suggestLearn：薄弱点一键入学习清单（source=interview，重复跳过）。 */
+async function suggestLearn(): Promise<void> {
+  const d = detail.value
+  if (d === null || d.review === null) return
+  suggesting.value = true
+  suggestMessage.value = ''
+  try {
+    let added = 0
+    let skipped = 0
+    for (const w of d.review.weaknesses) {
+      const topic = await window.api.topics.createInterviewSuggestion(
+        w.item,
+        w.reference !== '' ? `参考回答：${w.reference}` : '',
+        d.job_id
+      )
+      if (topic === null) skipped++
+      else added++
+    }
+    suggestMessage.value = `已加入学习清单 ${added} 条${skipped > 0 ? `（重复跳过 ${skipped} 条）` : ''}`
+  } catch (err) {
+    suggestMessage.value = `加入失败：${String(err)}`
+  } finally {
+    suggesting.value = false
+  }
+}
+
 const STYLE_DESCS: Record<string, string> = {
   real: '真实面试官：追问细节、验证真实性',
   coach: '教练式：多鼓励、给提示、引导思考',
@@ -184,6 +256,7 @@ async function endInterview(): Promise<void> {
 onMounted(() => {
   void loadPositions()
   void checkAsr()
+  void loadHistory()
   // 面试流式增量（agent:delta 按会话过滤）——打字机渲染
   const unsubscribe = window.api.on(IpcEvent.AgentDelta, (payload) => {
     if (payload.sessionId !== sessionId.value || !started.value) return
@@ -222,6 +295,104 @@ onMounted(() => {
       <p class="hint">文字输入即可完成整场面试。</p>
       <p v-if="asrHint !== '' && !asrReady" class="message error asr-hint">{{ asrHint }}</p>
     </section>
+
+    <!-- 历史回看与复盘（F-27/#41） -->
+    <section v-if="!started" class="card">
+      <h2 class="card-title">面试历史与复盘 <span class="count">{{ history.length }}</span></h2>
+      <p v-if="history.length === 0" class="hint">暂无已完成面试——结束后自动生成复盘。</p>
+      <ul v-else class="history-list">
+        <li v-for="h in history" :key="h.id" class="history-row">
+          <span class="pill" :class="h.review ? 'pill-has-review' : 'pill-no-review'">
+            {{ h.review ? '已复盘' : '复盘生成中' }}
+          </span>
+          <span class="meta">{{ STYLE_LABELS[h.style] ?? h.style }}风格</span>
+          <span v-if="h.review" class="history-score">{{ h.review.total }}分</span>
+          <span class="meta">{{ fmtTime(h.created_at) }}</span>
+          <button class="btn" type="button" @click="detail = h">查看详情</button>
+        </li>
+      </ul>
+    </section>
+
+    <!-- 复盘详情模态 -->
+    <div v-if="detail" class="edit-overlay" @click.self="detail = null">
+      <div class="detail-panel">
+        <div class="detail-head">
+          <span class="detail-title">面试详情（{{ fmtTime(detail.created_at) }}）</span>
+          <button class="btn" type="button" @click="detail = null">关闭</button>
+        </div>
+        <p v-if="suggestMessage" class="message" :class="suggestMessage.startsWith('已加入') ? 'success' : 'error'">
+          {{ suggestMessage }}
+        </p>
+
+        <template v-if="detail.review">
+          <div class="review-top">
+            <div class="ring-wrap" :class="totalClass(detail.review.total)">
+              <svg viewBox="0 0 100 100" class="ring">
+                <circle cx="50" cy="50" r="42" class="ring-track" />
+                <circle
+                  cx="50"
+                  cy="50"
+                  r="42"
+                  class="ring-value"
+                  :stroke-dasharray="RING_CIRCUMFERENCE"
+                  :stroke-dashoffset="ringOffset(detail.review.total)"
+                  transform="rotate(-90 50 50)"
+                />
+              </svg>
+              <div class="ring-center">
+                <span class="ring-total">{{ detail.review.total }}</span>
+                <span class="ring-label">总分</span>
+              </div>
+            </div>
+            <div class="dims">
+              <div v-for="d in detail.review.dimensions" :key="d.name" class="dim">
+                <span class="dim-name">{{ d.name }}</span>
+                <span class="dim-bar"><i :style="{ width: d.score + '%' }" :class="totalClass(d.score)" /></span>
+                <span class="dim-score">{{ d.score }}</span>
+              </div>
+            </div>
+          </div>
+
+          <p v-if="detail.review.strengths.length > 0" class="block-label">亮点</p>
+          <ul class="plain-list">
+            <li v-for="(s, i) in detail.review.strengths" :key="i">{{ s }}</li>
+          </ul>
+
+          <p class="block-label">薄弱点</p>
+          <ul class="plain-list">
+            <li v-for="(w, i) in detail.review.weaknesses" :key="i">
+              <span>{{ w.item }}</span>
+              <details class="ref">
+                <summary>参考回答</summary>
+                <p class="ref-text">{{ w.reference }}</p>
+              </details>
+            </li>
+          </ul>
+
+          <p v-if="detail.review.nextSteps.length > 0" class="block-label">下一步建议</p>
+          <ul class="plain-list">
+            <li v-for="(n, i) in detail.review.nextSteps" :key="i">{{ n }}</li>
+          </ul>
+
+          <div class="detail-actions">
+            <button class="btn btn-primary" type="button" :disabled="suggesting" @click="suggestLearn">
+              {{ suggesting ? '加入中…' : '薄弱点一键加入学习清单' }}
+            </button>
+          </div>
+        </template>
+        <p v-else class="hint">复盘生成失败或尚未生成。</p>
+
+        <details class="transcript">
+          <summary>对话回看（{{ detail.transcript.length }} 轮）</summary>
+          <div class="transcript-body">
+            <div v-for="(m, i) in detail.transcript" :key="i" class="t-msg" :class="m.role">
+              <span class="t-role">{{ m.role === 'user' ? '我' : '面试官' }}</span>
+              <span class="t-text">{{ m.text }}</span>
+            </div>
+          </div>
+        </details>
+      </div>
+    </div>
 
     <!-- 会话 -->
     <section v-else class="card">
@@ -463,6 +634,245 @@ onMounted(() => {
   background: #dc2626;
   border-color: #dc2626;
   color: #fff;
+}
+
+/* 历史与复盘（F-27/#41） */
+.history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.history-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 0;
+  border-bottom: 1px solid #f0f1f3;
+  font-size: 13px;
+}
+
+.history-row:last-child {
+  border-bottom: none;
+}
+
+.history-score {
+  font-weight: 700;
+  color: #2b5ca8;
+}
+
+.pill-has-review {
+  background: #ecfdf5;
+  color: #059669;
+}
+
+.pill-no-review {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+.detail-panel {
+  background: #fff;
+  border-radius: 8px;
+  width: min(720px, 100%);
+  height: min(680px, 92%);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.detail-title {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.review-top {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  padding: 14px 14px 0;
+}
+
+.ring-wrap {
+  position: relative;
+  width: 110px;
+  height: 110px;
+  flex-shrink: 0;
+}
+
+.ring {
+  width: 100%;
+  height: 100%;
+}
+
+.ring-track {
+  fill: none;
+  stroke: #f0f1f3;
+  stroke-width: 10;
+}
+
+.ring-value {
+  fill: none;
+  stroke-width: 10;
+  stroke-linecap: round;
+}
+
+.ring-green .ring-value {
+  stroke: #059669;
+}
+
+.ring-blue .ring-value {
+  stroke: #2b5ca8;
+}
+
+.ring-red .ring-value {
+  stroke: #dc2626;
+}
+
+.ring-center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.ring-total {
+  font-size: 24px;
+  font-weight: 700;
+}
+
+.ring-label {
+  font-size: 11px;
+  color: #6b7280;
+}
+
+.dims {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dim {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.dim-name {
+  width: 56px;
+}
+
+.dim-bar {
+  flex: 1;
+  height: 7px;
+  background: #f0f1f3;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.dim-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+}
+
+.dim-score {
+  width: 24px;
+  text-align: right;
+  font-weight: 600;
+}
+
+.block-label {
+  margin: 12px 14px 4px;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.plain-list {
+  margin: 0 14px;
+  padding-left: 20px;
+  font-size: 13px;
+  line-height: 1.8;
+}
+
+.ref {
+  margin-left: 8px;
+  font-size: 12px;
+}
+
+.ref summary {
+  color: #2b5ca8;
+  cursor: pointer;
+}
+
+.ref-text {
+  margin: 4px 0 0;
+  color: #374151;
+  background: #fafbfc;
+  border-radius: 4px;
+  padding: 6px 8px;
+}
+
+.detail-actions {
+  padding: 12px 14px 0;
+}
+
+.transcript {
+  margin: 14px;
+  font-size: 13px;
+}
+
+.transcript summary {
+  cursor: pointer;
+  color: #2b5ca8;
+}
+
+.transcript-body {
+  margin-top: 8px;
+  max-height: 220px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.t-msg {
+  display: flex;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.t-msg.user {
+  flex-direction: row-reverse;
+}
+
+.t-role {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: #6b7280;
+}
+
+.t-text {
+  background: #fafbfc;
+  border-radius: 4px;
+  padding: 4px 8px;
+  max-width: 80%;
+}
+
+.t-msg.user .t-text {
+  background: #eff6ff;
 }
 
 .asr-hint {

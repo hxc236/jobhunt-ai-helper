@@ -80,7 +80,9 @@ export function createRendererApi(bridge: IpcBridge): RendererApi {
       create: (input) => bridge.invoke(IpcChannel.TopicsCreate, { input }),
       update: (id, patch) => bridge.invoke(IpcChannel.TopicsUpdate, { id, patch }),
       delete: (id) => bridge.invoke(IpcChannel.TopicsDelete, { id }),
-      setStatus: (id, status) => bridge.invoke(IpcChannel.TopicsSetStatus, { id, status })
+      setStatus: (id, status) => bridge.invoke(IpcChannel.TopicsSetStatus, { id, status }),
+      createInterviewSuggestion: (title, note, jobId) =>
+        bridge.invoke(IpcChannel.TopicsCreateInterviewSuggestion, { title, note, jobId })
     },
     on: <E extends IpcEventName>(event: E, listener: (payload: IpcEventMap[E]) => void) =>
       bridge.on(event, (payload) => listener(payload as IpcEventMap[E]))

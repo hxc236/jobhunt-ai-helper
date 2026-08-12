@@ -157,6 +157,16 @@ describe('TopicService 人工 CRUD 与三态（F-19/#33 验收）', () => {
     expect(() => topics.delete('no-such')).toThrowError(/不存在/)
   })
 
+  it('createInterviewSuggestion：source=interview 回填；同职位同标题去重返回 null', () => {
+    const { topics, jobId } = seedJob()
+    const created = topics.createInterviewSuggestion('分布式一致性', '参考：CAP 与 Raft', jobId)
+    expect(created).toMatchObject({ title: '分布式一致性', source: 'interview', priority: 5, job_id: jobId })
+    expect(created?.note).toBe('参考：CAP 与 Raft')
+
+    expect(topics.createInterviewSuggestion('分布式一致性', '参考 x', jobId)).toBeNull() // 去重
+    expect(topics.createInterviewSuggestion('  ', 'x', jobId)).toBeNull() // 空标题
+  })
+
   it('list 支持按状态/职位筛选', () => {
     const { topics, jobId } = seedJob()
     topics.generateFromJob(jobId)
