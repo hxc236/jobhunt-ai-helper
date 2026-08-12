@@ -130,6 +130,10 @@ export interface IpcProtocol {
   }
   // F-14（#26）：简历上传解析 —— docx/pdf → 文本 → 结构化草稿（置信度/待确认标记；扫描件降级）
   [IpcChannel.ResumesUploadParse]: { request: { filePath: string }; response: ResumeDraft }
+  // F-15（#30）：A4 渲染与 PDF 导出 —— render-html 纯函数（iframe 预览）；
+  // export-pdf 经隐藏窗口 printToPDF + 保存对话框，返回保存路径（取消 → null）。
+  [IpcChannel.ResumesRenderHtml]: { request: { id: string }; response: string }
+  [IpcChannel.ResumesExportPdf]: { request: { id: string }; response: string | null }
   // F-12（issue #19）：简历 CRUD —— 入库前服务层做 resume.schema.json 校验；
   // 删除语义：删除基准简历不影响已存派生稿（独立副本）。
   [IpcChannel.ResumesList]: { request: void; response: StoredResume[] }
@@ -223,6 +227,10 @@ export interface ResumeApi {
   delete: (id: string) => Promise<void>
   /** 上传解析（F-14/#26）：docx/pdf → 草稿（扫描件 scanned 降级提示）。 */
   uploadParse: (filePath: string) => Promise<ResumeDraft>
+  /** A4 渲染（F-15/#30）：完整 HTML 文档（含打印样式），iframe 预览。 */
+  renderHtml: (id: string) => Promise<string>
+  /** 导出 PDF（F-15/#30：保存对话框；取消返回 null）。 */
+  exportPdf: (id: string) => Promise<string | null>
 }
 
 /**

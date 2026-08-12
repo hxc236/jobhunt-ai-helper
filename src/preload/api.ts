@@ -42,7 +42,9 @@ export function createRendererApi(bridge: IpcBridge): RendererApi {
       create: (resume) => bridge.invoke(IpcChannel.ResumesCreate, { resume }),
       update: (id, resume) => bridge.invoke(IpcChannel.ResumesUpdate, { id, resume }),
       delete: (id) => bridge.invoke(IpcChannel.ResumesDelete, { id }),
-      uploadParse: (filePath) => bridge.invoke(IpcChannel.ResumesUploadParse, { filePath })
+      uploadParse: (filePath) => bridge.invoke(IpcChannel.ResumesUploadParse, { filePath }),
+      renderHtml: (id) => bridge.invoke(IpcChannel.ResumesRenderHtml, { id }),
+      exportPdf: (id) => bridge.invoke(IpcChannel.ResumesExportPdf, { id })
     },
     crawls: {
       run: (source, options) => bridge.invoke(IpcChannel.CrawlRun, { source, options }),

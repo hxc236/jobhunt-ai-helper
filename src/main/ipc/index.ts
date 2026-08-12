@@ -12,6 +12,7 @@ import { ping } from '../services/ping'
 import type { AgentService } from '../services/agent'
 import type { CrawlService } from '../services/crawl'
 import type { PositionService } from '../services/position'
+import { exportResumePdf } from '../services/resume-export'
 import type { ResumeService } from '../services/resume'
 import type { SettingsService } from '../services/settings'
 import { pushEvent } from './events'
@@ -87,4 +88,11 @@ export function registerIpcHandlers({ settings, agent, positions, resumes, crawl
   handleRequest(IpcChannel.ResumesDelete, (request) => resumes.delete(request.id))
   // F-14（#26）：简历上传解析（docx/pdf → 草稿；不支持类型/解析失败错误 message 透传）
   handleRequest(IpcChannel.ResumesUploadParse, (request) => resumes.parseUpload(request.filePath))
+  // F-15（#30）：A4 渲染（纯函数）与 PDF 导出（printToPDF + 保存对话框）
+  handleRequest(IpcChannel.ResumesRenderHtml, (request) => resumes.renderHtml(request.id))
+  handleRequest(IpcChannel.ResumesExportPdf, (request) => {
+    const html = resumes.renderHtml(request.id)
+    const title = resumes.get(request.id)?.meta.title ?? '简历'
+    return exportResumePdf(html, title)
+  })
 }
