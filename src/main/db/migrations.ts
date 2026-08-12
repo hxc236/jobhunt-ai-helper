@@ -217,7 +217,10 @@ export const MIGRATIONS: readonly string[] = [
   DROP TABLE crawl_runs;
   ALTER TABLE crawl_runs_new RENAME TO crawl_runs;
   CREATE INDEX idx_crawl_runs_created ON crawl_runs(created_at DESC);
-  `
+  `,
+  // v10: crawl_runs 增 conditions_json（issue #55 结构化采集条件留痕快照；
+  // hire_type/keyword/city；旧行 NULL）。
+  `ALTER TABLE crawl_runs ADD COLUMN conditions_json TEXT`
 ]
 
 /**

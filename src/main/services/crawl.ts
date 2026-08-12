@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { Db } from '../db/migrations'
 import type {
   CrawlCandidate,
+  CrawlConditions,
   CrawlImportResult,
   CrawlMode,
   CrawlPreview,
@@ -68,8 +69,10 @@ export class CrawlError extends Error {
 }
 
 export interface CrawlServiceOptions {
-  /** 请求间隔毫秒（spec #13-21：≥2s；默认 2000）。 */
+  /** 请求间隔毫秒（spec #13-21：≥2s；默认 2000；issue #55 起由 cooldownMs 取代）。 */
   throttleMs?: number
+  /** 抓取冷却间隔毫秒（issue #55 频率纪律：BOSS 建议 30-60s；缺省回退 throttleMs）。 */
+  cooldownMs?: number
   /** 失败重试次数（spec #13-21：2 次；默认 2）。 */
   retries?: number
   /** 重试退避基数（指数 backoffMs * 2^attempt；默认 500）。 */
@@ -83,10 +86,11 @@ export interface CrawlServiceOptions {
 }
 
 /** crawl_runs 行（DB 形态：truncated 为 0/1，errors 存 JSON 列）。 */
-type CrawlRunRow = Omit<CrawlRun, 'truncated' | 'errors'> & {
+type CrawlRunRow = Omit<CrawlRun, 'truncated' | 'errors' | 'conditions'> & {
   truncated: number
   errors_json: string
   candidates_json: string
+  conditions_json: string | null
 }
 
 /**
@@ -98,7 +102,7 @@ type CrawlRunRow = Omit<CrawlRun, 'truncated' | 'errors'> & {
  */
 export class CrawlService {
   private readonly parsers = new Map<PositionSource, CrawlParser>()
-  private readonly throttleMs: number
+  private readonly cooldownMs: number
   private readonly retries: number
   private readonly backoffMs: number
   private readonly maxItems: number
@@ -110,7 +114,7 @@ export class CrawlService {
     private readonly fetcher: CrawlFetcher,
     options: CrawlServiceOptions = {}
   ) {
-    this.throttleMs = options.throttleMs ?? 2000
+    this.cooldownMs = options.cooldownMs ?? options.throttleMs ?? 2000
     this.retries = options.retries ?? 2
     this.backoffMs = options.backoffMs ?? 500
     this.maxItems = options.maxItems ?? 100
@@ -124,7 +128,7 @@ export class CrawlService {
   }
 
   /**
-   * 执行一次采集：节流（≥throttleMs 请求间隔）、重试（retries 次指数退避）、
+   * 执行一次采集：冷却（cooldownMs 请求间隔）、重试（retries 次指数退避）、
    * 上限（maxItems 条截断）。留痕写入 crawl_runs 并返回（含候选快照供预览）。
    */
   async run(source: PositionSource, options: CrawlRunOptions): Promise<CrawlRunResult> {
@@ -135,7 +139,17 @@ export class CrawlService {
 
     const urls = parser.buildUrls(options.mode, options.filter)
     const filter = options.filter?.trim() || null
-    const runId = this.insertRun(source, options.mode, filter, urls.length)
+    const conditions: CrawlConditions = {
+      hire_type: options.hire_type,
+      keyword: options.keyword?.trim() || undefined,
+      city: options.city?.trim() || undefined
+    }
+    const conditionsJson =
+      conditions.hire_type === undefined && conditions.keyword === undefined && conditions.city === undefined
+        ? null
+        : JSON.stringify(conditions)
+    const cooldownMs = options.cooldownMs ?? this.cooldownMs
+    const runId = this.insertRun(source, options.mode, filter, urls.length, conditionsJson)
 
     const candidates: CrawlCandidate[] = []
     const errors: string[] = []
@@ -143,15 +157,24 @@ export class CrawlService {
     let truncated = false
 
     try {
-      // 队列式执行：起始 URL + 解析器 nextListUrl 追加翻页；节流/上限作用于每次抓取
+      // 队列式执行：起始 URL + 解析器 nextListUrl 追加翻页；冷却/上限作用于每次抓取；
+      // seen 集合保证同 URL 不二次导航（每窗口单导航纪律，防翻页循环）
       const queue: string[] = [...urls]
+      const seen = new Set<string>(urls)
       let firstFetch = true
+      const parseContext: CrawlParseContext = {
+        mode: options.mode,
+        filter: options.filter,
+        hire_type: options.hire_type,
+        keyword: conditions.keyword,
+        city: conditions.city
+      }
       while (queue.length > 0) {
         if (candidates.length >= this.maxItems) {
           truncated = true
           break
         }
-        if (!firstFetch) await this.sleep(this.throttleMs)
+        if (!firstFetch) await this.sleep(cooldownMs)
         firstFetch = false
 
         const url = queue.shift() as string
@@ -159,14 +182,14 @@ export class CrawlService {
         if (html === null) continue // 重试耗尽：错误已入 errors
         fetchedCount++
 
-        for (const raw of parser.parseList(html, { mode: options.mode, filter: options.filter })) {
+        for (const raw of parser.parseList(html, parseContext)) {
           if (candidates.length >= this.maxItems) {
             truncated = true
             break
           }
           let candidate = raw
           if (candidate.detailUrl !== undefined && parser.parseDetail !== undefined) {
-            await this.sleep(this.throttleMs)
+            await this.sleep(cooldownMs)
             const detailHtml = await this.fetchWithRetry(candidate.detailUrl, errors)
             if (detailHtml !== null) {
               candidate = parser.parseDetail(detailHtml, candidate)
@@ -175,10 +198,13 @@ export class CrawlService {
           candidates.push(candidate)
         }
 
-        // 翻页：解析器从当前页提取下一页 URL（无则队列耗尽结束）
+        // 翻页：解析器从当前页提取下一页 URL（已抓/已在队列的 URL 跳过）
         if (parser.nextListUrl !== undefined) {
-          const next = parser.nextListUrl(html, { mode: options.mode, filter: options.filter })
-          if (next !== null && next !== url) queue.push(next)
+          const next = parser.nextListUrl(html, parseContext)
+          if (next !== null && !seen.has(next)) {
+            seen.add(next)
+            queue.push(next)
+          }
         }
 
         // 进度：done=已抓页数，total=已抓+待抓（翻页过程中动态增长）
@@ -230,13 +256,19 @@ export class CrawlService {
     return null
   }
 
-  private insertRun(source: PositionSource, mode: CrawlMode, filter: string | null, urlCount: number): number {
+  private insertRun(
+    source: PositionSource,
+    mode: CrawlMode,
+    filter: string | null,
+    urlCount: number,
+    conditionsJson: string | null
+  ): number {
     const result = this.db
       .prepare(
-        `INSERT INTO crawl_runs (source, mode, filter, status, url_count, created_at)
-         VALUES (?, ?, ?, 'running', ?, ?)`
+        `INSERT INTO crawl_runs (source, mode, filter, conditions_json, status, url_count, created_at)
+         VALUES (?, ?, ?, ?, 'running', ?, ?)`
       )
-      .run(source, mode, filter, urlCount, new Date().toISOString())
+      .run(source, mode, filter, conditionsJson, urlCount, new Date().toISOString())
     return Number(result.lastInsertRowid)
   }
 
@@ -272,6 +304,7 @@ export class CrawlService {
       source: row.source,
       mode: row.mode,
       filter: row.filter,
+      conditions: row.conditions_json === null ? null : (JSON.parse(row.conditions_json) as CrawlConditions),
       status: row.status,
       url_count: row.url_count,
       fetched_count: row.fetched_count,

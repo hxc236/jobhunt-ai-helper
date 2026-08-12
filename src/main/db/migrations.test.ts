@@ -143,6 +143,36 @@ describe('applyMigrations', () => {
       db.close()
     })
 
+    it('v10：crawl_runs 有 conditions_json（结构化条件留痕）；v9 旧行升级后为 NULL', () => {
+      const file = openTempFile()
+      tempDirs.add(join(file, '..'))
+
+      // 模拟 v9 库（前 9 条迁移），写入一条旧留痕
+      const old = new Database(file)
+      applyMigrations(old, MIGRATIONS.slice(0, 9))
+      old
+        .prepare(
+          "INSERT INTO crawl_runs (source, mode, status, url_count, created_at) VALUES ('nowcoder', 'full', 'success', 1, 'now')"
+        )
+        .run()
+      old.close()
+
+      const upgraded = new Database(file)
+      migrate(upgraded)
+      expect(userVersion(upgraded)).toBe(MIGRATIONS.length)
+      const row = upgraded.prepare('SELECT conditions_json FROM crawl_runs').get() as Record<string, unknown>
+      expect(row.conditions_json).toBeNull() // 旧行无条件快照
+
+      upgraded
+        .prepare(
+          "INSERT INTO crawl_runs (source, mode, conditions_json, status, url_count, created_at) VALUES ('boss', 'full', '{\"hire_type\":\"社招\",\"keyword\":\"前端\",\"city\":\"101020100\"}', 'success', 1, 'now')"
+        )
+        .run()
+      const inserted = upgraded.prepare('SELECT conditions_json FROM crawl_runs WHERE source = ?').get('boss') as Record<string, unknown>
+      expect(inserted.conditions_json).toBe('{"hire_type":"社招","keyword":"前端","city":"101020100"}')
+      upgraded.close()
+    })
+
     it('既有 v8 库升级：职位与投递记录保留（表重建不级联删除）、dedupe_key 按校招重建', () => {
       const file = openTempFile()
       tempDirs.add(join(file, '..'))

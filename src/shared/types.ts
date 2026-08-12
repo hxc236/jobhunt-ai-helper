@@ -140,6 +140,8 @@ export interface CrawlRun {
   mode: CrawlMode
   /** 关键词（mode='filter' 时）。 */
   filter: string | null
+  /** 结构化采集条件快照（hire_type/keyword/city；issue #55；旧行为 null）。 */
+  conditions: CrawlConditions | null
   status: CrawlRunStatus
   url_count: number
   fetched_count: number
@@ -149,11 +151,26 @@ export interface CrawlRun {
   created_at: string
 }
 
-/** 采集执行入参（F-08/#22）。 */
+/** 采集运行入参（F-08/#22；issue #55 结构化采集条件扩展）。 */
 export interface CrawlRunOptions {
   mode: CrawlMode
-  /** 关键词（mode='filter' 时传给解析器筛选）。 */
+  /** 关键词（mode='filter' 时传给解析器筛选；牛客按公司名过滤）。 */
   filter?: string
+  /** 招聘类型（BOSS 采集条件）。 */
+  hire_type?: HireType
+  /** 岗位关键词（BOSS 搜索 query）。 */
+  keyword?: string
+  /** 城市码（BOSS city 参数，如 101020100=上海）。 */
+  city?: string
+  /** 本次运行的抓取冷却间隔覆盖（ms；缺省用服务默认 cooldownMs）。 */
+  cooldownMs?: number
+}
+
+/** 结构化采集条件快照（crawl_runs.conditions_json；issue #55 留痕）。 */
+export interface CrawlConditions {
+  hire_type?: HireType
+  keyword?: string
+  city?: string
 }
 
 /** 采集执行结果（run 为留痕行；candidates 供 #29 预览）。 */

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { openDatabase } from '../db/database'
-import { CrawlService, type CrawlFetcher, type CrawlParser } from './crawl'
+import { CrawlService, type CrawlFetcher, type CrawlParseContext, type CrawlParser } from './crawl'
 import type { CrawlCandidate, CrawlRunOptions } from '../../shared/types'
 
 /** 记录型 fetcher：可编程成功/失败；记录调用序列与 sleep 序列（节流/退避断言）。 */
@@ -28,18 +28,25 @@ function makeFakeParser(
   urls: string[],
   candidatesByUrl: Record<string, CrawlCandidate[]>,
   detailResult?: CrawlCandidate
-): CrawlParser & { builds: Array<{ mode: string; filter: string | undefined }>; detailFetched: string[] } {
+): CrawlParser & {
+  builds: Array<{ mode: string; filter: string | undefined }>
+  detailFetched: string[]
+  contexts: CrawlParseContext[]
+} {
   const builds: Array<{ mode: string; filter: string | undefined }> = []
   const detailFetched: string[] = []
+  const contexts: CrawlParseContext[] = []
   return {
     source: 'nowcoder',
     builds,
     detailFetched,
+    contexts,
     buildUrls(mode, filter) {
       builds.push({ mode, filter })
       return urls
     },
-    parseList(html) {
+    parseList(html, context) {
+      contexts.push(context)
       // 测试里每个 html 内容唯一，直接按内容取候选
       for (const [key, cands] of Object.entries(candidatesByUrl)) {
         if (html === key) return cands
@@ -149,6 +156,93 @@ describe('CrawlService 采集执行框架（F-08/#22）', () => {
       await expect(svc.run('liepin', runOptions)).rejects.toThrow(/解析器未注册/)
       expect(fetcher.calls).toEqual([])
       expect(svc.runs()).toEqual([])
+    })
+  })
+
+  describe('结构化采集条件（issue #55）', () => {
+    it('运行选项透传结构化条件给解析器（旧 filter 兼容并存）', async () => {
+      const fetcher = makeFakeFetcher({ ...PAGES })
+      const parser = makeFakeParser(Object.keys(PAGES), ALL_PAGES)
+      const svc = makeService(fetcher, parser)
+
+      const result = await svc.run('nowcoder', {
+        mode: 'filter',
+        filter: '腾讯',
+        hire_type: '社招',
+        keyword: '前端',
+        city: '101020100'
+      })
+
+      expect(parser.contexts).toHaveLength(3) // 每页一次 parseList
+      expect(parser.contexts[0]).toEqual({
+        mode: 'filter',
+        filter: '腾讯',
+        hire_type: '社招',
+        keyword: '前端',
+        city: '101020100'
+      })
+      expect(parser.builds).toEqual([{ mode: 'filter', filter: '腾讯' }])
+      expect(result.candidates).toHaveLength(5)
+    })
+
+    it('留痕记录结构化条件快照；无条件运行的 conditions=null', async () => {
+      const fetcher = makeFakeFetcher({ ...PAGES })
+      const parser = makeFakeParser(Object.keys(PAGES), ALL_PAGES)
+      const svc = makeService(fetcher, parser)
+
+      const withCond = await svc.run('nowcoder', { mode: 'full', hire_type: '校招', keyword: '前端', city: '101020100' })
+      expect(svc.getRun(withCond.run.id)?.conditions).toEqual({ hire_type: '校招', keyword: '前端', city: '101020100' })
+      expect(svc.runs()[0]?.conditions).toEqual({ hire_type: '校招', keyword: '前端', city: '101020100' })
+
+      const plain = await svc.run('nowcoder', { mode: 'full' })
+      expect(svc.getRun(plain.run.id)?.conditions).toBeNull()
+    })
+  })
+
+  describe('频率纪律（issue #55）', () => {
+    it('cooldownMs 生效：除首个请求外每次 fetch 前等待冷却间隔', async () => {
+      const fetcher = makeFakeFetcher({ ...PAGES })
+      const parser = makeFakeParser(Object.keys(PAGES), ALL_PAGES)
+      const sleeps: number[] = []
+      const svc = makeService(fetcher, parser, {
+        cooldownMs: 30000,
+        sleep: async (ms) => {
+          sleeps.push(ms)
+        }
+      })
+
+      await svc.run('nowcoder', { mode: 'full' })
+      expect(sleeps).toEqual([30000, 30000]) // 3 页 → 2 次冷却间隔
+    })
+
+    it('运行级 cooldownMs 覆盖服务默认', async () => {
+      const fetcher = makeFakeFetcher({ ...PAGES })
+      const parser = makeFakeParser(Object.keys(PAGES), ALL_PAGES)
+      const sleeps: number[] = []
+      const svc = makeService(fetcher, parser, {
+        cooldownMs: 30000,
+        sleep: async (ms) => {
+          sleeps.push(ms)
+        }
+      })
+
+      await svc.run('nowcoder', { mode: 'full', cooldownMs: 45000 })
+      expect(sleeps).toEqual([45000, 45000])
+    })
+
+    it('同 URL 不重复导航（队列去重，防翻页循环）', async () => {
+      const fetcher = makeFakeFetcher({ ...PAGES })
+      // 从第 1 页开始，翻页驱动：p1 → p2 → p1（循环）→ 框架不再抓已抓 URL
+      const parser = makeFakeParser(['https://nowcoder.test/list?p=1'], ALL_PAGES)
+      parser.nextListUrl = (html: string) => {
+        if (html === '<html>page1</html>') return 'https://nowcoder.test/list?p=2'
+        if (html === '<html>page2</html>') return 'https://nowcoder.test/list?p=1'
+        return null
+      }
+      const svc = makeService(fetcher, parser)
+
+      await svc.run('nowcoder', { mode: 'full' })
+      expect(fetcher.calls).toEqual(['https://nowcoder.test/list?p=1', 'https://nowcoder.test/list?p=2'])
     })
   })
 
