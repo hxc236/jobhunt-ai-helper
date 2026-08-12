@@ -6,6 +6,7 @@ import { IpcEvent } from '../shared/protocol'
 import { pushEvent } from './ipc/events'
 import { AgentService, type AgentEvent } from './services/agent'
 import { PiAgentProvider } from './services/pi-agent-provider'
+import { PositionService } from './services/position'
 import { ResumeService } from './services/resume'
 import { SettingsService } from './services/settings'
 
@@ -64,6 +65,8 @@ app.whenReady().then(() => {
   // 单文件本地库：userData/jobhunt.db（EF-02；测试注入 :memory: 见 db/database.ts）
   const db = openDatabase(join(app.getPath('userData'), 'jobhunt.db'))
   const settings = new SettingsService(db)
+  // F-01（#17）：职位卡（手动录入 + 去重，见 services/position.ts）
+  const positions = new PositionService(db)
   // F-12（issue #19）：简历 CRUD（schema 校验 + 删除语义，见 services/resume.ts）
   const resumes = new ResumeService(db)
 
@@ -78,7 +81,7 @@ app.whenReady().then(() => {
     { onEvent: forwardAgentEvent }
   )
 
-  registerIpcHandlers({ settings, agent, resumes })
+  registerIpcHandlers({ settings, agent, positions, resumes })
   createWindow()
 
   app.on('activate', () => {

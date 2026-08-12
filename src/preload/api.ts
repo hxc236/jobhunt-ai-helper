@@ -27,6 +27,10 @@ export function createRendererApi(bridge: IpcBridge): RendererApi {
       configureProvider: (provider, apiKey, model) =>
         bridge.invoke(IpcChannel.SettingsConfigureProvider, { provider, apiKey, model })
     },
+    positions: {
+      create: (input) => bridge.invoke(IpcChannel.PositionsCreate, input),
+      list: () => bridge.invoke(IpcChannel.PositionsList)
+    },
     resumes: {
       list: () => bridge.invoke(IpcChannel.ResumesList),
       create: (resume) => bridge.invoke(IpcChannel.ResumesCreate, { resume }),

@@ -86,6 +86,21 @@ describe('createRendererApi（渲染侧 api 客户端）', () => {
     ])
   })
 
+  it('positions.create 映射到 positions:create 并传录入输入', async () => {
+    const fake = makeFakeBridge()
+    const api = createRendererApi(fake.bridge)
+    const input = { company: '腾讯', company_type: '大厂', title: '前端', recruit_season: '2026秋招' } as const
+    await api.positions.create(input)
+    expect(fake.invocations).toEqual([{ channel: IpcChannel.PositionsCreate, args: [input] }])
+  })
+
+  it('positions.list 映射到 positions:list，不带参数', async () => {
+    const fake = makeFakeBridge()
+    const api = createRendererApi(fake.bridge)
+    await api.positions.list()
+    expect(fake.invocations).toEqual([{ channel: IpcChannel.PositionsList, args: [] }])
+  })
+
   it('resumes.list 映射到 resumes:list，不带参数', async () => {
     const fake = makeFakeBridge()
     const api = createRendererApi(fake.bridge)
