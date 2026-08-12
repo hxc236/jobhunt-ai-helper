@@ -8,7 +8,9 @@ export interface GaugeDim {
   score: number
 }
 
-const props = defineProps<{ total: number; dims: GaugeDim[] }>()
+const props = withDefaults(defineProps<{ total: number; dims: GaugeDim[]; label?: string }>(), {
+  label: '匹配度'
+})
 
 const ringClass = computed(() => {
   if (props.total < 60) return 'low'
@@ -24,7 +26,7 @@ const ringClass = computed(() => {
         <circle class="ring-bg" cx="60" cy="60" r="52" />
         <circle class="ring-fg" :class="ringClass" cx="60" cy="60" r="52" pathLength="100" :stroke-dasharray="`${total} 100`" />
         <text class="ring-val" x="60" y="57" text-anchor="middle">{{ total }}</text>
-        <text class="ring-lab" x="60" y="78" text-anchor="middle">匹配度</text>
+        <text class="ring-lab" x="60" y="78" text-anchor="middle">{{ label }}</text>
       </svg>
     </div>
     <div class="dims">
