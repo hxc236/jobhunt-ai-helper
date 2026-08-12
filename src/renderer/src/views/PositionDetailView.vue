@@ -15,8 +15,9 @@ import {
   type Position,
   type PositionStatus
 } from '@shared/types'
-import type { StoredResume } from '@shared/types/resume'
+import type { Resume, StoredResume } from '@shared/types/resume'
 import { score, type FitScore } from '@shared/score'
+import { buildDerivedResume, diffResumeSections, type SectionDiff } from '../resume-compare'
 import type { OptimizeResult, OptimizationMode } from '@shared/types'
 import { IpcEvent } from '@shared/protocol'
 
@@ -83,6 +84,55 @@ const optimizeResult = ref<OptimizeResult | null>(null)
 const optimizeProgress = ref<Array<{ round: number; phase: string; done: boolean }>>([])
 
 const OPTIMIZE_PHASES: Record<number, string> = { 1: 'JD 解析', 2: '缺口评估', 3: '生成优化稿' }
+
+/** 对比确认入库（F-20/#34）：并排对比 + 可编辑 + 派生稿入库（未确认不落库）。 */
+const confirmTitle = ref('')
+const optimizedJson = ref('')
+const comparing = ref(false)
+const confirming = ref(false)
+const derivedMessage = ref('')
+const compareDiffs = ref<SectionDiff[]>([])
+
+function openCompare(): void {
+  const result = optimizeResult.value
+  const baseResume = resumes.value.find((r) => r.meta.id === selectedResumeId.value)
+  if (result === null || baseResume === undefined) return
+  comparing.value = true
+  derivedMessage.value = ''
+  confirmTitle.value = `${baseResume.meta.title ?? '基准简历'}-优化稿`
+  optimizedJson.value = JSON.stringify(result.optimizedResume, null, 2)
+  compareDiffs.value = diffResumeSections(baseResume, result.optimizedResume, result.changes)
+}
+
+async function confirmDerived(): Promise<void> {
+  const result = optimizeResult.value
+  const baseResume = resumes.value.find((r) => r.meta.id === selectedResumeId.value)
+  if (result === null || baseResume === undefined) return
+  confirming.value = true
+  derivedMessage.value = ''
+  try {
+    const parsed = JSON.parse(optimizedJson.value) as Resume
+    const derived = buildDerivedResume(
+      baseResume.meta.id as string,
+      result.jobId,
+      parsed,
+      confirmTitle.value,
+      baseResume.meta.title
+    )
+    // 未确认不落库：仅此处调用 create
+    const stored = await window.api.resumes.create(derived)
+    derivedMessage.value = `已入库派生稿「${stored.meta.title}」（关联职位卡 ${stored.meta.targetJobId}）`
+    comparing.value = false
+  } catch (err) {
+    derivedMessage.value = `入库失败：${String(err)}`
+  } finally {
+    confirming.value = false
+  }
+}
+
+function diffClass(changed: boolean): string {
+  return changed ? 'diff-changed' : 'diff-same'
+}
 
 async function runOptimize(): Promise<void> {
   const resume = resumes.value.find((r) => r.meta.id === selectedResumeId.value)
@@ -608,6 +658,38 @@ onMounted(() => void load())
             <summary>优化稿 JSON（{{ optimizeResult.optimizedResume.basics?.name }}）</summary>
             <pre class="json-pre">{{ JSON.stringify(optimizeResult.optimizedResume, null, 2) }}</pre>
           </details>
+
+          <div class="compare-actions">
+            <button class="btn btn-primary" type="button" @click="openCompare">对比并确认入库</button>
+          </div>
+        </div>
+
+        <!-- 对比确认（F-20/#34：并排高亮 + 理由气泡 + 编辑 + 派生稿入库） -->
+        <div v-if="comparing" class="compare-panel">
+          <p v-if="derivedMessage" class="message" :class="derivedMessage.startsWith('已入库') ? 'success' : 'error'">{{ derivedMessage }}</p>
+          <ul class="diff-list">
+            <li v-for="d in compareDiffs" :key="d.section" :class="diffClass(d.changed)">
+              <span class="diff-badge">{{ d.changed ? '改动' : '未变' }}</span>
+              <span class="diff-section">{{ d.section }}</span>
+              <span v-if="d.reason" class="diff-reason" :title="d.reason">{{ d.reason }}</span>
+            </li>
+          </ul>
+          <div class="compare-cols">
+            <div class="compare-col">
+              <span class="compare-label">基准简历</span>
+              <pre class="json-pre">{{ JSON.stringify(resumes.find((r) => r.meta.id === selectedResumeId), null, 2) }}</pre>
+            </div>
+            <div class="compare-col">
+              <span class="compare-label">优化稿（可编辑）</span>
+              <textarea v-model="optimizedJson" class="json-textarea" rows="18" spellcheck="false" />
+            </div>
+          </div>
+          <div class="compare-confirm">
+            <input v-model="confirmTitle" class="input" placeholder="派生稿名称" />
+            <button class="btn btn-primary" type="button" :disabled="confirming" @click="confirmDerived">
+              {{ confirming ? '入库中…' : '确认入库（派生稿）' }}
+            </button>
+          </div>
         </div>
       </section>
 
@@ -1028,6 +1110,95 @@ onMounted(() => void load())
   line-height: 1.6;
   overflow: auto;
   max-height: 360px;
+}
+
+/* 对比确认入库（F-20/#34） */
+.compare-actions {
+  margin-top: 12px;
+}
+
+.compare-panel {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #f0f1f3;
+}
+
+.diff-list {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.diff-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+.diff-changed {
+  background: #fef3c7;
+}
+
+.diff-same {
+  color: #6b7280;
+}
+
+.diff-badge {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #e5e7eb;
+  color: #374151;
+}
+
+.diff-changed .diff-badge {
+  background: #f59e0b;
+  color: #fff;
+}
+
+.diff-section {
+  font-weight: 600;
+}
+
+.diff-reason {
+  color: #92400e;
+  font-size: 12px;
+}
+
+.compare-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.compare-label {
+  display: block;
+  font-size: 12px;
+  color: #6b7280;
+  margin-bottom: 4px;
+}
+
+.compare-cols .json-pre {
+  max-height: 320px;
+  margin: 0;
+}
+
+.compare-confirm {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.compare-confirm .input {
+  flex: 1;
+  max-width: 320px;
 }
 
 /* 匹配度仪表（F-06/#27） */
