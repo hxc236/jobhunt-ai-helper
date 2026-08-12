@@ -32,9 +32,12 @@ watch(
     <div class="modal" :style="width ? { width } : undefined">
       <div class="modal-head">
         <h2>{{ title }}</h2>
-        <button class="icon-btn" type="button" aria-label="关闭" @click="emit('close')">
-          <Icon name="x" />
-        </button>
+        <div class="head-right">
+          <slot name="head-actions" />
+          <button class="icon-btn" type="button" aria-label="关闭" @click="emit('close')">
+            <Icon name="x" />
+          </button>
+        </div>
       </div>
       <div class="modal-body">
         <slot />

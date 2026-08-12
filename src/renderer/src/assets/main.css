@@ -808,6 +808,12 @@ textarea:focus {
   letter-spacing: -0.01em;
 }
 
+.modal-head .head-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .modal-body {
   padding: 18px;
   overflow-y: auto;
