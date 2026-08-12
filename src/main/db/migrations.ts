@@ -82,6 +82,27 @@ export const MIGRATIONS: readonly string[] = [
     updated_at    TEXT NOT NULL
   );
   CREATE INDEX idx_applications_status ON applications(status);
+  `,
+  // v5: crawl_runs 表（F-08 / issue #22）—— 采集留痕（spec #13-23）。
+  // - candidates_json：候选快照（预览确认入库的数据源，#29 消费）；
+  // - errors_json：失败 URL 列表（含原因）；truncated：达上限截断标志；
+  // - status：running（执行中）→ success/partial/failed（留痕终态）。
+  `
+  CREATE TABLE crawl_runs (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    source          TEXT NOT NULL CHECK (source IN ('nowcoder','liepin')),
+    mode            TEXT NOT NULL CHECK (mode IN ('filter','full')),
+    filter          TEXT,
+    status          TEXT NOT NULL CHECK (status IN ('running','success','partial','failed')),
+    url_count       INTEGER NOT NULL,
+    fetched_count   INTEGER NOT NULL DEFAULT 0,
+    candidate_count INTEGER NOT NULL DEFAULT 0,
+    truncated       INTEGER NOT NULL DEFAULT 0,
+    candidates_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(candidates_json)),
+    errors_json     TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(errors_json)),
+    created_at      TEXT NOT NULL
+  );
+  CREATE INDEX idx_crawl_runs_created ON crawl_runs(created_at DESC);
   `
 ]
 

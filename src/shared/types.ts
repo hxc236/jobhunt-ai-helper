@@ -85,6 +85,67 @@ export interface ApplicationPatch {
   channel?: string | null
 }
 
+/** 采集模式（spec #13-16：按关键词筛选 / 全量拉取当季列表）。 */
+export const CRAWL_MODES = ['filter', 'full'] as const
+export type CrawlMode = (typeof CRAWL_MODES)[number]
+
+/** 采集运行状态（crawl_runs.status；running=执行中，终态 success/partial/failed）。 */
+export const CRAWL_RUN_STATUSES = ['running', 'success', 'partial', 'failed'] as const
+export type CrawlRunStatus = (typeof CRAWL_RUN_STATUSES)[number]
+
+/**
+ * 采集候选职位行（F-08/#22 解析器产出；source_url 为去重主键，spec #13-18；
+ * detailUrl 存在时执行框架抓详情页经 parseDetail 补全）。
+ */
+export interface CrawlCandidate {
+  company: string
+  title: string
+  jd: string
+  city: string | null
+  channel: string | null
+  channel_url: string | null
+  source_url: string
+  batch: Batch | null
+  /** 网申开始 YYYY-MM-DD。 */
+  start_date: string | null
+  /** 网申截止 YYYY-MM-DD（null = 待核实，猎聘无截止时间置空）。 */
+  end_date: string | null
+  /** 详情页 URL（抓取补全 JD 等；缺省不抓详情）。 */
+  detailUrl?: string
+}
+
+/**
+ * crawl_runs 一行（采集留痕；candidates_json 为候选快照——#29 预览确认的数据源）。
+ * errors 为失败 URL 列表（含原因）；truncated 表示达上限截断（spec #13-22/23）。
+ */
+export interface CrawlRun {
+  id: number
+  source: PositionSource
+  mode: CrawlMode
+  /** 关键词（mode='filter' 时）。 */
+  filter: string | null
+  status: CrawlRunStatus
+  url_count: number
+  fetched_count: number
+  candidate_count: number
+  truncated: boolean
+  errors: string[]
+  created_at: string
+}
+
+/** 采集执行入参（F-08/#22）。 */
+export interface CrawlRunOptions {
+  mode: CrawlMode
+  /** 关键词（mode='filter' 时传给解析器筛选）。 */
+  filter?: string
+}
+
+/** 采集执行结果（run 为留痕行；candidates 供 #29 预览）。 */
+export interface CrawlRunResult {
+  run: CrawlRun
+  candidates: CrawlCandidate[]
+}
+
 /** positions 表一行（职位卡）。字段名与列名一致，行对象可直接落库/返回。 */
 export interface Position {
   id: string

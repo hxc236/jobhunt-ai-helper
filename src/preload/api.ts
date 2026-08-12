@@ -43,6 +43,11 @@ export function createRendererApi(bridge: IpcBridge): RendererApi {
       update: (id, resume) => bridge.invoke(IpcChannel.ResumesUpdate, { id, resume }),
       delete: (id) => bridge.invoke(IpcChannel.ResumesDelete, { id })
     },
+    crawls: {
+      run: (source, options) => bridge.invoke(IpcChannel.CrawlRun, { source, options }),
+      runs: () => bridge.invoke(IpcChannel.CrawlRuns),
+      getRun: (id) => bridge.invoke(IpcChannel.CrawlGetRun, { id })
+    },
     on: <E extends IpcEventName>(event: E, listener: (payload: IpcEventMap[E]) => void) =>
       bridge.on(event, (payload) => listener(payload as IpcEventMap[E]))
   }
