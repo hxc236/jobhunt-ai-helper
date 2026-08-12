@@ -9,6 +9,7 @@ import { PiAgentProvider } from './services/pi-agent-provider'
 import { BrowserWindowFetcher } from './services/browser-window-fetcher'
 import { BossFetcher, CompositeFetcher } from './services/boss-fetcher'
 import { CrawlService } from './services/crawl'
+import { CrawlPresetService } from './services/crawl-presets'
 import { OptimizeService } from './services/optimize'
 import { TopicService } from './services/topic'
 import { LearnService } from './services/learn'
@@ -98,6 +99,8 @@ app.whenReady().then(() => {
     }
   )
   const bossLogin = new BossLoginService()
+  // issue #57：常用采集（crawl_presets 表 CRUD）
+  const crawlPresets = new CrawlPresetService(db)
   // F-09（#23）：牛客校招日程解析器（列表/翻页/详情 → 字段映射，纯函数）
   crawls.registerParser(new NowcoderParser())
   // F-10（#24）：猎聘校招项目卡解析器（SSR 列表 → 字段映射；end_date 恒 null → 待核实）
@@ -131,7 +134,7 @@ app.whenReady().then(() => {
     new SherpaAsrProvider(join(app.getAppPath(), 'resources', 'sherpa-onnx'))
   )
 
-  registerIpcHandlers({ settings, agent, positions, resumes, crawls, bossLogin, optimize, topics, learn, interview, asr })
+  registerIpcHandlers({ settings, agent, positions, resumes, crawls, bossLogin, crawlPresets, optimize, topics, learn, interview, asr })
   createWindow()
 
   app.on('activate', () => {

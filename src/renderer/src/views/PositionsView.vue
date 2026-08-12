@@ -4,14 +4,20 @@ import {
   APPLICATION_STATUSES,
   APPLICATION_STATUS_LABELS,
   BATCHES,
+  BOSS_CITIES,
+  BOSS_SALARY_RANGES,
   COMPANY_TYPES,
   CRAWL_MODES,
+  HIRE_TYPES,
   type ApplicationStatus,
   type Batch,
   type CompanyType,
+  type CrawlConditions,
   type CrawlMode,
+  type CrawlPreset,
   type CrawlPreview,
   type CrawlRun,
+  type HireType,
   type Position,
   type PositionInput,
   type PositionListItem,
@@ -41,6 +47,72 @@ const importing = ref(false)
 const importMessage = ref('')
 const crawlRuns = ref<CrawlRun[]>([])
 const runsError = ref('')
+
+/* ---------- BOSS 采集条件 + 常用采集（issue #57） ---------- */
+const bossConditions = reactive<{
+  hire_type: HireType
+  keyword: string
+  city: string
+  salary: string
+  companyKeyword: string
+}>({
+  hire_type: '社招',
+  keyword: '',
+  city: '',
+  salary: '0',
+  companyKeyword: ''
+})
+const presets = ref<CrawlPreset[]>([])
+const presetName = ref('')
+const presetMessage = ref('')
+
+/** 当前 BOSS 条件摘要（预览/留痕展示用）。 */
+function bossConditionsSummary(c: CrawlConditions | null | undefined): string {
+  if (c === null || c === undefined) return ''
+  const parts: string[] = [c.hire_type ?? '']
+  if (c.keyword) parts.push(c.keyword)
+  if (c.city) parts.push(BOSS_CITIES.find((x) => x.code === c.city)?.name ?? c.city)
+  if (c.salary && c.salary !== '0') parts.push(BOSS_SALARY_RANGES.find((x) => x.code === c.salary)?.label ?? c.salary)
+  return parts.filter(Boolean).join(' · ')
+}
+
+async function loadPresets(): Promise<void> {
+  try {
+    presets.value = await window.api.crawls.crawlPresets.list()
+  } catch {
+    presets.value = []
+  }
+}
+
+async function savePreset(): Promise<void> {
+  presetMessage.value = ''
+  try {
+    await window.api.crawls.crawlPresets.create(presetName.value, {
+      hire_type: bossConditions.hire_type,
+      keyword: bossConditions.keyword || undefined,
+      city: bossConditions.city || undefined,
+      salary: bossConditions.salary === '0' ? undefined : bossConditions.salary
+    })
+    presetName.value = ''
+    presetMessage.value = '已保存'
+    await loadPresets()
+  } catch (err) {
+    presetMessage.value = String(err)
+  }
+}
+
+function applyPreset(p: CrawlPreset): void {
+  bossConditions.hire_type = p.conditions.hire_type ?? '校招'
+  bossConditions.keyword = p.conditions.keyword ?? ''
+  bossConditions.city = p.conditions.city ?? ''
+  bossConditions.salary = p.conditions.salary ?? '0'
+  presetMessage.value = ''
+}
+
+async function removePreset(id: number): Promise<void> {
+  await window.api.crawls.crawlPresets.delete(id)
+  await loadPresets()
+}
 
 const SOURCE_LABELS: Record<PositionSource, string> = {
   manual: '手动',
@@ -73,10 +145,20 @@ async function startCrawl(): Promise<void> {
   crawling.value = true
   crawlProgress.value = null
   try {
-    const result = await window.api.crawls.run(crawlSource.value, {
-      mode: crawlMode.value,
-      filter: crawlMode.value === 'filter' ? crawlKeyword.value : undefined
-    })
+    const result =
+      crawlSource.value === 'boss'
+        ? await window.api.crawls.run(crawlSource.value, {
+            mode: 'full',
+            hire_type: bossConditions.hire_type,
+            keyword: bossConditions.keyword || undefined,
+            city: bossConditions.city || undefined,
+            salary: bossConditions.salary === '0' ? undefined : bossConditions.salary,
+            filter: bossConditions.companyKeyword || undefined
+          })
+        : await window.api.crawls.run(crawlSource.value, {
+            mode: crawlMode.value,
+            filter: crawlMode.value === 'filter' ? crawlKeyword.value : undefined
+          })
     const p = await window.api.crawls.preview(result.run.id)
     preview.value = p
     selectedUrls.value = new Set(p.items.map((i) => i.candidate.source_url))
@@ -379,6 +461,8 @@ function openCrawl(): void {
   crawlError.value = ''
   importMessage.value = ''
   crawlOpen.value = true
+  void loadPresets()
+  void checkBossLogin()
 }
 
 onMounted(() => {
@@ -588,7 +672,7 @@ onMounted(() => {
           <option value="boss">BOSS直聘</option>
         </select>
       </label>
-      <label class="field" style="flex: 1">
+      <label v-if="crawlSource !== 'boss'" class="field" style="flex: 1">
         <span class="label">模式</span>
         <select v-model="crawlMode" :disabled="crawling">
           <option v-for="m in CRAWL_MODES" :key="m" :value="m">
@@ -596,7 +680,7 @@ onMounted(() => {
           </option>
         </select>
       </label>
-      <label v-if="crawlMode === 'filter'" class="field" style="flex: 1">
+      <label v-if="crawlSource !== 'boss' && crawlMode === 'filter'" class="field" style="flex: 1">
         <span class="label">关键词（公司名）</span>
         <input v-model="crawlKeyword" placeholder="如：腾讯" :disabled="crawling" />
       </label>
@@ -623,8 +707,63 @@ onMounted(() => {
         </button>
       </div>
     </div>
+
+    <!-- issue #57：BOSS 采集条件（招聘类型/岗位关键词/城市/薪资/公司名可选） -->
+    <div v-if="crawlSource === 'boss'" class="crawl-conditions">
+      <label class="field" style="flex: 1">
+        <span class="label">招聘类型</span>
+        <select v-model="bossConditions.hire_type" :disabled="crawling">
+          <option v-for="h in HIRE_TYPES" :key="h" :value="h">{{ h }}</option>
+        </select>
+      </label>
+      <label class="field" style="flex: 2">
+        <span class="label">岗位关键词</span>
+        <input v-model="bossConditions.keyword" placeholder="如：前端" :disabled="crawling" />
+      </label>
+      <label class="field" style="flex: 1">
+        <span class="label">城市</span>
+        <select v-model="bossConditions.city" :disabled="crawling">
+          <option value="">不限</option>
+          <option v-for="c in BOSS_CITIES" :key="c.code" :value="c.code">{{ c.name }}</option>
+        </select>
+      </label>
+      <label class="field" style="flex: 1">
+        <span class="label">薪资</span>
+        <select v-model="bossConditions.salary" :disabled="crawling">
+          <option v-for="s in BOSS_SALARY_RANGES" :key="s.code" :value="s.code">{{ s.label }}</option>
+        </select>
+      </label>
+      <label class="field" style="flex: 1">
+        <span class="label">公司名（可选）</span>
+        <input v-model="bossConditions.companyKeyword" placeholder="如：字节" :disabled="crawling" />
+      </label>
+    </div>
+
+    <!-- issue #57：常用采集（保存/复用/删除） -->
+    <div v-if="crawlSource === 'boss'" class="crawl-presets">
+      <div style="display: flex; gap: 8px; align-items: center">
+        <input
+          v-model="presetName"
+          placeholder="保存当前条件为常用采集，如：上海前端20K以上"
+          :disabled="crawling"
+          style="flex: 1"
+          @keyup.enter="savePreset"
+        />
+        <button class="btn" type="button" :disabled="crawling || presetName.trim() === ''" @click="savePreset">
+          保存
+        </button>
+        <span v-if="presetMessage" class="hint">{{ presetMessage }}</span>
+      </div>
+      <div v-if="presets.length > 0" class="preset-list">
+        <span v-for="p in presets" :key="p.id" class="pill">
+          {{ p.name }}
+          <button type="button" class="link" @click="applyPreset(p)">复用</button>
+          <button type="button" class="link danger" @click="removePreset(p.id)">删除</button>
+        </span>
+      </div>
+    </div>
     <p v-if="crawlProgress" class="hint">
-      抓取中 {{ crawlProgress.done }}/{{ crawlProgress.total }}（每次请求间隔 ≥2s，失败自动重试）…
+      抓取中 {{ crawlProgress.done }}/{{ crawlProgress.total }}（每次请求间隔 ≥30s，失败自动重试）…
     </p>
     <p v-if="crawlError" class="empty" style="margin-top: 10px">{{ crawlError }}</p>
     <p v-if="importMessage" class="empty" style="margin-top: 10px">{{ importMessage }}</p>
@@ -637,7 +776,10 @@ onMounted(() => {
         <span>·</span>
         <span>缺字段 <b style="color: var(--fg)">{{ preview.stats.missing }}</b> 处</span>
         <span style="flex: 1"></span>
-        <span>模式：{{ crawlMode === 'full' ? '全量拉取当季' : `筛选 ${crawlKeyword || '—'}` }} · 节流 2s</span>
+        <span v-if="crawlSource === 'boss'" class="hint">
+          条件：{{ bossConditionsSummary({ hire_type: bossConditions.hire_type, keyword: bossConditions.keyword || undefined, city: bossConditions.city || undefined, salary: bossConditions.salary === '0' ? undefined : bossConditions.salary }) }} · 冷却 30s
+        </span>
+        <span v-else>模式：{{ crawlMode === 'full' ? '全量拉取当季' : `筛选 ${crawlKeyword || '—'}` }} · 节流 2s</span>
       </div>
 
       <label class="select-all">
@@ -682,7 +824,8 @@ onMounted(() => {
       <div v-for="r in crawlRuns" :key="r.id" class="run-row">
         <span class="pill" :class="`run-${r.status}`">{{ CRAWL_RUN_STATUS_LABELS[r.status] }}</span>
         <span class="pr-city">{{ SOURCE_LABELS[r.source] }}</span>
-        <span class="pr-city">{{ r.mode === 'full' ? '全量' : `筛选：${r.filter ?? ''}` }}</span>
+        <span v-if="r.source === 'boss'" class="pr-city">{{ bossConditionsSummary(r.conditions) || '默认条件' }}</span>
+        <span v-else class="pr-city">{{ r.mode === 'full' ? '全量' : `筛选：${r.filter ?? ''}` }}</span>
         <span class="pr-city">候选 {{ r.candidate_count }} 条</span>
         <span v-if="r.truncated" class="pill ghost">达上限截断</span>
         <span class="pr-city" style="margin-left: auto">{{ fmtRunTime(r.created_at) }}</span>

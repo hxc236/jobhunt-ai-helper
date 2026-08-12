@@ -56,6 +56,11 @@ export function createRendererApi(bridge: IpcBridge): RendererApi {
       bossLogin: {
         open: () => bridge.invoke(IpcChannel.BossLoginOpen),
         status: () => bridge.invoke(IpcChannel.BossLoginStatus)
+      },
+      crawlPresets: {
+        list: () => bridge.invoke(IpcChannel.CrawlPresetsList),
+        create: (name, conditions) => bridge.invoke(IpcChannel.CrawlPresetsCreate, { name, conditions }),
+        delete: (id) => bridge.invoke(IpcChannel.CrawlPresetsDelete, { id })
       }
     },
     optimize: {

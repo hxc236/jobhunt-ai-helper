@@ -14,7 +14,9 @@
 import type {
   Application,
   ApplicationPatch,
+  CrawlConditions,
   CrawlImportResult,
+  CrawlPreset,
   CrawlPreview,
   CrawlRun,
   CrawlRunOptions,
@@ -85,6 +87,9 @@ export const IpcChannel = {
   CrawlGetRun: 'crawl:get-run',
   BossLoginOpen: 'boss-login:open',
   BossLoginStatus: 'boss-login:status',
+  CrawlPresetsList: 'crawl-presets:list',
+  CrawlPresetsCreate: 'crawl-presets:create',
+  CrawlPresetsDelete: 'crawl-presets:delete',
   AsrStart: 'asr:start',
   AsrStop: 'asr:stop'
 } as const
@@ -151,6 +156,13 @@ export interface IpcProtocol {
   // status 检测登录态（分区内页面 fetch getUserInfo，code===0 = 已登录）。
   [IpcChannel.BossLoginOpen]: { request: void; response: void }
   [IpcChannel.BossLoginStatus]: { request: void; response: boolean }
+  // issue #57：常用采集（crawl_presets 增删查）
+  [IpcChannel.CrawlPresetsList]: { request: void; response: CrawlPreset[] }
+  [IpcChannel.CrawlPresetsCreate]: {
+    request: { name: string; conditions: CrawlConditions }
+    response: CrawlPreset
+  }
+  [IpcChannel.CrawlPresetsDelete]: { request: { id: number }; response: void }
   // F-14（#26）：简历上传解析 —— docx/pdf → 文本 → 结构化草稿（置信度/待确认标记；扫描件降级）
   [IpcChannel.ResumesUploadParse]: { request: { filePath: string }; response: ResumeDraft }
   // F-15（#30）：A4 渲染与 PDF 导出 —— render-html 纯函数（iframe 预览）；
@@ -368,6 +380,12 @@ export interface CrawlApi {
     open: () => Promise<void>
     /** 登录状态（分区内 getUserInfo code===0 = 已登录）。 */
     status: () => Promise<boolean>
+  }
+  /** 常用采集（issue #57：保存命名条件、复用、删除）。 */
+  crawlPresets: {
+    list: () => Promise<CrawlPreset[]>
+    create: (name: string, conditions: CrawlConditions) => Promise<CrawlPreset>
+    delete: (id: number) => Promise<void>
   }
 }
 

@@ -162,6 +162,8 @@ export interface CrawlRunOptions {
   keyword?: string
   /** 城市码（BOSS city 参数，如 101020100=上海）。 */
   city?: string
+  /** BOSS 薪资档位编码（402-407；缺省不限）。 */
+  salary?: string
   /** 本次运行的抓取冷却间隔覆盖（ms；缺省用服务默认 cooldownMs）。 */
   cooldownMs?: number
   /** 本次运行的候选上限覆盖（缺省用服务默认 maxItems=100）。 */
@@ -173,6 +175,44 @@ export interface CrawlConditions {
   hire_type?: HireType
   keyword?: string
   city?: string
+  /** BOSS 薪资档位编码（filter/conditions.json 字典：402-407；缺省不限）。 */
+  salary?: string
+}
+
+/** BOSS 常用城市（city/site.json 实测码，2026-08-13）。 */
+export const BOSS_CITIES = [
+  { code: '101010100', name: '北京' },
+  { code: '101020100', name: '上海' },
+  { code: '101030100', name: '天津' },
+  { code: '101040100', name: '重庆' },
+  { code: '101110100', name: '西安' },
+  { code: '101190100', name: '南京' },
+  { code: '101190400', name: '苏州' },
+  { code: '101200100', name: '武汉' },
+  { code: '101210100', name: '杭州' },
+  { code: '101270100', name: '成都' },
+  { code: '101280100', name: '广州' },
+  { code: '101280600', name: '深圳' }
+] as const
+
+/** BOSS 薪资档位（filter/conditions.json 实测字典，2026-08-13；0=不限）。 */
+export const BOSS_SALARY_RANGES = [
+  { code: '0', label: '不限' },
+  { code: '402', label: '3K以下' },
+  { code: '403', label: '3-5K' },
+  { code: '404', label: '5-10K' },
+  { code: '405', label: '10-20K' },
+  { code: '406', label: '20-50K' },
+  { code: '407', label: '50K以上' }
+] as const
+
+/** 常用采集（crawl_presets 表一行：名称 + 条件快照）。 */
+export interface CrawlPreset {
+  id: number
+  name: string
+  conditions: CrawlConditions
+  created_at: string
+  updated_at: string
 }
 
 /** 采集执行结果（run 为留痕行；candidates 供 #29 预览）。 */

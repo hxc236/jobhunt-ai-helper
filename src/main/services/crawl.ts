@@ -27,6 +27,8 @@ export interface CrawlParseContext {
   keyword?: string
   /** 城市码（BOSS city 参数，如 101020100=上海）。 */
   city?: string
+  /** BOSS 薪资档位编码（402-407；缺省不限）。 */
+  salary?: string
 }
 
 /**
@@ -140,10 +142,11 @@ export class CrawlService {
     const conditions: CrawlConditions = {
       hire_type: options.hire_type,
       keyword: options.keyword?.trim() || undefined,
-      city: options.city?.trim() || undefined
+      city: options.city?.trim() || undefined,
+      salary: options.salary?.trim() || undefined
     }
     const conditionsJson =
-      conditions.hire_type === undefined && conditions.keyword === undefined && conditions.city === undefined
+      conditions.hire_type === undefined && conditions.keyword === undefined && conditions.city === undefined && conditions.salary === undefined
         ? null
         : JSON.stringify(conditions)
     const parseContext: CrawlParseContext = {
@@ -151,7 +154,8 @@ export class CrawlService {
       filter: options.filter,
       hire_type: options.hire_type,
       keyword: conditions.keyword,
-      city: conditions.city
+      city: conditions.city,
+      salary: conditions.salary
     }
     const urls = parser.buildUrls(options.mode, options.filter, parseContext)
     const filter = options.filter?.trim() || null

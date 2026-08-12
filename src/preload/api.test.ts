@@ -209,6 +209,19 @@ describe('createRendererApi（渲染侧 api 客户端）', () => {
     ])
   })
 
+  it('crawls.crawlPresets 映射到 crawl-presets:*', async () => {
+    const fake = makeFakeBridge()
+    const api = createRendererApi(fake.bridge)
+    await api.crawls.crawlPresets.list()
+    await api.crawls.crawlPresets.create('上海前端', { keyword: '前端', city: '101020100' })
+    await api.crawls.crawlPresets.delete(3)
+    expect(fake.invocations).toEqual([
+      { channel: IpcChannel.CrawlPresetsList, args: [] },
+      { channel: IpcChannel.CrawlPresetsCreate, args: [{ name: '上海前端', conditions: { keyword: '前端', city: '101020100' } }] },
+      { channel: IpcChannel.CrawlPresetsDelete, args: [{ id: 3 }] }
+    ])
+  })
+
   it('resumes.list 映射到 resumes:list，不带参数', async () => {
     const fake = makeFakeBridge()
     const api = createRendererApi(fake.bridge)

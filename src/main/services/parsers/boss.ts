@@ -20,8 +20,8 @@ export class BossParser implements CrawlParser {
   static readonly SEARCH_BASE = 'https://www.zhipin.com/web/geek/job'
 
   /**
-   * 起始列表 URL（issue #55/#56 结构化条件：关键词/城市/页码；招聘类型映射 jobType——
-   * 字典实测 filter/conditions.json：全职=1901、实习=1902；校招走关键词含届数）。
+   * 起始列表 URL（issue #55/#56/#57 结构化条件：关键词/城市/薪资/页码；
+   * 招聘类型映射 jobType——字典实测：全职=1901、实习=1902；校招走关键词含届数）。
    */
   buildUrls(mode: CrawlMode, _filter: string | undefined, context?: CrawlParseContext): string[] {
     void mode
@@ -30,7 +30,7 @@ export class BossParser implements CrawlParser {
     if (keyword === undefined && city === undefined) {
       return [BossParser.SEARCH_BASE]
     }
-    return [searchUrl(keyword ?? '', city ?? '', 1, context?.hire_type ?? '校招')]
+    return [searchUrl(keyword ?? '', city ?? '', 1, context?.hire_type ?? '校招', context?.salary)]
   }
 
   parseList(html: string, context: CrawlParseContext): CrawlCandidate[] {
@@ -44,9 +44,12 @@ export class BossParser implements CrawlParser {
     if (jobList === null) return []
 
     const hireType = context.hire_type ?? '校招'
+    const companyKeyword = context.filter?.trim() ?? ''
     return jobList
       .map((item) => this.toCandidate(item, hireType, context.keyword))
-      .filter((c) => c !== null) as CrawlCandidate[]
+      .filter((c) => c !== null)
+      // 公司名关键词（可选采集条件，与牛客 filter 语义一致）：服务端无此参数，客户端过滤
+      .filter((c) => companyKeyword === '' || (c as CrawlCandidate).company.includes(companyKeyword)) as CrawlCandidate[]
   }
 
   /** 下一页 URL：hasMore 且末条 lid 含页码 → page+1（条件从 context 取）；否则 null。 */
@@ -60,7 +63,7 @@ export class BossParser implements CrawlParser {
     if (readHasMore(payload) !== true) return null
     const page = lastPageFromLid(payload)
     if (page === null || context.keyword === undefined || context.city === undefined) return null
-    return searchUrl(context.keyword, context.city, page + 1, context.hire_type ?? '校招')
+    return searchUrl(context.keyword, context.city, page + 1, context.hire_type ?? '校招', context.salary)
   }
 
   /** 详情 JSON → 补全候选（JD 全文/岗位全名/薪资）。 */
@@ -201,9 +204,19 @@ function readJobInfo(payload: unknown): Record<string, unknown> | null {
   return typeof jobInfo === 'object' && jobInfo !== null ? (jobInfo as Record<string, unknown>) : null
 }
 
-/** 搜索页 URL（query/city/page 拼接；jobType 按招聘类型映射，字典实测：全职=1901/实习=1902）。 */
-function searchUrl(keyword: string, city: string, page: number, hireType: HireType): string {
+/** 搜索页 URL（query/city/page 拼接；jobType 按招聘类型映射，字典实测：全职=1901/实习=1902；
+ *  salary 档位编码 402-407，0/空 = 不限）。 */
+function searchUrl(
+  keyword: string,
+  city: string,
+  page: number,
+  hireType: HireType,
+  salary?: string
+): string {
   const params = new URLSearchParams({ query: keyword, city, page: String(page) })
   params.set('jobType', hireType === '实习' ? '1902' : '1901')
+  if (salary !== undefined && salary !== '' && salary !== '0') {
+    params.set('salary', salary)
+  }
   return `${BossParser.SEARCH_BASE}?${params.toString()}`
 }

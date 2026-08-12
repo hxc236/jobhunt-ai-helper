@@ -127,6 +127,28 @@ describe('BossParser 列表解析（issue #53）', () => {
     expect(parser.buildUrls('full', undefined, { mode: 'full', filter: undefined })).toEqual([
       'https://www.zhipin.com/web/geek/job'
     ])
+    // 薪资档位：10-20K=405（字典实测）
+    expect(
+      parser.buildUrls('full', undefined, { mode: 'full', filter: undefined, hire_type: '社招', keyword: '前端', city: '101020100', salary: '405' })
+    ).toEqual([
+      'https://www.zhipin.com/web/geek/job?query=%E5%89%8D%E7%AB%AF&city=101020100&page=1&jobType=1901&salary=405'
+    ])
+    // 薪资 0/空 = 不带参数
+    expect(
+      parser.buildUrls('full', undefined, { mode: 'full', filter: undefined, hire_type: '社招', keyword: '前端', city: '101020100', salary: '0' })[0]
+    ).not.toContain('salary=')
+  })
+
+  it('公司名关键词（filter）客户端过滤：与牛客语义一致', () => {
+    const parser = new BossParser()
+    const all = parser.parseList(LIST_JSON, makeContext({ hire_type: '社招' }))
+    expect(all).toHaveLength(2)
+    const filtered = parser.parseList(
+      LIST_JSON,
+      makeContext({ hire_type: '社招', filter: '法本' })
+    )
+    expect(filtered).toHaveLength(1)
+    expect(filtered[0]?.company).toBe('法本')
   })
 
   it('joblist.json → 候选行：公司/岗位/城市/薪资/详情入口/去重 URL', () => {
