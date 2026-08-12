@@ -4,6 +4,7 @@ import type { Resume, StoredResume } from '../../shared/types/resume'
 import type { ResumeDraft } from '../../shared/types'
 import { assertValidResume } from './resume-schema'
 import { parseUploadFile } from './resume-parse'
+import { renderResumeHtml } from './resume-render'
 
 const LIST = 'SELECT json FROM resumes ORDER BY created_at, id'
 const GET = 'SELECT json FROM resumes WHERE id = ?'
@@ -113,5 +114,15 @@ export class ResumeService {
    */
   parseUpload(filePath: string): Promise<ResumeDraft> {
     return parseUploadFile(filePath)
+  }
+
+  /**
+   * A4 渲染（F-15/#30）：简历 → 完整 HTML 文档（A4 模板 + 打印样式），
+   * 渲染层 iframe srcdoc 预览、主进程 printToPDF 导出共用（纯函数，无 IO）。
+   */
+  renderHtml(id: string): string {
+    const resume = this.get(id)
+    if (resume === undefined) throw new ResumeNotFoundError(id)
+    return renderResumeHtml(resume)
   }
 }

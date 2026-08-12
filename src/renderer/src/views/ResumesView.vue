@@ -28,6 +28,39 @@ const saving = ref(false)
 /** 删除确认（行内两步）。 */
 const deleteTarget = ref<StoredResume | null>(null)
 
+/** A4 预览与 PDF 导出（F-15/#30）。 */
+const previewHtml = ref('')
+const previewTitle = ref('')
+const previewId = ref('')
+const exporting = ref(false)
+const exportMessage = ref('')
+const previewError = ref('')
+
+async function openPreview(resume: StoredResume): Promise<void> {
+  previewError.value = ''
+  exportMessage.value = ''
+  previewId.value = resume.meta.id as string
+  try {
+    previewHtml.value = await window.api.resumes.renderHtml(resume.meta.id as string)
+    previewTitle.value = resume.meta.title ?? '简历'
+  } catch (err) {
+    previewError.value = String(err)
+  }
+}
+
+async function exportPdf(): Promise<void> {
+  exporting.value = true
+  exportMessage.value = ''
+  try {
+    const path = await window.api.resumes.exportPdf(previewId.value)
+    exportMessage.value = path === null ? '已取消导出' : `已导出：${path}`
+  } catch (err) {
+    exportMessage.value = `导出失败：${String(err)}`
+  } finally {
+    exporting.value = false
+  }
+}
+
 const form = reactive<ResumeForm>(emptyResumeForm())
 
 const bases = computed(() => resumes.value.filter((r) => r.meta.baseResumeId == null))
@@ -192,6 +225,7 @@ onMounted(() => void load())
             <span class="meta">更新于 {{ fmtDate(r.meta.updatedAt) }}</span>
             <span class="row-actions">
               <button class="btn" type="button" @click="openEditor(r)">编辑</button>
+              <button class="btn" type="button" @click="openPreview(r)">A4 预览</button>
               <button class="btn btn-danger-ghost" type="button" @click="deleteTarget = r">删除</button>
             </span>
           </li>
@@ -211,6 +245,7 @@ onMounted(() => void load())
             <span class="meta">更新于 {{ fmtDate(r.meta.updatedAt) }}</span>
             <span class="row-actions">
               <button class="btn" type="button" @click="openEditor(r)">编辑</button>
+              <button class="btn" type="button" @click="openPreview(r)">A4 预览</button>
               <button class="btn btn-danger-ghost" type="button" @click="deleteTarget = r">删除</button>
             </span>
           </li>
@@ -226,6 +261,24 @@ onMounted(() => void load())
         <div class="confirm-actions">
           <button class="btn btn-danger" type="button" @click="confirmDelete">确认删除</button>
           <button class="btn" type="button" @click="deleteTarget = null">取消</button>
+        </div>
+      </div>
+
+      <!-- A4 预览（F-15/#30：iframe srcdoc + 导出 PDF） -->
+      <div v-if="previewHtml !== ''" class="preview-overlay" @click.self="previewHtml = ''">
+        <div class="preview-panel">
+          <div class="preview-head">
+            <span class="preview-title">A4 预览：{{ previewTitle }}</span>
+            <div class="preview-actions">
+              <span v-if="exportMessage" class="message" :class="exportMessage.startsWith('已导出') ? 'success' : 'error'">{{ exportMessage }}</span>
+              <button class="btn btn-primary" type="button" :disabled="exporting" @click="exportPdf">
+                {{ exporting ? '导出中…' : '导出 PDF' }}
+              </button>
+              <button class="btn" type="button" @click="previewHtml = ''">关闭</button>
+            </div>
+          </div>
+          <p v-if="previewError" class="message error">{{ previewError }}</p>
+          <iframe class="preview-frame" :srcdoc="previewHtml" title="A4 预览" />
         </div>
       </div>
     </template>
@@ -895,5 +948,53 @@ onMounted(() => void load())
   line-height: 1.6;
   box-sizing: border-box;
   resize: vertical;
+}
+
+/* A4 预览（F-15/#30） */
+.preview-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(17, 24, 39, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+  padding: 24px;
+}
+
+.preview-panel {
+  background: #fff;
+  border-radius: 8px;
+  width: min(920px, 100%);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.preview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.preview-title {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.preview-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.preview-frame {
+  flex: 1;
+  border: none;
+  background: #e8e8e8;
 }
 </style>
