@@ -39,8 +39,9 @@ function forwardAgentEvent(sessionId: string, event: AgentEvent): void {
 
 function createWindow(): void {
   const win = new BrowserWindow({
-    width: 1200,
+    width: 1280,
     height: 800,
+    minWidth: 1080, // #42 Q15：设计目标窗口 1280×800 起，下限对齐原型 CSS min-width
     show: false,
     autoHideMenuBar: true,
     title: '求职助手',

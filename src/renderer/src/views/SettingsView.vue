@@ -1,173 +1,218 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
-import { IpcEvent } from '@shared/protocol'
+import { onMounted, ref } from 'vue'
+import Icon from '../components/Icon.vue'
+import Pill from '../components/Pill.vue'
 
-const pingResult = ref<string>('—')
-const pinging = ref(false)
+/** 设置（#42 T6）：模型认证配置（提供商/模型/API key）+ 配置状态行（已配置 ✓ / 未配置降级说明）。
+ *  替代原 EF-01/EF-03 演示页（ping/settings 控制台为脚手架，非产品 UI）。 */
 
-async function doPing(): Promise<void> {
-  pinging.value = true
-  try {
-    pingResult.value = await window.api.ping()
-  } catch (err) {
-    pingResult.value = `失败: ${String(err)}`
-  } finally {
-    pinging.value = false
-  }
-}
+/** 常见提供商（auth.json 由 pi SDK 解析，provider id 可自定义）。 */
+const PROVIDER_OPTIONS = [
+  'deepseek',
+  'kimi-coding',
+  'anthropic',
+  'openai',
+  'google',
+  'zhipu',
+  '其他'
+]
 
-// ---- settings 通道 + 主→渲染事件推送（EF-03 演示） ----
-const settingsKey = ref('ui.theme')
-const settingsValue = ref('"light"')
-const settingsResult = ref<string>('—')
-const settingsBusy = ref(false)
-const eventCount = ref(0)
-const lastEvent = ref<string>('—')
-
-async function runSettings(action: 'get' | 'set' | 'get-all'): Promise<void> {
-  settingsBusy.value = true
-  try {
-    if (action === 'get') {
-      settingsResult.value = JSON.stringify(await window.api.settings.get(settingsKey.value))
-    } else if (action === 'set') {
-      await window.api.settings.set(settingsKey.value, JSON.parse(settingsValue.value))
-      settingsResult.value = '已写入 settings 表'
-    } else {
-      settingsResult.value = JSON.stringify(await window.api.settings.getAll())
-    }
-  } catch (err) {
-    settingsResult.value = `失败: ${String(err)}`
-  } finally {
-    settingsBusy.value = false
-  }
-}
-
-let unsubscribe: (() => void) | undefined
-onMounted(() => {
-  // 订阅主进程事件推送（settings 变更广播）；返回的取消函数用于清理
-  unsubscribe = window.api.on(IpcEvent.SettingsChanged, (payload) => {
-    eventCount.value += 1
-    lastEvent.value = `${payload.key} → ${JSON.stringify(payload.value)}`
-  })
+const status = ref<{ configured: boolean; provider?: string; model?: string }>({
+  configured: false
 })
-onUnmounted(() => unsubscribe?.())
+const statusLoading = ref(true)
+const provider = ref('deepseek')
+const customProvider = ref('')
+const model = ref('')
+const apiKey = ref('')
+const saving = ref(false)
+const saveMessage = ref('')
+
+async function loadStatus(): Promise<void> {
+  statusLoading.value = true
+  try {
+    status.value = await window.api.settings.getStatus()
+    if (status.value.provider) {
+      provider.value = PROVIDER_OPTIONS.includes(status.value.provider) ? status.value.provider : '其他'
+      if (provider.value === '其他') customProvider.value = status.value.provider
+    }
+    model.value = status.value.model ?? ''
+  } catch {
+    status.value = { configured: false }
+  } finally {
+    statusLoading.value = false
+  }
+}
+
+onMounted(() => void loadStatus())
+
+async function save(): Promise<void> {
+  saveMessage.value = ''
+  const resolvedProvider = provider.value === '其他' ? customProvider.value.trim() : provider.value
+  if (resolvedProvider === '') {
+    saveMessage.value = '请选择或填写模型提供商'
+    return
+  }
+  if (apiKey.value.trim() === '') {
+    saveMessage.value = '请填写 API key'
+    return
+  }
+  saving.value = true
+  try {
+    await window.api.settings.configureProvider(resolvedProvider, apiKey.value.trim(), model.value.trim() === '' ? undefined : model.value.trim())
+    apiKey.value = ''
+    saveMessage.value = '已保存配置'
+    await loadStatus()
+  } catch (err) {
+    saveMessage.value = `保存失败：${String(err)}`
+  } finally {
+    saving.value = false
+  }
+}
 </script>
 
 <template>
-  <section class="settings-view">
-    <h1 class="page-title">设置</h1>
-    <p class="hint">模型认证配置（provider / API key / 测试连接）随 EF-04 设置页 ticket 补充。</p>
-
-    <section class="card">
-      <h2 class="card-title">IPC ping 测试（EF-01）</h2>
-      <p class="card-text">
-        渲染进程 → 主进程 <code>ping</code>，主进程返回：
-        <code class="result" data-testid="ping-result">{{ pingResult }}</code>
-      </p>
-      <button class="btn" :disabled="pinging" @click="doPing">
-        {{ pinging ? 'ping 中…' : '再 ping 一次' }}
-      </button>
-    </section>
-
-    <section class="card">
-      <h2 class="card-title">settings 通道 + 事件推送（EF-03）</h2>
-      <p class="card-text">
-        经 <code>window.api.settings</code> 类型化调用主进程 settings 表 get/set；
-        每次 set 后主进程广播 <code>settings:changed</code> 事件，此处实时接收。
-      </p>
-      <div class="form-row">
-        <input v-model="settingsKey" class="input" placeholder="key" />
-        <input v-model="settingsValue" class="input" placeholder="value（JSON）" />
-        <button class="btn" :disabled="settingsBusy" @click="runSettings('get')">get</button>
-        <button class="btn" :disabled="settingsBusy" @click="runSettings('set')">set</button>
-        <button class="btn" :disabled="settingsBusy" @click="runSettings('get-all')">get all</button>
+  <section class="view solo settings-view">
+    <div class="s-wrap">
+      <div class="col-head">
+        <div>
+          <div class="col-title">设置</div>
+          <div class="col-count">模型认证与降级说明</div>
+        </div>
       </div>
-      <p class="card-text">
-        结果：<code class="result">{{ settingsResult }}</code>
+
+      <!-- 模型配置 -->
+      <div class="card">
+        <div class="sec-head">
+          <h2>模型认证</h2>
+          <Pill v-if="statusLoading" tone="ghost">读取中…</Pill>
+          <Pill v-else :tone="status.configured ? 'tint' : 'ghost'">
+            {{ status.configured ? '已配置 ✓' : '未配置' }}
+          </Pill>
+        </div>
+
+        <div class="form-grid">
+          <label class="field">
+            <span class="label">模型提供商</span>
+            <select v-model="provider">
+              <option v-for="p in PROVIDER_OPTIONS" :key="p" :value="p">{{ p }}</option>
+            </select>
+          </label>
+          <label class="field">
+            <span class="label">模型</span>
+            <input v-model="model" placeholder="留空则由提供商决定默认模型" />
+          </label>
+          <label v-if="provider === '其他'" class="field span2">
+            <span class="label">提供商 id（自定义）</span>
+            <input v-model="customProvider" placeholder="如：glm" />
+          </label>
+          <label class="field span2">
+            <span class="label">API key</span>
+            <input v-model="apiKey" type="password" placeholder="粘贴 API key（保存后清空输入框，不回显）" />
+          </label>
+        </div>
+
+        <p v-if="saveMessage" class="s-msg" :class="{ ok: saveMessage === '已保存配置' }">{{ saveMessage }}</p>
+
+        <div class="s-actions">
+          <button class="btn primary" type="button" :disabled="saving" @click="save">
+            {{ saving ? '保存中…' : '保存配置' }}
+          </button>
+        </div>
+      </div>
+
+      <!-- 状态与降级说明 -->
+      <div class="card surface">
+        <div class="sec-head"><h2>当前状态</h2></div>
+        <p v-if="statusLoading" class="hint">读取中…</p>
+        <template v-else-if="status.configured">
+          <div class="s-status">
+            <Icon name="check" class="ok" />
+            <span>
+              已配置 <b>{{ status.provider }}</b><template v-if="status.model"> · {{ status.model }}</template>
+            </span>
+          </div>
+        </template>
+        <template v-else>
+          <div class="s-status">
+            <Icon name="info" class="off" />
+            <span>未配置模型——以下功能将降级，其余手动功能不受影响：</span>
+          </div>
+          <ul class="s-list">
+            <li>简历优化 / 学习清单生成 / teach 聊天 / 模拟面试：不可用（界面顶部黄条引导至本页）</li>
+            <li>匹配度规则打分、职位/简历/学习清单的增删改查：正常可用</li>
+          </ul>
+        </template>
+      </div>
+
+      <p class="hint" style="margin-top: 12px">
+        API key 存入应用自有 auth.json（不入 settings 表）；提供商 id 由 pi SDK 解析，支持自定义。
       </p>
-      <p class="card-text">
-        事件推送：已收到 <code class="result">{{ eventCount }}</code> 次
-        <code>settings:changed</code>；最近一次：<code class="result">{{ lastEvent }}</code>
-      </p>
-    </section>
+    </div>
   </section>
 </template>
 
 <style scoped>
 .settings-view {
-  max-width: 560px;
+  overflow-y: auto;
+  height: 100%;
 }
 
-.page-title {
-  margin: 0 0 16px;
-  font-size: 20px;
+.s-wrap {
+  max-width: 640px;
+  padding: 20px 24px;
 }
 
-.card {
-  padding: 16px 20px;
-  margin-bottom: 16px;
-  background: #fff;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
+.s-msg {
+  font-size: 12px;
+  color: #dc2626;
+  margin-top: 12px;
 }
 
-.card-title {
-  margin: 0 0 8px;
-  font-size: 15px;
-}
-
-.card-text {
-  margin: 0 0 12px;
-  line-height: 1.7;
-}
-
-code {
-  padding: 2px 6px;
-  background: #f3f4f6;
-  border-radius: 4px;
-  font-size: 13px;
-}
-
-.result {
-  font-weight: 600;
+.s-msg.ok {
   color: #059669;
 }
 
-.form-row {
+.s-actions {
   display: flex;
   gap: 8px;
-  margin-bottom: 12px;
+  margin-top: 14px;
 }
 
-.input {
-  flex: 1;
-  min-width: 0;
-  padding: 6px 10px;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
-  font-size: 13px;
+.s-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  line-height: 1.7;
 }
 
-.btn {
-  padding: 6px 14px;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
-  background: #fff;
-  cursor: pointer;
+.s-status b {
+  font-weight: 600;
 }
 
-.btn:hover:not(:disabled) {
-  background: #f9fafb;
+.s-status .ok {
+  color: var(--accent);
+  width: 14px;
+  height: 14px;
 }
 
-.btn:disabled {
-  opacity: 0.6;
-  cursor: default;
+.s-status .off {
+  color: var(--muted);
+  width: 14px;
+  height: 14px;
+}
+
+.s-list {
+  margin: 8px 0 0 22px;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.8;
 }
 
 .hint {
-  margin: 0 0 16px;
-  color: #6b7280;
+  color: var(--muted);
+  font-size: 12px;
   line-height: 1.7;
 }
 </style>

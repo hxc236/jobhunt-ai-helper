@@ -4,13 +4,14 @@ import type { Resume, StoredResume } from '@shared/types/resume'
 import { emptyResumeForm, formToResume, issueSection, resumeToForm, type ResumeForm } from '../resume-form'
 import { draftToResume, draftWarnings } from '../draft-form'
 import type { ResumeDraft } from '@shared/types'
+import Modal from '../components/Modal.vue'
+import Resizer from '../components/Resizer.vue'
+import Icon from '../components/Icon.vue'
+import Pill from '../components/Pill.vue'
 
 /**
- * 简历模块（F-13/#25）：简历列表（基准/派生分组）+ 分节表单编辑器（国企字段）+ JSON 模式。
- * - 列表：基准简历与派生稿分组展示（meta.baseResumeId 分组），可打开编辑/删除；
- * - 编辑器：分节表单（基本信息含政治面貌/生源地/生日/性别等国企字段；教育/技能/项目/
- *   实习/证书/自评/链接可增删条目）⇄ JSON 文本模式切换；
- * - 保存：服务端 resume.schema.json 校验，校验错误按 JSON Pointer 定位显示（issueSection）。
+ * 简历模块（#42 T3）：双栏 = 列表（基准/派生分组）+ 工作区（上传草稿确认 / 分节编辑器 / JSON 模式）。
+ * 功能 = 原 ResumesView（F-13/#25 编辑器 + F-15/#30 A4 预览导出 + F-16/#31 上传草稿确认）。
  */
 
 const resumes = ref<StoredResume[]>([])
@@ -20,14 +21,11 @@ const successMessage = ref('')
 
 /** 编辑器状态：null = 列表模式；'' = 新建基准简历；其余 = 编辑该 id。 */
 const editingId = ref<string | null | ''>(null)
-/** 表单 ⇄ JSON 模式。 */
 const jsonMode = ref(false)
 const jsonText = ref('')
 const jsonError = ref('')
-/** 校验错误定位列表（保存失败时展示）。 */
 const issues = ref<Array<{ path: string; detail: string }>>([])
 const saving = ref(false)
-/** 删除确认（行内两步）。 */
 const deleteTarget = ref<StoredResume | null>(null)
 
 /** A4 预览与 PDF 导出（F-15/#30）。 */
@@ -63,9 +61,15 @@ async function exportPdf(): Promise<void> {
   }
 }
 
+/** 列表行「导出 PDF」：先渲染 A4 预览再导出（原型 pdf 图标按钮语义）。 */
+async function exportPdfFromRow(resume: StoredResume): Promise<void> {
+  await openPreview(resume)
+  if (previewError.value === '') await exportPdf()
+}
+
 const form = reactive<ResumeForm>(emptyResumeForm())
 
-/** 上传草稿确认（F-16/#31）：文件选择 → 解析草稿 → 逐节核对修正 → 确认入库。 */
+/** 上传草稿确认（F-16/#31）。 */
 const uploading = ref(false)
 const uploadError = ref('')
 const draft = ref<ResumeDraft | null>(null)
@@ -75,11 +79,16 @@ const draftForm = reactive({
   school: '', degree: '', major: '', period: '', skillsText: ''
 })
 const confirmingDraft = ref(false)
+const fileInput = ref<HTMLInputElement | null>(null)
+
+function pickFile(): void {
+  fileInput.value?.click()
+}
 
 function onFilePicked(event: Event): void {
   const input = event.target as HTMLInputElement
   const file = input.files?.[0]
-  input.value = '' // 允许重复选择同一文件
+  input.value = ''
   if (file === undefined) return
   const filePath = (file as unknown as { path?: string }).path
   if (filePath === undefined) {
@@ -141,7 +150,6 @@ async function confirmDraft(): Promise<void> {
       },
       draftTitle.value
     )
-    // 确认后才入库（acceptance：确认前库中无数据）
     const stored = await window.api.resumes.create(resume)
     successMessage.value = `已保存「${stored.meta.title ?? stored.meta.id}」`
     draft.value = null
@@ -188,14 +196,12 @@ function closeEditor(): void {
   issues.value = []
 }
 
-/** 表单 → JSON 模式：当前表单内容序列化（未保存的编辑保留）。 */
 function switchToJson(): void {
   jsonText.value = JSON.stringify(formToResume(form), null, 2)
   jsonError.value = ''
   jsonMode.value = true
 }
 
-/** JSON → 表单模式：解析失败留在 JSON 模式并提示。 */
 function switchToForm(): void {
   try {
     const parsed = JSON.parse(jsonText.value) as Resume
@@ -207,7 +213,6 @@ function switchToForm(): void {
   }
 }
 
-/** 保存：JSON 模式先解析，再走同一校验/入库路径。 */
 async function save(): Promise<void> {
   issues.value = []
   successMessage.value = ''
@@ -231,7 +236,6 @@ async function save(): Promise<void> {
         ? await window.api.resumes.update(targetId, resume)
         : await window.api.resumes.create(resume)
     successMessage.value = `已保存「${stored.meta.title ?? stored.meta.id}」`
-    // 服务端写入 meta.id/updatedAt：刷新编辑器与列表
     Object.assign(form, resumeToForm(stored))
     if (jsonMode.value) jsonText.value = JSON.stringify(stored, null, 2)
     editingId.value = stored.meta.id
@@ -288,201 +292,158 @@ function fmtDate(iso: string | undefined): string {
   return iso === undefined ? '' : iso.slice(0, 10)
 }
 
+function onRowKeydown(e: KeyboardEvent, resume: StoredResume): void {
+  if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault()
+    openEditor(resume)
+  }
+}
+
 onMounted(() => void load())
 </script>
 
 <template>
-  <section class="resumes-view">
-    <h1 class="page-title">简历</h1>
-
-    <p v-if="errorMessage" class="message error">{{ errorMessage }}</p>
-
-    <!-- 列表模式 -->
-    <template v-if="editingId === null">
-      <section class="card">
-        <h2 class="card-title">上传简历 <span class="hint-inline">docx / PDF → 自动解析为草稿，核对修正后确认为基准简历</span></h2>
-        <div class="upload-bar">
-          <label class="btn btn-primary upload-btn">
-            选择文件…
-            <input type="file" accept=".docx,.pdf" hidden @change="onFilePicked" :disabled="uploading" />
-          </label>
-          <span v-if="uploading" class="hint">解析中…</span>
+  <section class="view cols">
+    <!-- ===== 列表列 ===== -->
+    <div class="col">
+      <div class="col-head">
+        <div>
+          <div class="col-title">简历</div>
+          <div class="col-count">基准 {{ bases.length }} · 优化稿 {{ derived.length }}</div>
         </div>
-        <p v-if="uploadError" class="message error">{{ uploadError }}</p>
-
-        <!-- 草稿核对/修正 -->
-        <div v-if="draft" class="draft-panel">
-          <div class="draft-head">
-            <span class="draft-file">{{ draft.fileName }}</span>
-            <span class="pill" :class="draft.scanned ? 'pill-missing' : 'pill-base'">
-              置信度 {{ Math.round(draft.confidence * 100) }}%
-            </span>
-          </div>
-          <ul v-if="draftWarnings(draft).length > 0" class="warnings">
-            <li v-for="w in draftWarnings(draft)" :key="w">{{ w }}</li>
-          </ul>
-          <div class="form-grid">
-            <label class="field">
-              <span class="label">简历名</span>
-              <input v-model="draftTitle" class="input" />
-            </label>
-            <label class="field">
-              <span class="label">姓名 <em class="required">*</em></span>
-              <input v-model="draftForm.name" class="input" />
-            </label>
-            <label class="field">
-              <span class="label">电话</span>
-              <input v-model="draftForm.phone" class="input" />
-            </label>
-            <label class="field">
-              <span class="label">邮箱</span>
-              <input v-model="draftForm.email" class="input" />
-            </label>
-            <label class="field">
-              <span class="label">性别</span>
-              <select v-model="draftForm.gender" class="input">
-                <option value="">未填</option>
-                <option value="男">男</option>
-                <option value="女">女</option>
-              </select>
-            </label>
-            <label class="field">
-              <span class="label">生日（YYYY-MM）</span>
-              <input v-model="draftForm.birthday" class="input" placeholder="2004-06" />
-            </label>
-            <label class="field">
-              <span class="label">学校</span>
-              <input v-model="draftForm.school" class="input" />
-            </label>
-            <label class="field">
-              <span class="label">学历</span>
-              <input v-model="draftForm.degree" class="input" placeholder="本科 / 硕士 / 博士" />
-            </label>
-            <label class="field">
-              <span class="label">专业</span>
-              <input v-model="draftForm.major" class="input" />
-            </label>
-            <label class="field">
-              <span class="label">起止时间（如 2022.09 ~ 2026.06）</span>
-              <input v-model="draftForm.period" class="input" />
-            </label>
-            <label class="field field-wide">
-              <span class="label">技能（每行一个）</span>
-              <textarea v-model="draftForm.skillsText" class="input textarea" rows="3" />
-            </label>
-          </div>
-          <div class="form-actions">
-            <button class="btn btn-primary" type="button" :disabled="confirmingDraft" @click="confirmDraft">
-              {{ confirmingDraft ? '保存中…' : '确认存为基准简历' }}
-            </button>
-            <button class="btn" type="button" :disabled="confirmingDraft" @click="cancelDraft">放弃</button>
-          </div>
+        <div class="head-actions">
+          <button class="btn" type="button" :disabled="uploading" @click="pickFile">
+            <Icon name="upload" />{{ uploading ? '解析中…' : '上传解析' }}
+          </button>
+          <button class="btn primary" type="button" @click="openEditor()">
+            <Icon name="plus" />新建
+          </button>
         </div>
-      </section>
+      </div>
+      <input ref="fileInput" type="file" accept=".docx,.pdf" hidden @change="onFilePicked" />
 
-      <section class="card">
-        <div class="card-head">
-          <h2 class="card-title">基准简历 <span class="count">{{ bases.length }}</span></h2>
-          <button class="btn btn-primary" type="button" @click="openEditor()">新建基准简历</button>
-        </div>
+      <p v-if="errorMessage" class="empty">{{ errorMessage }}</p>
+      <p v-if="loading" class="empty">加载中…</p>
 
-        <p v-if="loading" class="hint">加载中…</p>
-        <div v-else-if="bases.length === 0" class="empty-state">
-          <p class="hint">
-            暂无基准简历——新建后可在分节表单中填写基本信息（含政治面貌/生源地等国企字段）、
-            教育/技能/项目/实习/证书等，也可切换到 JSON 模式直接编辑。
-          </p>
-          <button class="btn btn-primary" type="button" @click="openEditor()">新建基准简历</button>
-        </div>
-        <ul v-else class="resume-list">
-          <li v-for="r in bases" :key="r.meta.id" class="resume-row">
-            <span class="resume-name">{{ r.meta.title ?? '未命名简历' }}</span>
-            <span class="pill pill-base">基准</span>
-            <span class="meta">更新于 {{ fmtDate(r.meta.updatedAt) }}</span>
-            <span class="row-actions">
-              <button class="btn" type="button" @click="openEditor(r)">编辑</button>
-              <button class="btn" type="button" @click="openPreview(r)">A4 预览</button>
-              <button class="btn btn-danger-ghost" type="button" @click="deleteTarget = r">删除</button>
-            </span>
-          </li>
-        </ul>
-      </section>
-
-      <section class="card">
-        <h2 class="card-title">派生稿 <span class="count">{{ derived.length }}</span></h2>
-        <p class="hint">
-          针对职位卡按 JD 生成的优化稿（关联基准简历与职位卡）——由「优化」流程产出（见职位详情），
-          此处仅展示与编辑。
-        </p>
-        <ul v-if="derived.length > 0" class="resume-list">
-          <li v-for="r in derived" :key="r.meta.id" class="resume-row">
-            <span class="resume-name">{{ r.meta.title ?? '未命名优化稿' }}</span>
-            <span class="pill pill-derived">派生</span>
-            <span class="meta">更新于 {{ fmtDate(r.meta.updatedAt) }}</span>
-            <span class="row-actions">
-              <button class="btn" type="button" @click="openEditor(r)">编辑</button>
-              <button class="btn" type="button" @click="openPreview(r)">A4 预览</button>
-              <button class="btn btn-danger-ghost" type="button" @click="deleteTarget = r">删除</button>
-            </span>
-          </li>
-        </ul>
-      </section>
-
-      <!-- 删除确认 -->
-      <div v-if="deleteTarget !== null" class="confirm-box">
-        <p class="confirm-text">
-          确认删除「{{ deleteTarget.meta.title ?? '未命名简历' }}」？删除后不可恢复。
-          <template v-if="deleteTarget.meta.baseResumeId != null">（派生稿为独立副本，不影响基准简历）</template>
-        </p>
-        <div class="confirm-actions">
-          <button class="btn btn-danger" type="button" @click="confirmDelete">确认删除</button>
-          <button class="btn" type="button" @click="deleteTarget = null">取消</button>
+      <div class="rgroup-title"><span>基准简历</span><span>{{ bases.length }} 份</span></div>
+      <div v-if="bases.length === 0 && !loading" class="empty">
+        暂无基准简历——点「新建」或「上传解析」创建。
+      </div>
+      <div
+        v-for="r in bases"
+        :key="r.meta.id"
+        class="res-row"
+        tabindex="0"
+        role="button"
+        @click="openEditor(r)"
+        @keydown="onRowKeydown($event, r)"
+      >
+        <div class="res-name">{{ r.meta.title ?? '未命名简历' }}</div>
+        <div class="res-meta">更新于 {{ fmtDate(r.meta.updatedAt) }} · 基准</div>
+        <div class="res-actions">
+          <button class="icon-btn" type="button" title="编辑" @click.stop="openEditor(r)"><Icon name="edit" /></button>
+          <button class="icon-btn" type="button" title="A4 预览" @click.stop="openPreview(r)"><Icon name="file" /></button>
+          <button class="icon-btn" type="button" title="导出 PDF" @click.stop="exportPdfFromRow(r)"><Icon name="download" /></button>
+          <button class="icon-btn" type="button" title="删除" @click.stop="deleteTarget = r"><Icon name="trash" /></button>
         </div>
       </div>
 
-      <!-- A4 预览（F-15/#30：iframe srcdoc + 导出 PDF） -->
-      <div v-if="previewHtml !== ''" class="preview-overlay" @click.self="previewHtml = ''">
-        <div class="preview-panel">
-          <div class="preview-head">
-            <span class="preview-title">A4 预览：{{ previewTitle }}</span>
-            <div class="preview-actions">
-              <span v-if="exportMessage" class="message" :class="exportMessage.startsWith('已导出') ? 'success' : 'error'">{{ exportMessage }}</span>
-              <button class="btn btn-primary" type="button" :disabled="exporting" @click="exportPdf">
-                {{ exporting ? '导出中…' : '导出 PDF' }}
-              </button>
-              <button class="btn" type="button" @click="previewHtml = ''">关闭</button>
+      <div class="rgroup-title"><span>优化简历（派生稿）</span><span>{{ derived.length }} 份</span></div>
+      <div v-if="derived.length === 0 && !loading" class="empty">
+        由「优化简历」流程产出（职位详情内触发），此处展示与编辑。
+      </div>
+      <div
+        v-for="r in derived"
+        :key="r.meta.id"
+        class="res-row"
+        tabindex="0"
+        role="button"
+        @click="openEditor(r)"
+        @keydown="onRowKeydown($event, r)"
+      >
+        <div class="res-name">{{ r.meta.title ?? '未命名优化稿' }}</div>
+        <div class="res-meta">
+          更新于 {{ fmtDate(r.meta.updatedAt) }} · 派生
+          <template v-if="r.meta.targetJobId"> · 关联职位 {{ r.meta.targetJobId }}</template>
+        </div>
+        <div class="res-actions">
+          <button class="icon-btn" type="button" title="编辑" @click.stop="openEditor(r)"><Icon name="edit" /></button>
+          <button class="icon-btn" type="button" title="A4 预览" @click.stop="openPreview(r)"><Icon name="file" /></button>
+          <button class="icon-btn" type="button" title="导出 PDF" @click.stop="exportPdfFromRow(r)"><Icon name="download" /></button>
+          <button class="icon-btn" type="button" title="删除" @click.stop="deleteTarget = r"><Icon name="trash" /></button>
+        </div>
+      </div>
+    </div>
+
+    <Resizer mode="col" />
+
+    <!-- ===== 工作区 ===== -->
+    <div class="workspace">
+      <p v-if="successMessage" class="ws-msg ok">{{ successMessage }}</p>
+      <p v-if="errorMessage" class="ws-msg err">{{ errorMessage }}</p>
+
+      <!-- 上传草稿确认 -->
+      <div v-if="draft" class="ws-card">
+        <div class="ws-head">
+          <div>
+            <div class="ws-title">上传解析草稿</div>
+            <div class="ws-sub">{{ draft.fileName }} · 置信度 {{ Math.round(draft.confidence * 100) }}%</div>
+          </div>
+          <Pill :tone="draft.scanned ? '' : 'tint'">{{ draft.scanned ? '需人工核对' : '字段完整' }}</Pill>
+        </div>
+        <ul v-if="draftWarnings(draft).length > 0" class="warnings">
+          <li v-for="w in draftWarnings(draft)" :key="w">{{ w }}</li>
+        </ul>
+        <div class="form-grid">
+          <label class="field"><span class="label">简历名</span><input v-model="draftTitle" /></label>
+          <label class="field"><span class="label">姓名 <em class="required">*</em></span><input v-model="draftForm.name" /></label>
+          <label class="field"><span class="label">电话</span><input v-model="draftForm.phone" /></label>
+          <label class="field"><span class="label">邮箱</span><input v-model="draftForm.email" /></label>
+          <label class="field">
+            <span class="label">性别</span>
+            <select v-model="draftForm.gender">
+              <option value="">未填</option>
+              <option value="男">男</option>
+              <option value="女">女</option>
+            </select>
+          </label>
+          <label class="field"><span class="label">生日（YYYY-MM）</span><input v-model="draftForm.birthday" placeholder="2004-06" /></label>
+          <label class="field"><span class="label">学校</span><input v-model="draftForm.school" /></label>
+          <label class="field"><span class="label">学历</span><input v-model="draftForm.degree" placeholder="本科 / 硕士 / 博士" /></label>
+          <label class="field"><span class="label">专业</span><input v-model="draftForm.major" /></label>
+          <label class="field"><span class="label">起止时间</span><input v-model="draftForm.period" placeholder="2022.09 ~ 2026.06" /></label>
+          <label class="field span2"><span class="label">技能（每行一个）</span><textarea v-model="draftForm.skillsText" rows="3" /></label>
+        </div>
+        <div class="ws-actions">
+          <button class="btn primary" type="button" :disabled="confirmingDraft" @click="confirmDraft">
+            {{ confirmingDraft ? '保存中…' : '确认存为基准简历' }}
+          </button>
+          <button class="btn" type="button" :disabled="confirmingDraft" @click="cancelDraft">放弃</button>
+        </div>
+      </div>
+
+      <!-- 编辑器 -->
+      <template v-else-if="editingId !== null">
+        <div class="ws-head">
+          <div>
+            <div class="ws-title">{{ editingExisting ? '编辑简历' : '新建基准简历' }}</div>
+            <div class="ws-sub">
+              <Pill v-if="editingExisting" tone="tint">派生稿</Pill>
+              <Pill v-else>基准</Pill>
+              <span style="margin-left: 6px">分节表单 ⇄ JSON 模式</span>
             </div>
           </div>
-          <p v-if="previewError" class="message error">{{ previewError }}</p>
-          <iframe class="preview-frame" :srcdoc="previewHtml" title="A4 预览" />
-        </div>
-      </div>
-    </template>
-
-    <!-- 编辑器 -->
-    <template v-else>
-      <section class="card">
-        <div class="card-head">
-          <h2 class="card-title">
-            {{ editingExisting ? '编辑简历' : '新建基准简历' }}
-            <span class="pill" :class="editingExisting ? 'pill-derived' : 'pill-base'">
-              {{ editingExisting ? '派生稿可编辑' : '基准' }}
-            </span>
-          </h2>
           <div class="head-actions">
             <button class="btn" type="button" :disabled="saving" @click="jsonMode ? switchToForm() : switchToJson()">
               {{ jsonMode ? '⇄ 表单模式' : '⇄ JSON 模式' }}
             </button>
-            <button class="btn btn-primary" type="button" :disabled="saving" @click="save">
+            <button class="btn primary" type="button" :disabled="saving" @click="save">
               {{ saving ? '保存中…' : '保存' }}
             </button>
             <button class="btn" type="button" :disabled="saving" @click="closeEditor">返回列表</button>
           </div>
         </div>
 
-        <p v-if="successMessage" class="message success">{{ successMessage }}</p>
-
-        <!-- 校验错误定位 -->
         <div v-if="issues.length > 0" class="issues-box">
           <p class="issues-title">保存未通过校验（{{ issues.length }} 处）：</p>
           <ul class="issues-list">
@@ -493,526 +454,260 @@ onMounted(() => void load())
           </ul>
         </div>
 
-        <!-- JSON 模式 -->
-        <div v-if="jsonMode" class="json-mode">
-          <p class="hint">JSON 模式：直接编辑 resume.schema.json 结构；切换到表单模式或保存时解析校验。</p>
-          <p v-if="jsonError" class="message error">{{ jsonError }}</p>
+        <div v-if="jsonMode" class="editor-sec">
+          <h3>JSON 模式</h3>
+          <p class="hint">直接编辑 resume.schema.json 结构；切换到表单模式或保存时解析校验。</p>
+          <p v-if="jsonError" class="ws-msg err">{{ jsonError }}</p>
           <textarea v-model="jsonText" class="json-textarea" rows="28" spellcheck="false" />
         </div>
 
-        <!-- 分节表单 -->
-        <form v-else class="form" @submit.prevent="save">
-          <!-- 基本信息（含国企字段） -->
-          <section class="section">
-            <h3 class="section-title">基本信息</h3>
+        <form v-else @submit.prevent="save">
+          <div class="editor-sec">
+            <h3>基本信息 <em class="soe">国企字段：政治面貌 / 生源地</em></h3>
             <div class="form-grid">
-              <label class="field">
-                <span class="label">姓名 <em class="required">*</em></span>
-                <input v-model="form.basics.name" class="input" />
-              </label>
+              <label class="field"><span class="label">姓名 <em class="required">*</em></span><input v-model="form.basics.name" /></label>
               <label class="field">
                 <span class="label">性别</span>
-                <select v-model="form.basics.gender" class="input">
+                <select v-model="form.basics.gender">
                   <option value="">未填</option>
                   <option value="男">男</option>
                   <option value="女">女</option>
                 </select>
               </label>
-              <label class="field">
-                <span class="label">生日（YYYY-MM）</span>
-                <input v-model="form.basics.birthday" class="input" placeholder="2004-06" />
-              </label>
-              <label class="field">
-                <span class="label">政治面貌 <em class="soe">国企必填</em></span>
-                <input v-model="form.basics.politicalStatus" class="input" placeholder="中共党员 / 共青团员 / 群众" />
-              </label>
-              <label class="field">
-                <span class="label">生源地 <em class="soe">国企必填</em></span>
-                <input v-model="form.basics.hometown" class="input" placeholder="如：四川绵阳" />
-              </label>
-              <label class="field">
-                <span class="label">电话</span>
-                <input v-model="form.basics.phone" class="input" placeholder="138-0000-1234" />
-              </label>
-              <label class="field">
-                <span class="label">邮箱</span>
-                <input v-model="form.basics.email" class="input" placeholder="name@example.com" />
-              </label>
-              <label class="field">
-                <span class="label">现居城市</span>
-                <input v-model="form.basics.location" class="input" />
-              </label>
+              <label class="field"><span class="label">生日（YYYY-MM）</span><input v-model="form.basics.birthday" placeholder="2004-06" /></label>
+              <label class="field"><span class="label">政治面貌</span><input v-model="form.basics.politicalStatus" placeholder="中共党员 / 共青团员 / 群众" /></label>
+              <label class="field"><span class="label">生源地</span><input v-model="form.basics.hometown" placeholder="如：四川绵阳" /></label>
+              <label class="field"><span class="label">电话</span><input v-model="form.basics.phone" placeholder="138-0000-1234" /></label>
+              <label class="field"><span class="label">邮箱</span><input v-model="form.basics.email" placeholder="name@example.com" /></label>
+              <label class="field"><span class="label">现居城市</span><input v-model="form.basics.location" /></label>
             </div>
-
             <h4 class="sub-title">求职意向</h4>
             <div class="form-grid">
-              <label class="field">
-                <span class="label">意向岗位</span>
-                <input v-model="form.basics.jobIntention.position" class="input" placeholder="如：后端开发工程师（校招）" />
-              </label>
-              <label class="field">
-                <span class="label">期望城市（每行一个）</span>
-                <textarea v-model="form.basics.jobIntention.cityText" class="input textarea" rows="2" placeholder="北京&#10;杭州" />
-              </label>
-              <label class="field">
-                <span class="label">期望薪资</span>
-                <input v-model="form.basics.jobIntention.salary" class="input" placeholder="面议" />
-              </label>
+              <label class="field"><span class="label">意向岗位</span><input v-model="form.basics.jobIntention.position" placeholder="如：后端开发工程师（校招）" /></label>
+              <label class="field"><span class="label">期望城市（每行一个）</span><textarea v-model="form.basics.jobIntention.cityText" rows="2" placeholder="北京&#10;杭州" /></label>
+              <label class="field"><span class="label">期望薪资</span><input v-model="form.basics.jobIntention.salary" placeholder="面议" /></label>
             </div>
-
             <h4 class="sub-title">链接（GitHub / 博客 / 作品）</h4>
             <div v-for="(link, i) in form.basics.links" :key="i" class="link-row">
-              <input v-model="link.label" class="input" placeholder="名称，如 GitHub" />
-              <input v-model="link.url" class="input" placeholder="https://…" />
-              <button class="btn btn-danger-ghost" type="button" @click="form.basics.links.splice(i, 1)">删除</button>
+              <input v-model="link.label" placeholder="名称，如 GitHub" />
+              <input v-model="link.url" placeholder="https://…" />
+              <button class="btn ghost" type="button" @click="form.basics.links.splice(i, 1)">删除</button>
             </div>
-            <button
-              class="btn btn-ghost"
-              type="button"
-              @click="form.basics.links.push({ label: '', url: '' })"
-            >
-              + 添加链接
-            </button>
-          </section>
+            <button class="btn ghost" type="button" @click="form.basics.links.push({ label: '', url: '' })">+ 添加链接</button>
+          </div>
 
-          <!-- 教育经历 -->
-          <section class="section">
-            <h3 class="section-title">
-              教育经历
-              <button class="btn btn-ghost" type="button" @click="addRow('education', EMPTY_EDU)">+ 添加</button>
-            </h3>
+          <div class="editor-sec">
+            <h3>教育经历 <button class="btn" type="button" @click="addRow('education', EMPTY_EDU)">+ 添加</button></h3>
             <div v-for="(e, i) in form.education" :key="i" class="entry">
               <div class="entry-head">
                 <span class="entry-label">第 {{ i + 1 }} 条</span>
-                <button class="btn btn-danger-ghost" type="button" @click="removeRow('education', i)">删除</button>
+                <button class="btn ghost" type="button" @click="removeRow('education', i)">删除</button>
               </div>
               <div class="form-grid">
-                <label class="field">
-                  <span class="label">学校 <em class="required">*</em></span>
-                  <input v-model="e.school" class="input" />
-                </label>
-                <label class="field">
-                  <span class="label">学历 <em class="required">*</em></span>
-                  <input v-model="e.degree" class="input" placeholder="本科 / 硕士 / 博士" />
-                </label>
-                <label class="field">
-                  <span class="label">专业 <em class="required">*</em></span>
-                  <input v-model="e.major" class="input" />
-                </label>
-                <label class="field">
-                  <span class="label">开始时间（YYYY-MM）</span>
-                  <input v-model="e.startDate" class="input" placeholder="2022-09" />
-                </label>
-                <label class="field">
-                  <span class="label">结束时间（应届可留空）</span>
-                  <input v-model="e.endDate" class="input" placeholder="2026-06" />
-                </label>
-                <label class="field">
-                  <span class="label">绩点（如 3.7/4.0）</span>
-                  <input v-model="e.gpa" class="input" />
-                </label>
-                <label class="field">
-                  <span class="label">排名 <em class="soe">国企看重</em></span>
-                  <input v-model="e.rank" class="input" placeholder="前 10%" />
-                </label>
-                <label class="field">
-                  <span class="label">相关课程（每行一个）</span>
-                  <textarea v-model="e.coursesText" class="input textarea" rows="2" />
-                </label>
-                <label class="field">
-                  <span class="label">荣誉/奖学金（每行一个）</span>
-                  <textarea v-model="e.honorsText" class="input textarea" rows="2" />
-                </label>
+                <label class="field"><span class="label">学校 <em class="required">*</em></span><input v-model="e.school" /></label>
+                <label class="field"><span class="label">学历 <em class="required">*</em></span><input v-model="e.degree" placeholder="本科 / 硕士 / 博士" /></label>
+                <label class="field"><span class="label">专业 <em class="required">*</em></span><input v-model="e.major" /></label>
+                <label class="field"><span class="label">开始时间（YYYY-MM）</span><input v-model="e.startDate" placeholder="2022-09" /></label>
+                <label class="field"><span class="label">结束时间（应届可留空）</span><input v-model="e.endDate" placeholder="2026-06" /></label>
+                <label class="field"><span class="label">绩点（如 3.7/4.0）</span><input v-model="e.gpa" /></label>
+                <label class="field"><span class="label">排名 <em class="soe">国企看重</em></span><input v-model="e.rank" placeholder="前 10%" /></label>
+                <label class="field"><span class="label">相关课程（每行一个）</span><textarea v-model="e.coursesText" rows="2" /></label>
+                <label class="field"><span class="label">荣誉/奖学金（每行一个）</span><textarea v-model="e.honorsText" rows="2" /></label>
               </div>
             </div>
-          </section>
+          </div>
 
-          <!-- 技能 -->
-          <section class="section">
-            <h3 class="section-title">
-              技能
-              <button class="btn btn-ghost" type="button" @click="addRow('skills', EMPTY_SKILL)">+ 添加</button>
-            </h3>
+          <div class="editor-sec">
+            <h3>技能 <button class="btn" type="button" @click="addRow('skills', EMPTY_SKILL)">+ 添加</button></h3>
             <div v-for="(s, i) in form.skills" :key="i" class="entry">
               <div class="entry-head">
                 <span class="entry-label">第 {{ i + 1 }} 组</span>
-                <button class="btn btn-danger-ghost" type="button" @click="removeRow('skills', i)">删除</button>
+                <button class="btn ghost" type="button" @click="removeRow('skills', i)">删除</button>
               </div>
               <div class="form-grid">
-                <label class="field">
-                  <span class="label">分类</span>
-                  <input v-model="s.category" class="input" placeholder="编程语言 / 框架 / 工具" />
-                </label>
+                <label class="field"><span class="label">分类</span><input v-model="s.category" placeholder="编程语言 / 框架 / 工具" /></label>
                 <label class="field">
                   <span class="label">熟练度</span>
-                  <select v-model="s.proficiency" class="input">
+                  <select v-model="s.proficiency">
                     <option value="">未填</option>
                     <option value="熟练">熟练</option>
                     <option value="熟悉">熟悉</option>
                     <option value="了解">了解</option>
                   </select>
                 </label>
-                <label class="field field-wide">
-                  <span class="label">技能项（每行一个）</span>
-                  <textarea v-model="s.itemsText" class="input textarea" rows="2" placeholder="Java&#10;Spring Boot" />
-                </label>
+                <label class="field span2"><span class="label">技能项（每行一个）</span><textarea v-model="s.itemsText" rows="2" placeholder="Java&#10;Spring Boot" /></label>
               </div>
             </div>
-          </section>
+          </div>
 
-          <!-- 项目经历 -->
-          <section class="section">
-            <h3 class="section-title">
-              项目经历
-              <button class="btn btn-ghost" type="button" @click="addRow('projects', EMPTY_PROJECT)">+ 添加</button>
-            </h3>
+          <div class="editor-sec">
+            <h3>项目经历 <button class="btn" type="button" @click="addRow('projects', EMPTY_PROJECT)">+ 添加</button></h3>
             <div v-for="(p, i) in form.projects" :key="i" class="entry">
               <div class="entry-head">
                 <span class="entry-label">第 {{ i + 1 }} 条</span>
-                <button class="btn btn-danger-ghost" type="button" @click="removeRow('projects', i)">删除</button>
+                <button class="btn ghost" type="button" @click="removeRow('projects', i)">删除</button>
               </div>
               <div class="form-grid">
-                <label class="field">
-                  <span class="label">项目名</span>
-                  <input v-model="p.name" class="input" />
-                </label>
-                <label class="field">
-                  <span class="label">角色</span>
-                  <input v-model="p.role" class="input" placeholder="后端开发 / 全栈" />
-                </label>
-                <label class="field">
-                  <span class="label">开始时间（YYYY-MM）</span>
-                  <input v-model="p.startDate" class="input" placeholder="2025-03" />
-                </label>
-                <label class="field">
-                  <span class="label">结束时间</span>
-                  <input v-model="p.endDate" class="input" placeholder="2025-08" />
-                </label>
-                <label class="field field-wide">
-                  <span class="label">描述</span>
-                  <textarea v-model="p.description" class="input textarea" rows="2" />
-                </label>
-                <label class="field">
-                  <span class="label">要点（每行一个，动词开头、量化优先）</span>
-                  <textarea v-model="p.highlightsText" class="input textarea" rows="3" />
-                </label>
-                <label class="field">
-                  <span class="label">技术栈（每行一个）</span>
-                  <textarea v-model="p.techStackText" class="input textarea" rows="3" />
-                </label>
-                <label class="field field-wide">
-                  <span class="label">链接</span>
-                  <input v-model="p.link" class="input" placeholder="https://…（可留空）" />
-                </label>
+                <label class="field"><span class="label">项目名</span><input v-model="p.name" /></label>
+                <label class="field"><span class="label">角色</span><input v-model="p.role" placeholder="后端开发 / 全栈" /></label>
+                <label class="field"><span class="label">开始时间（YYYY-MM）</span><input v-model="p.startDate" placeholder="2025-03" /></label>
+                <label class="field"><span class="label">结束时间</span><input v-model="p.endDate" placeholder="2025-08" /></label>
+                <label class="field span2"><span class="label">描述</span><textarea v-model="p.description" rows="2" /></label>
+                <label class="field"><span class="label">要点（每行一个，量化优先）</span><textarea v-model="p.highlightsText" rows="3" /></label>
+                <label class="field"><span class="label">技术栈（每行一个）</span><textarea v-model="p.techStackText" rows="3" /></label>
+                <label class="field span2"><span class="label">链接</span><input v-model="p.link" placeholder="https://…（可留空）" /></label>
               </div>
             </div>
-          </section>
+          </div>
 
-          <!-- 实习经历 -->
-          <section class="section">
-            <h3 class="section-title">
-              实习经历
-              <button class="btn btn-ghost" type="button" @click="addRow('experience', EMPTY_EXP)">+ 添加</button>
-            </h3>
+          <div class="editor-sec">
+            <h3>实习经历 <button class="btn" type="button" @click="addRow('experience', EMPTY_EXP)">+ 添加</button></h3>
             <div v-for="(x, i) in form.experience" :key="i" class="entry">
               <div class="entry-head">
                 <span class="entry-label">第 {{ i + 1 }} 条</span>
-                <button class="btn btn-danger-ghost" type="button" @click="removeRow('experience', i)">删除</button>
+                <button class="btn ghost" type="button" @click="removeRow('experience', i)">删除</button>
               </div>
               <div class="form-grid">
-                <label class="field">
-                  <span class="label">公司</span>
-                  <input v-model="x.company" class="input" />
-                </label>
-                <label class="field">
-                  <span class="label">岗位</span>
-                  <input v-model="x.title" class="input" />
-                </label>
-                <label class="field">
-                  <span class="label">开始时间</span>
-                  <input v-model="x.startDate" class="input" placeholder="2026-01" />
-                </label>
-                <label class="field">
-                  <span class="label">结束时间</span>
-                  <input v-model="x.endDate" class="input" placeholder="2026-06" />
-                </label>
-                <label class="field">
-                  <span class="label">要点（每行一个）</span>
-                  <textarea v-model="x.highlightsText" class="input textarea" rows="3" />
-                </label>
-                <label class="field">
-                  <span class="label">技术栈（每行一个）</span>
-                  <textarea v-model="x.techStackText" class="input textarea" rows="3" />
-                </label>
+                <label class="field"><span class="label">公司</span><input v-model="x.company" /></label>
+                <label class="field"><span class="label">岗位</span><input v-model="x.title" /></label>
+                <label class="field"><span class="label">开始时间</span><input v-model="x.startDate" placeholder="2026-01" /></label>
+                <label class="field"><span class="label">结束时间</span><input v-model="x.endDate" placeholder="2026-06" /></label>
+                <label class="field"><span class="label">要点（每行一个）</span><textarea v-model="x.highlightsText" rows="3" /></label>
+                <label class="field"><span class="label">技术栈（每行一个）</span><textarea v-model="x.techStackText" rows="3" /></label>
               </div>
             </div>
-          </section>
+          </div>
 
-          <!-- 证书 -->
-          <section class="section">
-            <h3 class="section-title">
-              证书
-              <button class="btn btn-ghost" type="button" @click="addRow('certificates', EMPTY_CERT)">+ 添加</button>
-            </h3>
+          <div class="editor-sec">
+            <h3>证书 <button class="btn" type="button" @click="addRow('certificates', EMPTY_CERT)">+ 添加</button></h3>
             <div v-for="(c, i) in form.certificates" :key="i" class="entry">
               <div class="entry-head">
                 <span class="entry-label">第 {{ i + 1 }} 条</span>
-                <button class="btn btn-danger-ghost" type="button" @click="removeRow('certificates', i)">删除</button>
+                <button class="btn ghost" type="button" @click="removeRow('certificates', i)">删除</button>
               </div>
               <div class="form-grid">
-                <label class="field">
-                  <span class="label">证书名</span>
-                  <input v-model="c.name" class="input" placeholder="CET-6" />
-                </label>
-                <label class="field">
-                  <span class="label">颁发机构</span>
-                  <input v-model="c.issuer" class="input" />
-                </label>
-                <label class="field">
-                  <span class="label">日期（YYYY-MM）</span>
-                  <input v-model="c.date" class="input" placeholder="2024-12" />
-                </label>
+                <label class="field"><span class="label">证书名</span><input v-model="c.name" placeholder="CET-6" /></label>
+                <label class="field"><span class="label">颁发机构</span><input v-model="c.issuer" /></label>
+                <label class="field"><span class="label">日期（YYYY-MM）</span><input v-model="c.date" placeholder="2024-12" /></label>
               </div>
             </div>
-          </section>
+          </div>
 
-          <!-- 自我评价 -->
-          <section class="section">
-            <h3 class="section-title">自我评价</h3>
-            <textarea v-model="form.selfAssessment" class="input textarea" rows="3" placeholder="可留空（优化稿可生成）" />
-          </section>
+          <div class="editor-sec">
+            <h3>自我评价</h3>
+            <textarea v-model="form.selfAssessment" rows="3" placeholder="可留空（优化稿可生成）" />
+          </div>
 
-          <div class="form-actions">
-            <button class="btn btn-primary" type="submit" :disabled="saving">
+          <div class="ws-actions">
+            <button class="btn primary" type="submit" :disabled="saving">
               {{ saving ? '保存中…' : '保存' }}
             </button>
             <button class="btn" type="button" :disabled="saving" @click="closeEditor">取消</button>
           </div>
         </form>
-      </section>
-    </template>
+      </template>
+
+      <!-- 空工作区 -->
+      <template v-else>
+        <div class="ws-empty">
+          <p class="hint">从左侧选择一份简历开始编辑，或新建基准简历 / 上传解析。</p>
+          <div class="ws-actions">
+            <button class="btn primary" type="button" @click="openEditor()">新建基准简历</button>
+            <button class="btn" type="button" @click="pickFile">上传 docx / PDF 解析</button>
+          </div>
+        </div>
+      </template>
+    </div>
   </section>
+
+  <!-- ===== 弹窗：删除确认 ===== -->
+  <Modal :open="deleteTarget !== null" title="删除简历" @close="deleteTarget = null">
+    <p class="hint">
+      确认删除「{{ deleteTarget?.meta.title ?? '未命名简历' }}」？删除后不可恢复。
+      <template v-if="deleteTarget?.meta.baseResumeId != null">（派生稿为独立副本，不影响基准简历）</template>
+    </p>
+    <template #foot>
+      <button class="btn" type="button" @click="deleteTarget = null">取消</button>
+      <button class="btn primary" type="button" @click="confirmDelete">确认删除</button>
+    </template>
+  </Modal>
+
+  <!-- ===== 弹窗：A4 预览 + 导出 PDF ===== -->
+  <Modal :open="previewHtml !== ''" :title="`A4 预览 · ${previewTitle}`" @close="previewHtml = ''">
+    <template #head-actions>
+      <button class="btn" type="button" :disabled="exporting" @click="exportPdf">
+        {{ exporting ? '导出中…' : '导出 PDF' }}
+      </button>
+    </template>
+    <p v-if="exportMessage" class="hint" :style="{ color: exportMessage.startsWith('已导出') ? '#059669' : '#dc2626' }">
+      {{ exportMessage }}
+    </p>
+    <p v-if="previewError" class="hint" style="color: #dc2626">{{ previewError }}</p>
+    <div class="a4-body">
+      <iframe class="a4-frame" :srcdoc="previewHtml" title="A4 预览" />
+    </div>
+  </Modal>
 </template>
 
 <style scoped>
-.resumes-view {
-  max-width: 880px;
+.workspace {
+  overflow-y: auto;
+  padding: 20px 24px;
+  background: var(--bg);
+  min-width: 0;
 }
 
-.page-title {
-  margin: 0 0 16px;
-  font-size: 20px;
-}
-
-.card {
-  padding: 16px 20px;
-  margin-bottom: 16px;
-  background: #fff;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-}
-
-.card-head {
+.ws-head {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
   margin-bottom: 12px;
 }
 
-.card-title {
-  margin: 0;
-  font-size: 15px;
-}
-
-.count {
-  margin-left: 4px;
-  color: #6b7280;
-  font-weight: 400;
-}
-
-.head-actions {
-  display: flex;
-  gap: 8px;
-}
-
-.resume-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.resume-row {
+.ws-title {
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 0;
-  border-bottom: 1px solid #f0f1f3;
-}
-
-.resume-row:last-child {
-  border-bottom: none;
-}
-
-.resume-name {
-  font-weight: 600;
-}
-
-.pill {
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 12px;
-  white-space: nowrap;
-}
-
-.pill-base {
-  background: #eff6ff;
-  color: #1d4ed8;
-}
-
-.pill-derived {
-  background: #f5f3ff;
-  color: #6d28d9;
-}
-
-.row-actions {
-  margin-left: auto;
-  display: flex;
   gap: 8px;
 }
 
-.empty-state {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 8px 0;
+.ws-sub {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
 }
 
-.confirm-box {
-  margin-top: 12px;
-  padding: 12px 14px;
-  background: #fef2f2;
-  border: 1px solid #fecaca;
-  border-radius: 6px;
+.ws-msg {
+  font-size: 12px;
+  margin-bottom: 10px;
 }
 
-.confirm-text {
-  margin: 0 0 10px;
-  font-size: 13px;
-  color: #991b1b;
-  line-height: 1.6;
-}
-
-.confirm-actions,
-.form-actions {
-  display: flex;
-  gap: 10px;
-}
-
-.message {
-  margin: 12px 0;
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-.error {
-  color: #dc2626;
-}
-
-.success {
+.ws-msg.ok {
   color: #059669;
 }
 
-.issues-box {
-  margin: 12px 0;
-  padding: 10px 14px;
-  background: #fef2f2;
-  border: 1px solid #fecaca;
-  border-radius: 6px;
+.ws-msg.err {
+  color: #dc2626;
 }
 
-.issues-title {
-  margin: 0 0 6px;
-  font-size: 13px;
-  font-weight: 600;
-  color: #991b1b;
-}
-
-.issues-list {
-  margin: 0;
-  padding-left: 18px;
-  font-size: 13px;
-  color: #991b1b;
-}
-
-.issue-path {
-  font-weight: 600;
-}
-
-.issue-detail {
-  margin-left: 8px;
-}
-
-.section {
-  margin: 18px 0;
-  padding-top: 14px;
-  border-top: 1px solid #f0f1f3;
-}
-
-.section-title {
+.ws-actions {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin: 0 0 12px;
-  font-size: 14px;
+  gap: 8px;
+  margin-top: 14px;
+  flex-wrap: wrap;
 }
 
-.sub-title {
-  margin: 14px 0 8px;
-  font-size: 13px;
-  color: #374151;
+.ws-empty {
+  padding: 40px 0;
 }
 
-.entry {
-  margin: 0 0 14px;
-  padding: 10px 12px;
-  background: #fafbfc;
-  border: 1px solid #eef0f3;
-  border-radius: 6px;
-}
-
-.entry-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 8px;
-}
-
-.entry-label {
+.hint {
+  color: var(--muted);
   font-size: 12px;
-  color: #6b7280;
-}
-
-.form-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-}
-
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.field-wide {
-  grid-column: 1 / -1;
-}
-
-.label {
-  font-size: 13px;
-  color: #374151;
+  line-height: 1.7;
 }
 
 .required {
@@ -1024,18 +719,118 @@ onMounted(() => void load())
   color: #b45309;
   font-style: normal;
   font-size: 11px;
+  font-weight: 400;
 }
 
-.input {
-  padding: 6px 10px;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
+/* 简历行（原型 res-row） */
+.rgroup-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin: 14px 0 6px;
+  display: flex;
+  justify-content: space-between;
+}
+
+.rgroup-title:first-of-type {
+  margin-top: 0;
+}
+
+.res-row {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+  margin-bottom: 8px;
+  background: var(--bg);
+}
+
+.res-row:hover {
+  border-color: var(--muted);
+}
+
+.res-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.res-name {
   font-size: 13px;
-  font-family: inherit;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
-.textarea {
-  resize: vertical;
+.res-meta {
+  font-size: 11.5px;
+  color: var(--muted);
+  margin-top: 3px;
+  line-height: 1.6;
+}
+
+.res-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.res-actions .icon-btn {
+  width: 24px;
+  height: 24px;
+}
+
+.res-actions .icon-btn .ic {
+  width: 13px;
+  height: 13px;
+}
+
+/* 编辑器 */
+.editor-sec {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin-top: 12px;
+}
+
+.editor-sec h3 {
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.sub-title {
+  margin: 14px 0 8px;
+  font-size: 12.5px;
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.entry {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+
+.entry-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.entry-label {
+  font-size: 11.5px;
+  color: var(--muted);
 }
 
 .link-row {
@@ -1044,180 +839,74 @@ onMounted(() => void load())
   margin-bottom: 8px;
 }
 
-.link-row .input {
+.link-row input {
   flex: 1;
 }
 
-.btn {
-  padding: 6px 14px;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
-  background: #fff;
-  color: #374151;
-  font-size: 13px;
-  cursor: pointer;
+.issues-box {
+  margin: 12px 0;
+  padding: 10px 14px;
+  background: color-mix(in srgb, #dc2626 6%, #ffffff);
+  border: 1px solid color-mix(in srgb, #dc2626 28%, #dbdbdb);
+  border-radius: var(--radius);
 }
 
-.btn-primary {
-  background: #2b5ca8;
-  border-color: #2b5ca8;
-  color: #fff;
+.issues-title {
+  margin: 0 0 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #991b1b;
 }
 
-.btn-primary:hover:not(:disabled) {
-  background: #244e8f;
-}
-
-.btn-danger {
-  background: #dc2626;
-  border-color: #dc2626;
-  color: #fff;
-}
-
-.btn-danger:hover:not(:disabled) {
-  background: #b91c1c;
-}
-
-.btn-danger-ghost {
-  border-color: transparent;
-  color: #dc2626;
-  background: transparent;
-}
-
-.btn-danger-ghost:hover {
-  background: #fef2f2;
-}
-
-.btn-ghost {
-  border-color: transparent;
-  background: transparent;
-  color: #2b5ca8;
-}
-
-.btn-ghost:hover {
-  background: #f3f6fb;
-}
-
-.btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.hint {
+.issues-list {
   margin: 0;
-  color: #6b7280;
-  line-height: 1.7;
+  padding-left: 18px;
+  font-size: 12.5px;
+  color: #991b1b;
 }
 
-.json-mode {
-  margin-top: 10px;
+.issue-path {
+  font-weight: 600;
+}
+
+.issue-detail {
+  margin-left: 8px;
 }
 
 .json-textarea {
   width: 100%;
   margin-top: 8px;
-  padding: 10px 12px;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
-  font-family: 'Consolas', 'Courier New', monospace;
+  font-family: var(--mono);
   font-size: 12px;
   line-height: 1.6;
-  box-sizing: border-box;
   resize: vertical;
 }
 
-/* 上传草稿确认（F-16/#31） */
-.upload-bar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.upload-btn {
-  display: inline-block;
-  cursor: pointer;
-}
-
-.draft-panel {
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid #f0f1f3;
-}
-
-.draft-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 8px;
-}
-
-.draft-file {
-  font-weight: 600;
-  font-size: 13px;
-}
-
+/* 上传草稿 */
 .warnings {
   margin: 0 0 12px;
   padding: 8px 12px 8px 28px;
-  background: #fef3c7;
-  border: 1px solid #fde68a;
-  border-radius: 6px;
-  font-size: 13px;
+  background: color-mix(in srgb, #d97706 10%, #ffffff);
+  border: 1px solid color-mix(in srgb, #d97706 30%, #dbdbdb);
+  border-radius: var(--radius);
+  font-size: 12.5px;
   color: #92400e;
 }
 
-.hint-inline {
-  margin-left: 8px;
-  color: #6b7280;
-  font-weight: 400;
-  font-size: 12px;
-}
-
-/* A4 预览（F-15/#30） */
-.preview-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(17, 24, 39, 0.5);
+/* A4 预览弹窗 */
+.a4-body {
+  background: var(--surface);
   display: flex;
-  align-items: center;
   justify-content: center;
-  z-index: 50;
-  padding: 24px;
+  padding: 14px;
 }
 
-.preview-panel {
-  background: #fff;
-  border-radius: 8px;
-  width: min(920px, 100%);
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.preview-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 14px;
-  border-bottom: 1px solid #e5e7eb;
-}
-
-.preview-title {
-  font-weight: 600;
-  font-size: 14px;
-}
-
-.preview-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.preview-frame {
-  flex: 1;
-  border: none;
-  background: #e8e8e8;
+.a4-frame {
+  width: 740px;
+  max-width: 100%;
+  height: 70vh;
+  border: 1px solid var(--border);
+  background: #ffffff;
+  box-shadow: 0 4px 24px color-mix(in srgb, #000000 12%, transparent);
 }
 </style>

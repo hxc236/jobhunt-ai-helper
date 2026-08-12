@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import {
   APPLICATION_STATUSES,
   APPLICATION_STATUS_LABELS,
@@ -20,72 +20,65 @@ import { score, type FitScore } from '@shared/score'
 import { buildDerivedResume, diffResumeSections, type SectionDiff } from '../resume-compare'
 import type { OptimizeResult, OptimizationMode } from '@shared/types'
 import { IpcEvent } from '@shared/protocol'
+import MatchGauge from '../components/MatchGauge.vue'
+import Pill from '../components/Pill.vue'
+import Icon from '../components/Icon.vue'
 
-const route = useRoute()
+/** 职位详情列（#42 T2）：原型 pos-detail 布局；功能 = 原 PositionDetailView（F-03/F-05/F-06/F-07/F-20）。 */
+const props = defineProps<{ positionId: string }>()
+const emit = defineEmits<{ (e: 'changed'): void }>()
+
 const router = useRouter()
-const positionId = String(route.params.id)
-
-/** 编辑表单态：batch 额外允许空串（「未指定」），保存时转 null（服务端清空语义）。 */
-type EditFormState = {
-  company: string
-  company_type: CompanyType
-  title: string
-  jd: string
-  city: string
-  channel: string
-  channel_url: string
-  recruit_season: string
-  batch: Batch | ''
-  start_date: string
-  end_date: string
-  status: PositionStatus
-  notes: string
-}
 
 const position = ref<Position | null>(null)
 const application = ref<Application | null>(null)
 const loading = ref(true)
 const errorMessage = ref('')
-/** 投递状态操作错误（非法流转等；message 透传）。 */
 const appError = ref('')
 const appSaving = ref(false)
-/** 投递渠道/日期编辑表单（预填当前值，保存走同状态 setApplication）。 */
 const appForm = reactive({ channel: '', appliedDate: '' })
 
-/** 匹配度评估（F-06/#27：规则打分，无 LLM 依赖；仪表 UI 数据源）。 */
+/* ---------- 匹配度（F-06/#27） ---------- */
 const resumes = ref<StoredResume[]>([])
 const selectedResumeId = ref('')
 const fitScore = ref<FitScore | null>(null)
 const scoring = ref(false)
 const scoreError = ref('')
-/** 维度依据展开态（按维度名）。 */
-const expandedDims = ref<Set<string>>(new Set())
+const basisOpen = ref(false)
 
-/** 环形总分 SVG 弧长参数（r=42，周长 ≈ 263.9）。 */
-const RING_CIRCUMFERENCE = 2 * Math.PI * 42
-
-function ringOffset(scoreValue: number): number {
-  return RING_CIRCUMFERENCE * (1 - scoreValue / 100)
+async function runScore(): Promise<void> {
+  const pos = position.value
+  const resume = resumes.value.find((r) => r.meta.id === selectedResumeId.value)
+  if (pos === null || resume === undefined) return
+  scoreError.value = ''
+  scoring.value = true
+  try {
+    fitScore.value = score({ jd: pos.jd, resume })
+  } catch (err) {
+    scoreError.value = `评估失败：${String(err)}`
+  } finally {
+    scoring.value = false
+  }
 }
 
-/** 总分颜色：≥80 绿 / ≥60 蓝 / 其余红。 */
-function totalClass(scoreValue: number): string {
-  if (scoreValue >= 80) return 'ring-green'
-  if (scoreValue >= 60) return 'ring-blue'
-  return 'ring-red'
-}
+/** 依据面板：跨维度汇总命中/缺失。 */
+const basis = computed(() => {
+  const s = fitScore.value
+  if (s === null) return { hits: [], misses: [] }
+  const hits = s.dimensions.flatMap((d) => d.evidence.map((e) => `${d.label}：${e}`))
+  const misses = s.dimensions.flatMap((d) => d.misses.map((m) => `${d.label}：${m}`))
+  return { hits, misses }
+})
 
-/** 优化触发与结果（F-07/#32）：三轮进度流式 + 优化稿 JSON + changes 列表。 */
+/* ---------- 优化（F-07/#32 + F-20/#34） ---------- */
 const optimizeMode = ref<OptimizationMode>('strict')
 const optimizing = ref(false)
 const optimizeError = ref('')
 const optimizeResult = ref<OptimizeResult | null>(null)
-/** 轮次进度：1/2/3 → 阶段名；完成态标记。 */
 const optimizeProgress = ref<Array<{ round: number; phase: string; done: boolean }>>([])
 
 const OPTIMIZE_PHASES: Record<number, string> = { 1: 'JD 解析', 2: '缺口评估', 3: '生成优化稿' }
 
-/** 对比确认入库（F-20/#34）：并排对比 + 可编辑 + 派生稿入库（未确认不落库）。 */
 const confirmTitle = ref('')
 const optimizedJson = ref('')
 const comparing = ref(false)
@@ -119,7 +112,6 @@ async function confirmDerived(): Promise<void> {
       confirmTitle.value,
       baseResume.meta.title
     )
-    // 未确认不落库：仅此处调用 create
     const stored = await window.api.resumes.create(derived)
     derivedMessage.value = `已入库派生稿「${stored.meta.title}」（关联职位卡 ${stored.meta.targetJobId}）`
     comparing.value = false
@@ -145,7 +137,7 @@ async function runOptimize(): Promise<void> {
   optimizeProgress.value = [1, 2, 3].map((round) => ({ round, phase: OPTIMIZE_PHASES[round]!, done: false }))
   optimizing.value = true
   try {
-    optimizeResult.value = await window.api.optimize.run(positionId, resume.meta.id as string, optimizeMode.value)
+    optimizeResult.value = await window.api.optimize.run(props.positionId, resume.meta.id as string, optimizeMode.value)
   } catch (err) {
     optimizeError.value = String(err)
   } finally {
@@ -154,10 +146,9 @@ async function runOptimize(): Promise<void> {
   }
 }
 
-/** 三轮进度事件（主 → 渲染）：当前轮完成标记。 */
 onMounted(() => {
   const unsubscribe = window.api.on(IpcEvent.OptimizeProgress, (payload) => {
-    if (payload.jobId !== positionId) return
+    if (payload.jobId !== props.positionId) return
     optimizeProgress.value = optimizeProgress.value.map((p) =>
       p.round === payload.round ? { ...p, phase: payload.phase, done: true } : p
     )
@@ -165,30 +156,24 @@ onMounted(() => {
   onUnmounted(unsubscribe)
 })
 
-function toggleDim(name: string): void {
-  const next = new Set(expandedDims.value)
-  if (next.has(name)) next.delete(name)
-  else next.add(name)
-  expandedDims.value = next
+/* ---------- 编辑 / 删除 ---------- */
+type EditFormState = {
+  company: string
+  company_type: CompanyType
+  title: string
+  jd: string
+  city: string
+  channel: string
+  channel_url: string
+  recruit_season: string
+  batch: Batch | ''
+  start_date: string
+  end_date: string
+  status: PositionStatus
+  notes: string
 }
 
-async function runScore(): Promise<void> {
-  const pos = position.value
-  const resume = resumes.value.find((r) => r.meta.id === selectedResumeId.value)
-  if (pos === null || resume === undefined) return
-  scoreError.value = ''
-  scoring.value = true
-  try {
-    fitScore.value = score({ jd: pos.jd, resume })
-  } catch (err) {
-    scoreError.value = `评估失败：${String(err)}`
-  } finally {
-    scoring.value = false
-  }
-}
-/** 编辑模式：详情展示 ⇄ 编辑表单。 */
 const editing = ref(false)
-/** 删除确认：两步内联确认（避免误删；确认文案明示级联删除投递记录）。 */
 const deleteConfirming = ref(false)
 const saving = ref(false)
 const formError = ref('')
@@ -214,7 +199,6 @@ const SOURCE_LABELS: Record<Position['source'], string> = {
   liepin: '猎聘采集'
 }
 
-/** 投递状态 → 进入时刻列（applications 表；渲染层展示时间线用）。 */
 const STATUS_TS_KEY: Record<ApplicationStatus, keyof Application> = {
   planned: 'planned_at',
   applied: 'applied_at',
@@ -228,19 +212,26 @@ function formatTs(ts: string | null): string {
   return ts === null ? '—' : ts.slice(0, 16).replace('T', ' ')
 }
 
-/** 当前状态可达的下一步（状态机表共用 shared；withdrawn 为终态时为空数组）。 */
 const nextActions = computed<ApplicationStatus[]>(() =>
   application.value === null ? [] : [...APPLICATION_TRANSITIONS[application.value.status]]
 )
 
-/** 是否有已记录的状态时刻（时间线显示开关）。 */
 const hasTimeline = computed(
   () =>
     application.value !== null &&
     APPLICATION_STATUSES.some((s) => application.value?.[STATUS_TS_KEY[s]] !== null)
 )
 
-/** 网申截止倒计时（与列表 days_left 同口径：日历天，null=待核实；仅详情展示用）。 */
+/** 投递记录行：已进入过的状态（含时刻），按状态顺序展示。 */
+const timelineRows = computed(() => {
+  const app = application.value
+  if (app === null) return []
+  return APPLICATION_STATUSES.filter((s) => app[STATUS_TS_KEY[s]] !== null).map((s) => ({
+    status: s,
+    ts: app[STATUS_TS_KEY[s]]
+  }))
+})
+
 function daysLeft(endDate: string | null): number | null {
   if (endDate === null) return null
   const [year, month, day] = endDate.split('-').map(Number)
@@ -252,23 +243,12 @@ function daysLeft(endDate: string | null): number | null {
 
 const daysLeftValue = computed(() => daysLeft(position.value?.end_date ?? null))
 
-function badgeText(days: number | null): string {
-  if (days === null) return '待核实'
-  if (days <= 0) return '已截止'
-  return `剩 ${days} 天`
-}
-
-function badgeClass(days: number | null): string {
-  if (days === null) return 'badge badge-unknown'
-  return days <= 14 ? 'badge badge-urgent' : 'badge badge-normal'
-}
-
 async function load(): Promise<void> {
   loading.value = true
   errorMessage.value = ''
   try {
-    position.value = await window.api.positions.get(positionId)
-    application.value = await window.api.positions.getApplication(positionId)
+    position.value = await window.api.positions.get(props.positionId)
+    application.value = await window.api.positions.getApplication(props.positionId)
     resumes.value = await window.api.resumes.list()
     fillAppForm()
   } catch (err) {
@@ -278,19 +258,18 @@ async function load(): Promise<void> {
   }
 }
 
-/** 渠道/日期表单预填；空值用空串（保存时转 null 清空）。 */
 function fillAppForm(): void {
   appForm.channel = application.value?.channel ?? ''
   appForm.appliedDate = application.value?.applied_date ?? ''
 }
 
-/** 状态流转（含首次创建：隐含起点 planned，可直达 applied/withdrawn）。 */
 async function transition(target: ApplicationStatus): Promise<void> {
   appError.value = ''
   appSaving.value = true
   try {
-    application.value = await window.api.positions.setApplication(positionId, { status: target })
+    application.value = await window.api.positions.setApplication(props.positionId, { status: target })
     fillAppForm()
+    emit('changed')
   } catch (err) {
     appError.value = String(err)
   } finally {
@@ -298,17 +277,17 @@ async function transition(target: ApplicationStatus): Promise<void> {
   }
 }
 
-/** 编辑渠道/投递日期：同状态调用（不触发流转；空串 → null 清空）。 */
 async function saveApplicationEdit(): Promise<void> {
   if (application.value === null) return
   appError.value = ''
   appSaving.value = true
   try {
-    application.value = await window.api.positions.setApplication(positionId, {
+    application.value = await window.api.positions.setApplication(props.positionId, {
       status: application.value.status,
       channel: appForm.channel === '' ? null : appForm.channel,
       appliedDate: appForm.appliedDate === '' ? null : appForm.appliedDate
     })
+    emit('changed')
   } catch (err) {
     appError.value = String(err)
   } finally {
@@ -316,7 +295,6 @@ async function saveApplicationEdit(): Promise<void> {
   }
 }
 
-/** 编辑表单预填当前值；空值用空串（保存时空串 → null 清空，与服务 patch 语义一致）。 */
 function startEdit(): void {
   const p = position.value
   if (p === null) return
@@ -348,12 +326,11 @@ async function saveEdit(): Promise<void> {
   }
   saving.value = true
   try {
-    position.value = await window.api.positions.update(positionId, {
+    position.value = await window.api.positions.update(props.positionId, {
       company: form.company.trim(),
       company_type: form.company_type,
       title: form.title.trim(),
       jd: form.jd,
-      // 空串 → null：服务端清空可选字段（与录入归一语义一致）
       city: form.city === '' ? null : form.city,
       channel: form.channel === '' ? null : form.channel,
       channel_url: form.channel_url === '' ? null : form.channel_url,
@@ -365,6 +342,7 @@ async function saveEdit(): Promise<void> {
       notes: form.notes
     })
     editing.value = false
+    emit('changed')
   } catch (err) {
     formError.value = String(err)
   } finally {
@@ -375,8 +353,8 @@ async function saveEdit(): Promise<void> {
 async function confirmDelete(): Promise<void> {
   saving.value = true
   try {
-    await window.api.positions.delete(positionId)
-    router.push('/jobs')
+    await window.api.positions.delete(props.positionId)
+    emit('changed')
   } catch (err) {
     errorMessage.value = `删除失败：${String(err)}`
     deleteConfirming.value = false
@@ -385,128 +363,179 @@ async function confirmDelete(): Promise<void> {
   }
 }
 
+/* ---------- 操作组（原型 actions） ---------- */
+const appCard = ref<HTMLElement | null>(null)
+const optCard = ref<HTMLElement | null>(null)
+
+function scrollToCard(el: HTMLElement | null): void {
+  el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+function actOptimize(): void {
+  scrollToCard(optCard.value)
+}
+
+function actTopics(): void {
+  void router.push('/learn')
+}
+
+function actInterview(): void {
+  void router.push('/interview')
+}
+
+function actApplied(): void {
+  if (application.value === null) {
+    void transition('applied')
+  } else {
+    scrollToCard(appCard.value)
+  }
+}
+
+watch(
+  () => props.positionId,
+  () => {
+    editing.value = false
+    deleteConfirming.value = false
+    comparing.value = false
+    fitScore.value = null
+    basisOpen.value = false
+    optimizeResult.value = null
+    optimizeProgress.value = []
+    void load()
+  }
+)
+
 onMounted(() => void load())
 </script>
 
 <template>
-  <section class="detail-view">
-    <button class="btn btn-ghost" type="button" @click="router.push('/jobs')">← 返回职位列表</button>
-
-    <p v-if="loading" class="hint">加载中…</p>
-    <p v-else-if="errorMessage" class="message error">{{ errorMessage }}</p>
+  <div class="detail">
+    <p v-if="loading" class="empty">加载中…</p>
+    <p v-else-if="errorMessage" class="empty">{{ errorMessage }}</p>
 
     <template v-else-if="position">
-      <!-- 详情卡片：JD 全文 / 渠道链接 / 操作区 -->
-      <section class="card">
-        <header class="header">
-          <div class="title-row">
-            <h1 class="title">{{ position.company }} · {{ position.title }}</h1>
-            <span :class="badgeClass(daysLeftValue)">{{ badgeText(daysLeftValue) }}</span>
-          </div>
-          <div class="pills">
-            <span class="pill">{{ position.company_type }}</span>
-            <span v-if="position.batch" class="pill pill-batch">{{ position.batch }}</span>
-            <span class="pill" :class="position.status === 'active' ? 'pill-active' : 'pill-closed'">
-              {{ position.status === 'active' ? '进行中' : '已关闭' }}
-            </span>
-            <span class="pill pill-source">{{ SOURCE_LABELS[position.source] }}</span>
-          </div>
-        </header>
+      <!-- 标题区 -->
+      <div class="d-title-row">
+        <h1>{{ position.title }}</h1>
+        <Pill v-if="application" :tone="application.status === 'interviewing' || application.status === 'offer' ? 'tint' : ''">
+          {{ APPLICATION_STATUS_LABELS[application.status] }}
+        </Pill>
+      </div>
+      <div class="d-sub">{{ position.company }} · {{ SOURCE_LABELS[position.source] }}</div>
+      <div class="d-meta">
+        <Pill>{{ position.company_type }}</Pill>
+        <Pill v-if="position.batch">{{ position.batch }}</Pill>
+        <Pill v-if="position.city">{{ position.city }}</Pill>
+        <span class="d-window">
+          网申 {{ position.start_date ?? '—' }} → {{ position.end_date ?? '待核实' }}
+          <template v-if="daysLeftValue !== null && daysLeftValue > 0">· <b>剩 {{ daysLeftValue }} 天</b></template>
+        </span>
+      </div>
 
-        <dl class="meta-grid">
-          <div class="meta-item">
-            <dt>城市</dt>
-            <dd>{{ position.city ?? '—' }}</dd>
-          </div>
-          <div class="meta-item">
-            <dt>秋招季</dt>
-            <dd>{{ position.recruit_season }}</dd>
-          </div>
-          <div class="meta-item">
-            <dt>投递渠道</dt>
-            <dd>
-              <template v-if="position.channel_url">
-                <a :href="position.channel_url" target="_blank" rel="noreferrer">
-                  {{ position.channel ?? '渠道链接' }} ↗
-                </a>
-              </template>
-              <template v-else>{{ position.channel ?? '—' }}</template>
-            </dd>
-          </div>
-          <div class="meta-item">
-            <dt>网申窗口</dt>
-            <dd>{{ position.start_date ?? '—' }} ~ {{ position.end_date ?? '待核实' }}</dd>
-          </div>
-          <div class="meta-item">
-            <dt>更新时间</dt>
-            <dd>{{ position.updated_at.slice(0, 10) }}</dd>
-          </div>
-        </dl>
-
-        <section class="block">
-          <h2 class="block-title">JD 全文</h2>
-          <p v-if="position.jd === ''" class="hint">未填写 JD——可点击「编辑」补充，供简历优化与面试使用。</p>
-          <p v-else class="jd-text">{{ position.jd }}</p>
-        </section>
-
-        <section v-if="position.notes !== ''" class="block">
-          <h2 class="block-title">备注</h2>
-          <p class="notes-text">{{ position.notes }}</p>
-        </section>
-
-        <div class="actions">
-          <button class="btn btn-primary" type="button" @click="startEdit">编辑</button>
-          <button
-            class="btn btn-danger"
-            type="button"
-            :disabled="deleteConfirming"
-            @click="deleteConfirming = true"
-          >
-            删除
-          </button>
+      <!-- 匹配度概览 -->
+      <div class="card surface">
+        <div class="mc-head">
+          <span class="mc-title">匹配度概览</span>
+          <Pill tone="ghost">规则打分 · 无 LLM 依赖</Pill>
         </div>
 
-        <!-- 删除确认（内联两步） -->
-        <div v-if="deleteConfirming" class="confirm-box">
-          <p class="confirm-text">
-            确认删除「{{ position.company }} · {{ position.title }}」？该职位的投递记录将一并删除，且不可恢复。
-          </p>
-          <div class="confirm-actions">
-            <button class="btn btn-danger" type="button" :disabled="saving" @click="confirmDelete">
-              {{ saving ? '删除中…' : '确认删除' }}
+        <div v-if="fitScore" class="mc-wrap">
+          <MatchGauge :total="fitScore.total" :dims="fitScore.dimensions" />
+          <div style="margin-top: 10px">
+            <button class="link" type="button" @click="basisOpen = !basisOpen">
+              查看命中 / 缺失依据
             </button>
-            <button class="btn" type="button" :disabled="saving" @click="deleteConfirming = false">取消</button>
+          </div>
+          <div v-if="basisOpen" class="basis">
+            <div>
+              <div class="bg-title">命中（{{ basis.hits.length }}）</div>
+              <ul>
+                <li v-for="(h, i) in basis.hits" :key="i">
+                  <Icon name="check" class="ok" /><span class="ok">{{ h }}</span>
+                </li>
+              </ul>
+            </div>
+            <div>
+              <div class="bg-title">待补（{{ basis.misses.length }}）</div>
+              <ul>
+                <li v-for="(m, i) in basis.misses" :key="i">
+                  <Icon name="plus" class="miss" /><span class="miss">{{ m }}</span>
+                </li>
+              </ul>
+            </div>
           </div>
         </div>
-      </section>
 
-      <!-- 投递状态卡片（F-05/#21：状态机操作 + 记录展示） -->
-      <section class="card">
-        <h2 class="card-title">投递状态</h2>
+        <template v-else>
+          <p class="hint" style="margin-bottom: 8px">
+            选择一份简历按 JD 做 5 维度规则打分（关键词25/技能25/项目20/经历15/学历15）。
+          </p>
+          <div class="score-bar">
+            <select v-model="selectedResumeId" class="sel">
+              <option value="" disabled>选择简历…</option>
+              <option v-for="r in resumes" :key="r.meta.id" :value="r.meta.id">
+                {{ r.meta.title ?? '未命名简历' }}
+              </option>
+            </select>
+            <button class="btn primary" type="button" :disabled="scoring || selectedResumeId === ''" @click="runScore">
+              {{ scoring ? '评估中…' : '开始评估' }}
+            </button>
+          </div>
+          <p v-if="scoreError" class="hint" style="color: #dc2626; margin-top: 8px">{{ scoreError }}</p>
+        </template>
+      </div>
+
+      <!-- 操作组 -->
+      <div class="actions">
+        <button class="btn primary" type="button" @click="actOptimize">
+          <Icon name="bolt" />生成优化简历
+        </button>
+        <button class="btn" type="button" @click="actTopics">
+          <Icon name="list" />生成学习清单
+        </button>
+        <button class="btn" type="button" @click="actInterview">
+          <Icon name="mic" />模拟面试
+        </button>
+        <button class="btn" type="button" :disabled="appSaving" @click="actApplied">
+          <Icon name="check" />标记已投
+        </button>
+      </div>
+
+      <!-- JD -->
+      <div class="card">
+        <div class="sec-head">
+          <h2>职位描述（JD）</h2>
+          <Pill tone="ghost">来源：{{ SOURCE_LABELS[position.source] }} · 更新 {{ position.updated_at.slice(0, 10) }}</Pill>
+        </div>
+        <p v-if="position.jd === ''" class="hint">未填写 JD——可点击「编辑」补充，供简历优化与面试使用。</p>
+        <pre v-else class="jd">{{ position.jd }}</pre>
+        <p v-if="position.notes !== ''" class="hint" style="margin-top: 10px">备注：{{ position.notes }}</p>
+      </div>
+
+      <!-- 投递记录 + 状态机操作 -->
+      <div ref="appCard" class="card">
+        <div class="sec-head">
+          <h2>投递记录</h2>
+          <Pill tone="ghost">{{ application ? `共 ${timelineRows.length} 条` : '未开始投递' }}</Pill>
+        </div>
 
         <template v-if="application">
-          <div class="app-status-row">
-            <span class="app-badge" :class="`app-${application.status}`">
-              {{ APPLICATION_STATUS_LABELS[application.status] }}
-            </span>
-            <span class="meta">渠道：{{ application.channel ?? '—' }}</span>
-            <span class="meta">投递日期：{{ application.applied_date ?? '—' }}</span>
+          <div v-if="hasTimeline" class="rec-list">
+            <div v-for="row in timelineRows" :key="row.status" class="rec-row">
+              <span class="rec-time">{{ formatTs(row.ts) }}</span>
+              <span class="rec-channel">{{ application.channel ?? '—' }}</span>
+              <Pill :tone="row.status === 'interviewing' || row.status === 'offer' ? 'tint' : ''">{{ APPLICATION_STATUS_LABELS[row.status] }}</Pill>
+              <span class="rec-note">{{ row.status === 'applied' && application.applied_date ? `投递日期 ${application.applied_date}` : '' }}</span>
+            </div>
           </div>
-
-          <!-- 投递记录时间线（各状态进入时刻；复盘数据来源） -->
-          <ul v-if="hasTimeline" class="timeline">
-            <li v-for="s in APPLICATION_STATUSES" :key="s" v-show="application[STATUS_TS_KEY[s]] !== null">
-              <span class="timeline-label">{{ APPLICATION_STATUS_LABELS[s] }}</span>
-              <span class="meta">{{ formatTs(application[STATUS_TS_KEY[s]]) }}</span>
-            </li>
-          </ul>
+          <p v-else class="hint">尚未记录状态时刻。</p>
 
           <div v-if="nextActions.length > 0" class="app-actions">
             <button
               v-for="target in nextActions"
               :key="target"
               class="btn"
-              :class="target === 'withdrawn' ? 'btn-danger' : 'btn-primary'"
+              :class="target === 'withdrawn' ? 'ghost' : ''"
               type="button"
               :disabled="appSaving"
               @click="transition(target)"
@@ -517,130 +546,64 @@ onMounted(() => void load())
           <p v-else class="hint">已到终态（{{ APPLICATION_STATUS_LABELS[application.status] }}）。</p>
 
           <form class="app-edit" @submit.prevent="saveApplicationEdit">
-            <input v-model="appForm.channel" class="input" placeholder="投递渠道（留空清除）" />
-            <input v-model="appForm.appliedDate" class="input" type="date" />
+            <input v-model="appForm.channel" placeholder="投递渠道（留空清除）" />
+            <input v-model="appForm.appliedDate" type="date" />
             <button class="btn" type="submit" :disabled="appSaving">保存渠道/日期</button>
           </form>
         </template>
 
         <template v-else>
-          <p class="hint">
-            尚未开始投递——标记后即可跟踪状态流转（已投递 → 面试中 → offer/已拒绝，可随时放弃）。
-          </p>
+          <p class="hint">尚未开始投递——标记后即可跟踪状态流转（已投递 → 面试中 → offer/已拒绝，可随时放弃）。</p>
           <div class="app-actions">
-            <button class="btn btn-primary" type="button" :disabled="appSaving" @click="transition('applied')">
+            <button class="btn primary" type="button" :disabled="appSaving" @click="transition('applied')">
               标记已投递
             </button>
-            <button class="btn btn-danger" type="button" :disabled="appSaving" @click="transition('withdrawn')">
+            <button class="btn" type="button" :disabled="appSaving" @click="transition('withdrawn')">
               标记已放弃
             </button>
           </div>
         </template>
 
-        <p v-if="appError" class="message error">{{ appError }}</p>
-      </section>
+        <p v-if="appError" class="hint" style="color: #dc2626; margin-top: 8px">{{ appError }}</p>
+      </div>
 
-      <!-- 匹配度仪表（F-06/#27：环形总分 + 维度条 + 依据展开；规则打分无 LLM 依赖） -->
-      <section class="card">
-        <h2 class="card-title">匹配度评估</h2>
-        <p class="hint">
-          按 JD 关键词对所选简历做 5 维度规则打分（关键词25/技能25/项目20/经历15/学历15）——
-          纯规则计算，未配置模型时也可用。
-        </p>
-
+      <!-- 按 JD 优化简历 -->
+      <div ref="optCard" class="card">
+        <div class="sec-head"><h2>按 JD 优化简历</h2></div>
         <div class="score-bar">
-          <select v-model="selectedResumeId" class="input">
-            <option value="" disabled>选择简历…</option>
-            <option v-for="r in resumes" :key="r.meta.id" :value="r.meta.id">
-              {{ r.meta.title ?? '未命名简历' }}
-            </option>
-          </select>
-          <button class="btn btn-primary" type="button" :disabled="scoring || selectedResumeId === ''" @click="runScore">
-            {{ scoring ? '评估中…' : '开始评估' }}
-          </button>
-        </div>
-
-        <p v-if="scoreError" class="message error">{{ scoreError }}</p>
-
-        <div v-if="fitScore" class="gauge">
-          <div class="ring-wrap" :class="totalClass(fitScore.total)">
-            <svg viewBox="0 0 100 100" class="ring">
-              <circle cx="50" cy="50" r="42" class="ring-track" />
-              <circle
-                cx="50"
-                cy="50"
-                r="42"
-                class="ring-value"
-                :stroke-dasharray="RING_CIRCUMFERENCE"
-                :stroke-dashoffset="ringOffset(fitScore.total)"
-                transform="rotate(-90 50 50)"
-              />
-            </svg>
-            <div class="ring-center">
-              <span class="ring-total">{{ fitScore.total }}</span>
-              <span class="ring-label">匹配度</span>
-            </div>
-          </div>
-
-          <div class="dims">
-            <div v-for="d in fitScore.dimensions" :key="d.name" class="dim">
-              <div class="dim-head" @click="toggleDim(d.name)">
-                <span class="dim-label">{{ d.label }}</span>
-                <span class="dim-bar"><i :style="{ width: d.score + '%' }" :class="totalClass(d.score)" /></span>
-                <span class="dim-score">{{ d.score }}</span>
-                <span class="dim-chevron">{{ expandedDims.has(d.name) ? '▾' : '▸' }}</span>
-              </div>
-              <div v-if="expandedDims.has(d.name)" class="dim-detail">
-                <p v-if="d.evidence.length > 0" class="detail-line">
-                  <span class="detail-label">命中：</span>{{ d.evidence.join('、') }}
-                </p>
-                <p v-if="d.misses.length > 0" class="detail-line miss">
-                  <span class="detail-label">缺失：</span>{{ d.misses.join('、') }}
-                </p>
-                <p v-if="d.evidence.length === 0 && d.misses.length === 0" class="detail-line">无</p>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- 优化触发与结果（F-07/#32） -->
-      <section class="card">
-        <h2 class="card-title">按 JD 优化简历</h2>
-        <div class="score-bar">
-          <select v-model="selectedResumeId" class="input">
+          <select v-model="selectedResumeId" class="sel">
             <option value="" disabled>选择基准简历…</option>
             <option v-for="r in resumes" :key="r.meta.id" :value="r.meta.id">
               {{ r.meta.title ?? '未命名简历' }}
             </option>
           </select>
-          <select v-model="optimizeMode" class="input">
+          <select v-model="optimizeMode" class="sel">
             <option value="strict">strict（不虚构，默认）</option>
             <option value="balanced">balanced（适度润色）</option>
           </select>
-          <button class="btn btn-primary" type="button" :disabled="optimizing || selectedResumeId === ''" @click="runOptimize">
+          <button class="btn primary" type="button" :disabled="optimizing || selectedResumeId === ''" @click="runOptimize">
             {{ optimizing ? '优化中…' : '开始优化' }}
           </button>
         </div>
 
-        <!-- 三轮进度流式 -->
         <ul v-if="optimizeProgress.length > 0" class="opt-progress">
           <li v-for="p in optimizeProgress" :key="p.round" :class="{ done: p.done }">
             <span class="opt-round">{{ p.done ? '✓' : '…' }}</span>
             {{ p.phase }}
           </li>
         </ul>
-        <p v-if="optimizeError" class="message error">{{ optimizeError }}</p>
+        <p v-if="optimizeError" class="hint" style="color: #dc2626; margin-top: 8px">{{ optimizeError }}</p>
 
-        <!-- 结果：changes 列表 + 优化稿 JSON -->
         <div v-if="optimizeResult" class="opt-result">
-          <p class="message success">优化完成（{{ optimizeResult.mode }}）：缺口 {{ optimizeResult.gaps.length }} 项，改动 {{ optimizeResult.changes.length }} 处</p>
+          <p class="hint" style="color: #059669">
+            优化完成（{{ optimizeResult.mode }}）：缺口 {{ optimizeResult.gaps.length }} 项，改动 {{ optimizeResult.changes.length }} 处
+          </p>
           <ul v-if="optimizeResult.gaps.length > 0" class="opt-gaps">
             <li v-for="(g, i) in optimizeResult.gaps" :key="i">{{ g }}</li>
           </ul>
           <div v-for="(c, i) in optimizeResult.changes" :key="i" class="change">
             <div class="change-head">
-              <span class="pill pill-batch">{{ c.section }}</span>
+              <Pill>{{ c.section }}</Pill>
               <span class="change-reason">{{ c.reason }}</span>
             </div>
             <div class="change-body">
@@ -660,13 +623,14 @@ onMounted(() => void load())
           </details>
 
           <div class="compare-actions">
-            <button class="btn btn-primary" type="button" @click="openCompare">对比并确认入库</button>
+            <button class="btn primary" type="button" @click="openCompare">对比并确认入库</button>
           </div>
         </div>
 
-        <!-- 对比确认（F-20/#34：并排高亮 + 理由气泡 + 编辑 + 派生稿入库） -->
         <div v-if="comparing" class="compare-panel">
-          <p v-if="derivedMessage" class="message" :class="derivedMessage.startsWith('已入库') ? 'success' : 'error'">{{ derivedMessage }}</p>
+          <p v-if="derivedMessage" class="hint" :style="{ color: derivedMessage.startsWith('已入库') ? '#059669' : '#dc2626' }">
+            {{ derivedMessage }}
+          </p>
           <ul class="diff-list">
             <li v-for="d in compareDiffs" :key="d.section" :class="diffClass(d.changed)">
               <span class="diff-badge">{{ d.changed ? '改动' : '未变' }}</span>
@@ -685,684 +649,301 @@ onMounted(() => void load())
             </div>
           </div>
           <div class="compare-confirm">
-            <input v-model="confirmTitle" class="input" placeholder="派生稿名称" />
-            <button class="btn btn-primary" type="button" :disabled="confirming" @click="confirmDerived">
+            <input v-model="confirmTitle" placeholder="派生稿名称" />
+            <button class="btn primary" type="button" :disabled="confirming" @click="confirmDerived">
               {{ confirming ? '入库中…' : '确认入库（派生稿）' }}
             </button>
           </div>
         </div>
-      </section>
+      </div>
 
-      <!-- 编辑表单卡片 -->
-      <section v-if="editing" class="card">
-        <h2 class="card-title">编辑职位卡</h2>
+      <!-- 编辑 / 删除 -->
+      <div class="d-foot">
+        <button class="btn" type="button" @click="startEdit">
+          <Icon name="edit" />编辑
+        </button>
+        <button class="btn" type="button" :disabled="deleteConfirming" @click="deleteConfirming = true">
+          <Icon name="trash" />删除
+        </button>
+        <span v-if="deleteConfirming" class="confirm-box">
+          <span class="confirm-text">确认删除「{{ position.company }} · {{ position.title }}」？投递记录将一并删除且不可恢复。</span>
+          <button class="btn primary" type="button" :disabled="saving" @click="confirmDelete">
+            {{ saving ? '删除中…' : '确认删除' }}
+          </button>
+          <button class="btn" type="button" :disabled="saving" @click="deleteConfirming = false">取消</button>
+        </span>
+      </div>
 
-        <form class="form" @submit.prevent="saveEdit">
-          <div class="form-grid">
-            <label class="field">
-              <span class="label">公司 <em class="required">*</em></span>
-              <input v-model="form.company" class="input" />
-            </label>
-            <label class="field">
-              <span class="label">岗位 <em class="required">*</em></span>
-              <input v-model="form.title" class="input" />
-            </label>
-            <label class="field">
-              <span class="label">企业性质</span>
-              <select v-model="form.company_type" class="input">
-                <option v-for="t in COMPANY_TYPES" :key="t" :value="t">{{ t }}</option>
-              </select>
-            </label>
-            <label class="field">
-              <span class="label">秋招季</span>
-              <input v-model="form.recruit_season" class="input" />
-            </label>
-            <label class="field">
-              <span class="label">城市</span>
-              <input v-model="form.city" class="input" placeholder="留空清除" />
-            </label>
-            <label class="field">
-              <span class="label">批次</span>
-              <select v-model="form.batch" class="input">
-                <option value="">未指定</option>
-                <option v-for="b in BATCHES" :key="b" :value="b">{{ b }}</option>
-              </select>
-            </label>
-            <label class="field">
-              <span class="label">投递渠道</span>
-              <input v-model="form.channel" class="input" placeholder="官网 / 牛客 / 猎聘 / 邮箱 / 内推…" />
-            </label>
-            <label class="field">
-              <span class="label">渠道链接</span>
-              <input v-model="form.channel_url" class="input" placeholder="https://…" />
-            </label>
-            <label class="field">
-              <span class="label">网申开始</span>
-              <input v-model="form.start_date" class="input" type="date" />
-            </label>
-            <label class="field">
-              <span class="label">网申截止</span>
-              <input v-model="form.end_date" class="input" type="date" />
-            </label>
-            <label class="field">
-              <span class="label">状态</span>
-              <select v-model="form.status" class="input">
-                <option v-for="s in POSITION_STATUSES" :key="s" :value="s">
-                  {{ s === 'active' ? '进行中' : '已关闭' }}
-                </option>
-              </select>
-            </label>
-            <label class="field field-wide">
-              <span class="label">JD</span>
-              <textarea v-model="form.jd" class="input textarea" rows="6" placeholder="职位描述全文…" />
-            </label>
-            <label class="field field-wide">
-              <span class="label">备注</span>
-              <textarea v-model="form.notes" class="input textarea" rows="2" placeholder="选填" />
-            </label>
-          </div>
-
-          <p v-if="formError" class="message error">{{ formError }}</p>
-
-          <div class="form-actions">
-            <button class="btn btn-primary" type="submit" :disabled="saving">
-              {{ saving ? '保存中…' : '保存修改' }}
-            </button>
-            <button class="btn" type="button" :disabled="saving" @click="editing = false">取消</button>
-          </div>
+      <div v-if="editing" class="card">
+        <div class="sec-head"><h2>编辑职位卡</h2></div>
+        <form class="form-grid" @submit.prevent="saveEdit">
+          <label class="field">
+            <span class="label">公司 <em class="required">*</em></span>
+            <input v-model="form.company" />
+          </label>
+          <label class="field">
+            <span class="label">岗位 <em class="required">*</em></span>
+            <input v-model="form.title" />
+          </label>
+          <label class="field">
+            <span class="label">企业性质</span>
+            <select v-model="form.company_type">
+              <option v-for="t in COMPANY_TYPES" :key="t" :value="t">{{ t }}</option>
+            </select>
+          </label>
+          <label class="field">
+            <span class="label">秋招季</span>
+            <input v-model="form.recruit_season" />
+          </label>
+          <label class="field">
+            <span class="label">城市</span>
+            <input v-model="form.city" placeholder="留空清除" />
+          </label>
+          <label class="field">
+            <span class="label">批次</span>
+            <select v-model="form.batch">
+              <option value="">未指定</option>
+              <option v-for="b in BATCHES" :key="b" :value="b">{{ b }}</option>
+            </select>
+          </label>
+          <label class="field">
+            <span class="label">投递渠道</span>
+            <input v-model="form.channel" placeholder="官网 / 牛客 / 猎聘 / 邮箱 / 内推…" />
+          </label>
+          <label class="field">
+            <span class="label">渠道链接</span>
+            <input v-model="form.channel_url" placeholder="https://…" />
+          </label>
+          <label class="field">
+            <span class="label">网申开始</span>
+            <input v-model="form.start_date" type="date" />
+          </label>
+          <label class="field">
+            <span class="label">网申截止</span>
+            <input v-model="form.end_date" type="date" />
+          </label>
+          <label class="field">
+            <span class="label">状态</span>
+            <select v-model="form.status">
+              <option v-for="s in POSITION_STATUSES" :key="s" :value="s">
+                {{ s === 'active' ? '进行中' : '已关闭' }}
+              </option>
+            </select>
+          </label>
+          <label class="field span2">
+            <span class="label">JD</span>
+            <textarea v-model="form.jd" rows="6" placeholder="职位描述全文…" />
+          </label>
+          <label class="field span2">
+            <span class="label">备注</span>
+            <textarea v-model="form.notes" rows="2" placeholder="选填" />
+          </label>
         </form>
-      </section>
+        <p v-if="formError" class="hint" style="color: #dc2626; margin-top: 10px">{{ formError }}</p>
+        <div class="app-actions">
+          <button class="btn primary" type="submit" :disabled="saving" @click="saveEdit">
+            {{ saving ? '保存中…' : '保存修改' }}
+          </button>
+          <button class="btn" type="button" :disabled="saving" @click="editing = false">取消</button>
+        </div>
+      </div>
     </template>
-  </section>
+  </div>
 </template>
 
 <style scoped>
-.detail-view {
-  max-width: 880px;
+.detail {
+  padding: 20px 24px;
+  overflow-y: auto;
+  background: var(--bg);
+  min-width: 0;
 }
 
-.card {
-  padding: 16px 20px;
-  margin: 16px 0;
-  background: #fff;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-}
-
-.header {
-  padding-bottom: 12px;
-  border-bottom: 1px solid #f0f1f3;
-}
-
-.title-row {
+.d-title-row {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
-.title {
-  margin: 0 0 8px;
+h1 {
   font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
 }
 
-.pills {
+.d-sub {
+  font-size: 13px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.d-meta {
   display: flex;
+  align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
 }
 
-.pill {
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: #eff6ff;
-  color: #1d4ed8;
+.d-window {
   font-size: 12px;
-  white-space: nowrap;
+  color: var(--muted);
+  margin-left: 4px;
 }
 
-.pill-batch {
-  background: #f3f4f6;
-  color: #374151;
+.d-window b {
+  color: var(--fg);
+  font-weight: 600;
 }
 
-.pill-active {
-  background: #ecfdf5;
-  color: #059669;
-}
-
-.pill-closed {
-  background: #f3f4f6;
-  color: #6b7280;
-}
-
-.pill-source {
-  background: #f5f3ff;
-  color: #6d28d9;
-}
-
-.badge {
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 12px;
-  white-space: nowrap;
-}
-
-.badge-urgent {
-  background: #fee2e2;
-  color: #dc2626;
-}
-
-.badge-normal {
-  background: #eff6ff;
-  color: #1d4ed8;
-}
-
-.badge-unknown {
-  background: #f3f4f6;
-  color: #6b7280;
-}
-
-.meta-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 10px 24px;
-  margin: 14px 0;
-}
-
-.meta-item {
+.mc-head {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
 }
 
-.meta-item dt {
+.mc-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.mc-wrap {
+  min-width: 0;
+}
+
+.basis {
+  margin-top: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.bg-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.basis ul {
+  list-style: none;
+}
+
+.basis li {
+  display: flex;
+  gap: 7px;
   font-size: 12px;
-  color: #6b7280;
+  line-height: 1.55;
+  padding: 2px 0;
+  align-items: flex-start;
 }
 
-.meta-item dd {
-  margin: 0;
-  font-size: 13px;
+.basis .ok {
+  color: var(--fg);
+  font-weight: 500;
 }
 
-.meta-item a {
-  color: #2b5ca8;
+.basis .miss {
+  color: var(--muted);
 }
 
-.block {
-  margin: 14px 0;
-}
-
-.block-title {
-  margin: 0 0 8px;
-  font-size: 14px;
-}
-
-.jd-text {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.8;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.notes-text {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.7;
-  white-space: pre-wrap;
+.basis .ic {
+  width: 13px;
+  height: 13px;
+  margin-top: 2px;
 }
 
 .actions {
   display: flex;
   gap: 10px;
-  padding-top: 12px;
-  border-top: 1px solid #f0f1f3;
+  margin-top: 14px;
+  flex-wrap: wrap;
 }
 
-.confirm-box {
-  margin-top: 12px;
-  padding: 12px 14px;
-  background: #fef2f2;
-  border: 1px solid #fecaca;
-  border-radius: 6px;
+.jd {
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.75;
+  white-space: pre-wrap;
+  color: var(--fg);
 }
 
-.confirm-text {
-  margin: 0 0 10px;
-  font-size: 13px;
-  color: #991b1b;
-  line-height: 1.6;
-}
-
-.confirm-actions,
-.form-actions {
-  display: flex;
-  gap: 10px;
-}
-
-.app-status-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
+.rec-list {
   margin-bottom: 10px;
 }
 
-.app-badge {
-  padding: 2px 10px;
-  border-radius: 999px;
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.app-planned {
-  background: #f3f4f6;
-  color: #6b7280;
-}
-
-.app-applied {
-  background: #eff6ff;
-  color: #1d4ed8;
-}
-
-.app-interviewing {
-  background: #fef3c7;
-  color: #b45309;
-}
-
-.app-offer {
-  background: #ecfdf5;
-  color: #059669;
-}
-
-.app-rejected {
-  background: #fee2e2;
-  color: #dc2626;
-}
-
-.app-withdrawn {
-  background: #f3f4f6;
-  color: #6b7280;
-}
-
-.timeline {
-  list-style: none;
-  margin: 0 0 12px;
-  padding: 0;
-}
-
-.timeline li {
+.rec-row {
   display: flex;
+  align-items: center;
   gap: 10px;
-  padding: 2px 0;
-  font-size: 13px;
+  padding: 7px 0;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
 }
 
-.timeline-label {
-  color: #374151;
+.rec-row:first-of-type {
+  border-top: none;
+}
+
+.rec-time {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+
+.rec-channel {
+  font-weight: 500;
+  flex: none;
+}
+
+.rec-note {
+  color: var(--muted);
+  margin-left: auto;
+  text-align: right;
 }
 
 .app-actions {
   display: flex;
+  gap: 8px;
   flex-wrap: wrap;
-  gap: 10px;
-  margin-bottom: 12px;
+  margin-top: 10px;
 }
 
 .app-edit {
   display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  align-items: center;
-}
-
-.app-edit .input {
-  flex: 1;
-  min-width: 160px;
-}
-
-/* 优化触发与结果（F-07/#32） */
-.opt-progress {
-  list-style: none;
-  margin: 0 0 10px;
-  padding: 0;
-  display: flex;
-  gap: 16px;
-  font-size: 13px;
-  color: #6b7280;
-}
-
-.opt-round {
-  display: inline-block;
-  width: 18px;
-  text-align: center;
-}
-
-.opt-progress .done {
-  color: #059669;
-}
-
-.opt-gaps {
-  margin: 0 0 10px;
-  padding-left: 20px;
-  font-size: 13px;
-  color: #b45309;
-}
-
-.change {
-  margin-bottom: 12px;
-  padding: 10px 12px;
-  background: #fafbfc;
-  border: 1px solid #eef0f3;
-  border-radius: 6px;
-}
-
-.change-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 8px;
-}
-
-.change-reason {
-  font-size: 12px;
-  color: #374151;
-}
-
-.change-body {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-}
-
-.change-label {
-  font-size: 11px;
-  color: #6b7280;
-}
-
-.change-text {
-  margin: 2px 0 0;
-  font-size: 12px;
-  white-space: pre-wrap;
-  word-break: break-word;
-  background: #fff;
-  border: 1px solid #f0f1f3;
-  border-radius: 4px;
-  padding: 6px 8px;
-}
-
-.opt-json {
-  margin-top: 10px;
-  font-size: 13px;
-}
-
-.opt-json summary {
-  cursor: pointer;
-  color: #2b5ca8;
-}
-
-.json-pre {
-  margin: 8px 0 0;
-  padding: 10px 12px;
-  background: #f8fafc;
-  border: 1px solid #e5e7eb;
-  border-radius: 6px;
-  font-size: 12px;
-  line-height: 1.6;
-  overflow: auto;
-  max-height: 360px;
-}
-
-/* 对比确认入库（F-20/#34） */
-.compare-actions {
-  margin-top: 12px;
-}
-
-.compare-panel {
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid #f0f1f3;
-}
-
-.diff-list {
-  list-style: none;
-  margin: 0 0 12px;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.diff-list li {
-  display: flex;
-  align-items: center;
   gap: 8px;
-  font-size: 13px;
-  padding: 4px 8px;
-  border-radius: 4px;
+  margin-top: 10px;
+  flex-wrap: wrap;
 }
 
-.diff-changed {
-  background: #fef3c7;
-}
-
-.diff-same {
-  color: #6b7280;
-}
-
-.diff-badge {
-  font-size: 11px;
-  padding: 1px 6px;
-  border-radius: 999px;
-  background: #e5e7eb;
-  color: #374151;
-}
-
-.diff-changed .diff-badge {
-  background: #f59e0b;
-  color: #fff;
-}
-
-.diff-section {
-  font-weight: 600;
-}
-
-.diff-reason {
-  color: #92400e;
-  font-size: 12px;
-}
-
-.compare-cols {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-  margin-bottom: 12px;
-}
-
-.compare-label {
-  display: block;
-  font-size: 12px;
-  color: #6b7280;
-  margin-bottom: 4px;
-}
-
-.compare-cols .json-pre {
-  max-height: 320px;
-  margin: 0;
-}
-
-.compare-confirm {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-}
-
-.compare-confirm .input {
+.app-edit input {
+  width: auto;
   flex: 1;
-  max-width: 320px;
+  min-width: 140px;
 }
 
-/* 匹配度仪表（F-06/#27） */
 .score-bar {
   display: flex;
-  gap: 10px;
-  align-items: center;
-  margin-bottom: 14px;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
-.score-bar .input {
+.sel {
   flex: 1;
-  max-width: 320px;
+  min-width: 150px;
 }
 
-.gauge {
-  display: flex;
-  gap: 24px;
-  align-items: center;
-}
-
-.ring-wrap {
-  position: relative;
-  width: 120px;
-  height: 120px;
-  flex-shrink: 0;
-}
-
-.ring {
-  width: 100%;
-  height: 100%;
-}
-
-.ring-track {
-  fill: none;
-  stroke: #f0f1f3;
-  stroke-width: 10;
-}
-
-.ring-value {
-  fill: none;
-  stroke-width: 10;
-  stroke-linecap: round;
-  transition: stroke-dashoffset 0.4s ease;
-}
-
-.ring-green .ring-value {
-  stroke: #059669;
-}
-
-.ring-blue .ring-value {
-  stroke: #2b5ca8;
-}
-
-.ring-red .ring-value {
-  stroke: #dc2626;
-}
-
-.ring-center {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-}
-
-.ring-total {
-  font-size: 26px;
-  font-weight: 700;
-}
-
-.ring-label {
-  font-size: 11px;
-  color: #6b7280;
-}
-
-.dims {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.dim-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  cursor: pointer;
-  padding: 2px 0;
-}
-
-.dim-label {
-  width: 72px;
-  font-size: 13px;
-  color: #374151;
-  flex-shrink: 0;
-}
-
-.dim-bar {
-  flex: 1;
-  height: 8px;
-  background: #f0f1f3;
-  border-radius: 999px;
-  overflow: hidden;
-}
-
-.dim-bar i {
-  display: block;
-  height: 100%;
-  border-radius: 999px;
-}
-
-.dim-score {
-  width: 28px;
-  text-align: right;
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.dim-chevron {
-  color: #9ca3af;
-  font-size: 12px;
-}
-
-.dim-detail {
-  margin: 4px 0 8px 82px;
+.hint {
+  color: var(--muted);
   font-size: 12px;
   line-height: 1.7;
-  color: #374151;
-}
-
-.detail-label {
-  color: #6b7280;
-}
-
-.detail-line.miss {
-  color: #dc2626;
-}
-
-.card-title {
-  margin: 0 0 12px;
-  font-size: 15px;
-}
-
-.form-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-}
-
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.field-wide {
-  grid-column: 1 / -1;
-}
-
-.label {
-  font-size: 13px;
-  color: #374151;
 }
 
 .required {
@@ -1370,77 +951,204 @@ onMounted(() => void load())
   font-style: normal;
 }
 
-.input {
-  padding: 6px 10px;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
-  font-size: 13px;
-  font-family: inherit;
+.d-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  flex-wrap: wrap;
 }
 
-.textarea {
+.confirm-box {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.confirm-text {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.opt-progress {
+  list-style: none;
+  display: flex;
+  gap: 10px;
+  margin: 10px 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.opt-round {
+  display: inline-block;
+  width: 16px;
+  text-align: center;
+}
+
+.opt-progress .done {
+  color: var(--fg);
+}
+
+.opt-gaps {
+  list-style: none;
+  margin: 8px 0;
+  padding-left: 16px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.opt-gaps li {
+  list-style: disc;
+}
+
+.change {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  margin-top: 10px;
+}
+
+.change-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.change-reason {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.change-body {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.change-col {
+  min-width: 0;
+}
+
+.change-label {
+  font-size: 10.5px;
+  color: var(--muted);
+  letter-spacing: 0.06em;
+}
+
+.change-text {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  margin-top: 4px;
+}
+
+.opt-json {
+  margin-top: 10px;
+  font-size: 12px;
+}
+
+.opt-json summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.json-pre {
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 10px;
+  margin-top: 6px;
+  max-height: 300px;
+  overflow: auto;
+}
+
+.compare-actions {
+  margin-top: 10px;
+}
+
+.compare-panel {
+  margin-top: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.diff-list {
+  list-style: none;
+  margin: 8px 0;
+}
+
+.diff-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  padding: 4px 0;
+}
+
+.diff-badge {
+  font-size: 10.5px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  flex: none;
+}
+
+.diff-changed .diff-badge {
+  background: color-mix(in srgb, var(--accent) 9%, #ffffff);
+  border-color: color-mix(in srgb, var(--accent) 28%, #dbdbdb);
+  color: color-mix(in srgb, var(--accent) 78%, #000000);
+}
+
+.diff-section {
+  font-weight: 500;
+}
+
+.diff-reason {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compare-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.compare-label {
+  font-size: 10.5px;
+  color: var(--muted);
+  letter-spacing: 0.06em;
+}
+
+.json-textarea {
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.6;
+  margin-top: 4px;
+  min-height: 260px;
   resize: vertical;
 }
 
-.message {
-  margin: 12px 0;
-  font-size: 13px;
-  line-height: 1.6;
+.compare-confirm {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
 }
 
-.error {
-  color: #dc2626;
-}
-
-.btn {
-  padding: 6px 14px;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
-  background: #fff;
-  color: #374151;
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.btn-primary {
-  background: #2b5ca8;
-  border-color: #2b5ca8;
-  color: #fff;
-}
-
-.btn-primary:hover:not(:disabled) {
-  background: #244e8f;
-}
-
-.btn-danger {
-  background: #dc2626;
-  border-color: #dc2626;
-  color: #fff;
-}
-
-.btn-danger:hover:not(:disabled) {
-  background: #b91c1c;
-}
-
-.btn-ghost {
-  border-color: transparent;
-  background: transparent;
-  color: #2b5ca8;
-  padding-left: 0;
-}
-
-.btn-ghost:hover {
-  background: #f3f6fb;
-}
-
-.btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.hint {
-  margin: 0;
-  color: #6b7280;
-  line-height: 1.7;
+.compare-confirm input {
+  flex: 1;
+  min-width: 0;
 }
 </style>
