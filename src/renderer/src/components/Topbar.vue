@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import type { PositionListItem } from '@shared/types'
 import Icon from './Icon.vue'
@@ -63,6 +63,11 @@ async function loadModel(): Promise<void> {
 onMounted(() => {
   void loadStats()
   void loadModel()
+  window.addEventListener('jobhunt:positions-changed', loadStats)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('jobhunt:positions-changed', loadStats)
 })
 
 // 路由变化时刷新统计（职位数据在 /jobs 内变更）
