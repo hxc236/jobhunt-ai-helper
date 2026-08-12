@@ -36,8 +36,8 @@ export interface CrawlParseContext {
  */
 export interface CrawlParser {
   readonly source: PositionSource
-  /** 起始列表页 URL（分页经 nextListUrl 逐个追加；mode/filter 透传，spec #13-16）。 */
-  buildUrls(mode: CrawlMode, filter: string | undefined): string[]
+  /** 起始列表页 URL（分页经 nextListUrl 逐个追加；mode/filter/结构化条件透传，spec #13-16）。 */
+  buildUrls(mode: CrawlMode, filter: string | undefined, context?: CrawlParseContext): string[]
   /** 列表页 HTML → 候选行（纯函数；detailUrl 存在时框架抓详情补全）。 */
   parseList(html: string, context: CrawlParseContext): CrawlCandidate[]
   /** 从当前列表页 HTML 提取下一页 URL（翻页参数；null = 无更多页；context 供拼页 URL）。 */
@@ -137,8 +137,6 @@ export class CrawlService {
       throw new CrawlError('parser-not-found', `解析器未注册：${source}（#23/#24 实现后可用）`)
     }
 
-    const urls = parser.buildUrls(options.mode, options.filter)
-    const filter = options.filter?.trim() || null
     const conditions: CrawlConditions = {
       hire_type: options.hire_type,
       keyword: options.keyword?.trim() || undefined,
@@ -148,6 +146,15 @@ export class CrawlService {
       conditions.hire_type === undefined && conditions.keyword === undefined && conditions.city === undefined
         ? null
         : JSON.stringify(conditions)
+    const parseContext: CrawlParseContext = {
+      mode: options.mode,
+      filter: options.filter,
+      hire_type: options.hire_type,
+      keyword: conditions.keyword,
+      city: conditions.city
+    }
+    const urls = parser.buildUrls(options.mode, options.filter, parseContext)
+    const filter = options.filter?.trim() || null
     const cooldownMs = options.cooldownMs ?? this.cooldownMs
     const runId = this.insertRun(source, options.mode, filter, urls.length, conditionsJson)
 
@@ -162,13 +169,6 @@ export class CrawlService {
       const queue: string[] = [...urls]
       const seen = new Set<string>(urls)
       let firstFetch = true
-      const parseContext: CrawlParseContext = {
-        mode: options.mode,
-        filter: options.filter,
-        hire_type: options.hire_type,
-        keyword: conditions.keyword,
-        city: conditions.city
-      }
       while (queue.length > 0) {
         if (candidates.length >= this.maxItems) {
           truncated = true

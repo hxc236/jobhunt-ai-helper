@@ -7,6 +7,7 @@ import { pushEvent } from './ipc/events'
 import { AgentService, type AgentEvent } from './services/agent'
 import { PiAgentProvider } from './services/pi-agent-provider'
 import { BrowserWindowFetcher } from './services/browser-window-fetcher'
+import { BossFetcher, CompositeFetcher } from './services/boss-fetcher'
 import { CrawlService } from './services/crawl'
 import { OptimizeService } from './services/optimize'
 import { TopicService } from './services/topic'
@@ -15,6 +16,7 @@ import { InterviewService } from './services/interview'
 import { AsrService, SherpaAsrProvider } from './services/asr'
 import { NowcoderParser } from './services/parsers/nowcoder'
 import { LiepinParser } from './services/parsers/liepin'
+import { BossParser } from './services/parsers/boss'
 import { BossLoginService } from './services/boss-login'
 import { PositionService } from './services/position'
 import { ResumeService } from './services/resume'
@@ -82,16 +84,26 @@ app.whenReady().then(() => {
   const resumes = new ResumeService(db)
   // F-08（#22）：采集执行框架（隐藏 BrowserWindow 抓取 + 节流/重试/上限 + 留痕；
   // 解析器由 #23 牛客 / #24 猎聘 注册；进度经 crawl:progress 事件推送）
-  const crawls = new CrawlService(db, new BrowserWindowFetcher(), {
-    // BOSS 频率纪律（issue #55/#56）：窗口间 30s 冷却（调研实测 30-60s）
-    cooldownMs: 30_000,
-    onProgress: ({ runId, done, total }) => pushEvent(IpcEvent.CrawlProgress, { runId, done, total })
-  })
+  const crawls = new CrawlService(
+    db,
+    // issue #56：BOSS 走登录分区抓取器（persist:boss 复用 T1 登录态），牛客/猎聘走默认
+    new CompositeFetcher(
+      [{ match: (url) => url.startsWith('https://www.zhipin.com/'), fetcher: new BossFetcher() }],
+      new BrowserWindowFetcher()
+    ),
+    {
+      // BOSS 频率纪律（issue #55/#56）：窗口间 30s 冷却（调研实测 30-60s）
+      cooldownMs: 30_000,
+      onProgress: ({ runId, done, total }) => pushEvent(IpcEvent.CrawlProgress, { runId, done, total })
+    }
+  )
   const bossLogin = new BossLoginService()
   // F-09（#23）：牛客校招日程解析器（列表/翻页/详情 → 字段映射，纯函数）
   crawls.registerParser(new NowcoderParser())
   // F-10（#24）：猎聘校招项目卡解析器（SSR 列表 → 字段映射；end_date 恒 null → 待核实）
   crawls.registerParser(new LiepinParser())
+  // issue #53/#56：BOSS直聘解析器（SPA 接口 JSON → 职位卡；结构化采集条件驱动）
+  crawls.registerParser(new BossParser())
 
   // EF-04：AgentService（pi SDK 封装 + fake 可注入）。认证目录为应用自有 userData/pi
   // （auth.json/models.json/sessions），不依赖用户 ~/.pi/agent；teach 技能用仓库内置副本。

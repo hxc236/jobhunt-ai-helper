@@ -113,6 +113,22 @@ describe('parseSalary 薪资解析（issue #53）', () => {
 })
 
 describe('BossParser 列表解析（issue #53）', () => {
+  it('buildUrls：采集条件 → 搜索页 URL（关键词/城市/页码；实习入口带 jobType=1902）', () => {
+    const parser = new BossParser()
+    // 社招：query + city，jobType=1901（全职，字典实测）
+    expect(
+      parser.buildUrls('full', undefined, { mode: 'full', filter: undefined, hire_type: '社招', keyword: '前端', city: '101020100' })
+    ).toEqual(['https://www.zhipin.com/web/geek/job?query=%E5%89%8D%E7%AB%AF&city=101020100&page=1&jobType=1901'])
+    // 实习：jobType=1902（字典实测）
+    expect(
+      parser.buildUrls('full', undefined, { mode: 'full', filter: undefined, hire_type: '实习', keyword: '前端', city: '101020100' })
+    ).toEqual(['https://www.zhipin.com/web/geek/job?query=%E5%89%8D%E7%AB%AF&city=101020100&page=1&jobType=1902'])
+    // 无条件：基础页（BOSS 默认推荐）
+    expect(parser.buildUrls('full', undefined, { mode: 'full', filter: undefined })).toEqual([
+      'https://www.zhipin.com/web/geek/job'
+    ])
+  })
+
   it('joblist.json → 候选行：公司/岗位/城市/薪资/详情入口/去重 URL', () => {
     const parser = new BossParser()
     const candidates = parser.parseList(LIST_JSON, makeContext({ hire_type: '社招', keyword: '前端', city: '101020100' }))
@@ -170,7 +186,7 @@ describe('BossParser 列表解析（issue #53）', () => {
     const parser = new BossParser()
     const context = makeContext({ hire_type: '社招', keyword: '前端', city: '101020100' })
     expect(parser.nextListUrl?.(LIST_JSON, context)).toBe(
-      'https://www.zhipin.com/web/geek/job?query=%E5%89%8D%E7%AB%AF&city=101020100&page=2'
+      'https://www.zhipin.com/web/geek/job?query=%E5%89%8D%E7%AB%AF&city=101020100&page=2&jobType=1901'
     )
     expect(parser.nextListUrl?.(LIST_JSON_LAST_PAGE, context)).toBeNull()
     // lid 无页码 / 无条件 → 无法翻页，返回 null（不猜）

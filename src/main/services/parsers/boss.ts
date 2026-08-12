@@ -19,10 +19,18 @@ export class BossParser implements CrawlParser {
   /** 主站搜索页（SPA；query=岗位关键词、city=城市码、page=页码，研究实测有效）。 */
   static readonly SEARCH_BASE = 'https://www.zhipin.com/web/geek/job'
 
-  /** 起始列表 URL（issue #55 结构化条件接线后带 query/city；当前返回基础页）。 */
-  buildUrls(mode: CrawlMode, _filter: string | undefined): string[] {
+  /**
+   * 起始列表 URL（issue #55/#56 结构化条件：关键词/城市/页码；招聘类型映射 jobType——
+   * 字典实测 filter/conditions.json：全职=1901、实习=1902；校招走关键词含届数）。
+   */
+  buildUrls(mode: CrawlMode, _filter: string | undefined, context?: CrawlParseContext): string[] {
     void mode
-    return [BossParser.SEARCH_BASE]
+    const keyword = context?.keyword?.trim()
+    const city = context?.city?.trim()
+    if (keyword === undefined && city === undefined) {
+      return [BossParser.SEARCH_BASE]
+    }
+    return [searchUrl(keyword ?? '', city ?? '', 1, context?.hire_type ?? '校招')]
   }
 
   parseList(html: string, context: CrawlParseContext): CrawlCandidate[] {
@@ -52,7 +60,7 @@ export class BossParser implements CrawlParser {
     if (readHasMore(payload) !== true) return null
     const page = lastPageFromLid(payload)
     if (page === null || context.keyword === undefined || context.city === undefined) return null
-    return searchUrl(context.keyword, context.city, page + 1)
+    return searchUrl(context.keyword, context.city, page + 1, context.hire_type ?? '校招')
   }
 
   /** 详情 JSON → 补全候选（JD 全文/岗位全名/薪资）。 */
@@ -193,8 +201,9 @@ function readJobInfo(payload: unknown): Record<string, unknown> | null {
   return typeof jobInfo === 'object' && jobInfo !== null ? (jobInfo as Record<string, unknown>) : null
 }
 
-/** 搜索页 URL（query/city/page 拼接）。 */
-function searchUrl(keyword: string, city: string, page: number): string {
+/** 搜索页 URL（query/city/page 拼接；jobType 按招聘类型映射，字典实测：全职=1901/实习=1902）。 */
+function searchUrl(keyword: string, city: string, page: number, hireType: HireType): string {
   const params = new URLSearchParams({ query: keyword, city, page: String(page) })
+  params.set('jobType', hireType === '实习' ? '1902' : '1901')
   return `${BossParser.SEARCH_BASE}?${params.toString()}`
 }
