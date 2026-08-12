@@ -205,6 +205,13 @@ export interface CrawlImportResult {
   updated: number
 }
 
+/** 语音识别就绪状态（F-26/#40：模型缺失 → ready=false + 原因，UI 降级文字输入）。 */
+export interface AsrStatus {
+  ready: boolean
+  /** 未就绪原因（降级提示文案）。 */
+  reason?: string
+}
+
 /** 复盘维度（F-25/#39：技术深度/表达逻辑/应变/匹配度）。 */
 export interface ReviewDimension {
   name: string

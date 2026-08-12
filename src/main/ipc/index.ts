@@ -15,6 +15,7 @@ import type { OptimizeService } from '../services/optimize'
 import type { TopicService } from '../services/topic'
 import type { LearnService } from '../services/learn'
 import type { InterviewService } from '../services/interview'
+import type { AsrService } from '../services/asr'
 import type { PositionService } from '../services/position'
 import { exportResumePdf } from '../services/resume-export'
 import type { ResumeService } from '../services/resume'
@@ -39,13 +40,14 @@ export interface IpcDeps {
   topics: TopicService
   learn: LearnService
   interview: InterviewService
+  asr: AsrService
 }
 
 /**
  * 注册全部 IPC handler（薄层：仅参数校验 + 转调服务）。
  * 主进程启动时调用一次；后续通道（EF-04 起）在此追加。
  */
-export function registerIpcHandlers({ settings, agent, positions, resumes, crawls, optimize, topics, learn, interview }: IpcDeps): void {
+export function registerIpcHandlers({ settings, agent, positions, resumes, crawls, optimize, topics, learn, interview, asr }: IpcDeps): void {
   handleRequest(IpcChannel.Ping, (): PingResponse => ping())
 
   handleRequest(IpcChannel.SettingsGet, (request) => settings.get(request.key))
@@ -108,6 +110,9 @@ export function registerIpcHandlers({ settings, agent, positions, resumes, crawl
   handleRequest(IpcChannel.InterviewFollowUp, (request) => interview.followUp(request.sessionId, request.text))
   handleRequest(IpcChannel.InterviewEnd, (request) => interview.end(request.sessionId))
   handleRequest(IpcChannel.InterviewHistory, () => interview.history())
+  // F-26（#40）：语音输入（PTT）——未就绪抛 ASR_NOT_READY（渲染层降级文字输入）
+  handleRequest(IpcChannel.AsrGetStatus, () => asr.getStatus())
+  handleRequest(IpcChannel.AsrTranscribe, (request) => asr.stopRecording(new Uint8Array(request.wav)))
   handleRequest(IpcChannel.CrawlConfirmImport, (request) =>
     crawls.confirmImport(request.runId, request.sourceUrls)
   )
