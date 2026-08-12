@@ -234,7 +234,13 @@ function fmtRunTime(iso: string): string {
 }
 
 /* ---------- 表单态 ---------- */
-type PositionFormState = Omit<PositionInput, 'batch'> & { batch: Batch | '' }
+type PositionFormState = Omit<PositionInput, 'batch' | 'hire_type' | 'salary_min' | 'salary_max' | 'salary_text'> & {
+  batch: Batch | ''
+  hire_type: HireType
+  salary_min: string
+  salary_max: string
+  salary_text: string
+}
 
 function emptyForm(): PositionFormState {
   return {
@@ -245,7 +251,11 @@ function emptyForm(): PositionFormState {
     city: '',
     channel: '',
     channel_url: '',
+    hire_type: '校招',
     recruit_season: '2026秋招',
+    salary_min: '',
+    salary_max: '',
+    salary_text: '',
     batch: '',
     start_date: '',
     end_date: '',
@@ -271,7 +281,10 @@ async function submit(): Promise<void> {
       ...form,
       company: form.company.trim(),
       title: form.title.trim(),
-      batch: form.batch === '' ? undefined : form.batch
+      batch: form.batch === '' ? undefined : form.batch,
+      salary_min: form.salary_min === '' ? undefined : Number(form.salary_min),
+      salary_max: form.salary_max === '' ? undefined : Number(form.salary_max),
+      salary_text: form.salary_text.trim() || undefined
     })
     formSuccess.value = `已录入「${form.company} · ${form.title}」`
     Object.assign(form, emptyForm())
@@ -284,17 +297,27 @@ async function submit(): Promise<void> {
   }
 }
 
-/* ---------- 筛选（五维，pill 组） ---------- */
+/* ---------- 筛选（issue #58：+ 招聘类型/薪资下限） ---------- */
 type FilterState = {
   company_type: CompanyType | ''
   batch: Batch | ''
   status: PositionStatus | ''
   recruit_season: string
   application_status: ApplicationStatus | ''
+  hire_type: HireType | ''
+  salary_min: string
 }
 
 function emptyFilters(): FilterState {
-  return { company_type: '', batch: '', status: '', recruit_season: '', application_status: '' }
+  return {
+    company_type: '',
+    batch: '',
+    status: '',
+    recruit_season: '',
+    application_status: '',
+    hire_type: '',
+    salary_min: ''
+  }
 }
 
 const filters = reactive<FilterState>(emptyFilters())
@@ -315,6 +338,11 @@ const filterGroups: Array<{
     key: 'batch',
     label: '批次',
     options: [{ value: '', label: '全部' }, ...BATCHES.map((b) => ({ value: b, label: b }))]
+  },
+  {
+    key: 'hire_type',
+    label: '招聘',
+    options: [{ value: '', label: '全部' }, ...HIRE_TYPES.map((h) => ({ value: h, label: h }))]
   },
   {
     key: 'status',
@@ -348,6 +376,8 @@ const hasFilters = computed(
     filters.status !== '' ||
     filters.recruit_season !== '' ||
     filters.application_status !== '' ||
+    filters.hire_type !== '' ||
+    filters.salary_min !== '' ||
     searchQ.value !== ''
 )
 
@@ -369,7 +399,9 @@ async function loadPositions(): Promise<void> {
       batch: filters.batch || undefined,
       status: filters.status || undefined,
       recruit_season: filters.recruit_season || undefined,
-      application_status: filters.application_status || undefined
+      application_status: filters.application_status || undefined,
+      hire_type: filters.hire_type || undefined,
+      salary_min: filters.salary_min === '' ? undefined : Number(filters.salary_min)
     })
   } catch (err) {
     listError.value = `加载职位列表失败：${String(err)}`
@@ -401,7 +433,9 @@ watch(
     () => filters.batch,
     () => filters.status,
     () => filters.recruit_season,
-    () => filters.application_status
+    () => filters.application_status,
+    () => filters.hire_type,
+    () => filters.salary_min
   ],
   () => void loadPositions()
 )
@@ -443,8 +477,12 @@ function appStatusTone(status: ApplicationStatus | null): '' | 'tint' | 'ghost' 
   return 'ghost'
 }
 
-function endLabel(endDate: string | null): string {
-  return endDate === null ? '待核实' : `截止 ${endDate.slice(5)}`
+function endLabel(p: Pick<PositionListItem, 'end_date' | 'hire_type'>): string {
+  if (p.end_date === null) {
+    // issue #58：社招/实习无网申窗口 → 长期有效；校招无截止 → 待核实
+    return p.hire_type === '校招' ? '待核实' : '长期'
+  }
+  return `截止 ${p.end_date.slice(5)}`
 }
 
 /* ---------- 弹窗开关 ---------- */
@@ -534,6 +572,21 @@ onMounted(() => {
         </div>
       </div>
 
+      <div class="fgroup">
+        <span class="f-label">薪资</span>
+        <div class="f-pills">
+          <input
+            v-model="filters.salary_min"
+            class="salary-input"
+            type="number"
+            min="1"
+            placeholder="下限 K/月"
+            style="width: 96px"
+          />
+          <span class="hint">区间匹配（如填 20 → 薪资区间覆盖 20K 的职位）</span>
+        </div>
+      </div>
+
       <p v-if="listError" class="empty">{{ listError }}</p>
       <p v-else-if="loading" class="empty">加载中…</p>
 
@@ -566,6 +619,8 @@ onMounted(() => {
           <div class="pr-title">{{ p.title }}</div>
           <div class="pr-meta">
             <Pill>{{ p.company_type }}</Pill>
+            <Pill v-if="p.hire_type" :tone="p.hire_type === '校招' ? '' : 'tint'">{{ p.hire_type }}</Pill>
+            <span v-if="p.salary_text" class="pr-salary">{{ p.salary_text }}</span>
             <span v-if="p.city" class="pr-city">{{ p.city }}</span>
             <Pill v-if="p.batch">{{ p.batch }}</Pill>
           </div>
@@ -573,7 +628,7 @@ onMounted(() => {
             <Pill :tone="appStatusTone(p.application_status)">
               {{ p.application_status ? APPLICATION_STATUS_LABELS[p.application_status] : '未开始' }}
             </Pill>
-            <span class="pr-date">{{ endLabel(p.end_date) }}</span>
+            <span class="pr-date">{{ endLabel(p) }}</span>
           </div>
         </div>
       </div>
@@ -610,8 +665,30 @@ onMounted(() => {
         </select>
       </label>
       <label class="field">
-        <span class="label">秋招季</span>
+        <span class="label">招聘类型</span>
+        <select v-model="form.hire_type">
+          <option v-for="h in HIRE_TYPES" :key="h" :value="h">{{ h }}</option>
+        </select>
+      </label>
+      <label v-if="form.hire_type === '校招'" class="field">
+        <span class="label">秋招季 <em class="required">*</em></span>
         <input v-model="form.recruit_season" placeholder="如：2026秋招" />
+      </label>
+      <label v-else class="field">
+        <span class="label">秋招季</span>
+        <input :value="'社招/实习无网申窗口'" disabled />
+      </label>
+      <label class="field">
+        <span class="label">薪资下限（K/月）</span>
+        <input v-model="form.salary_min" type="number" min="1" placeholder="如：20" />
+      </label>
+      <label class="field">
+        <span class="label">薪资上限（K/月）</span>
+        <input v-model="form.salary_max" type="number" min="1" placeholder="如：40" />
+      </label>
+      <label class="field span2">
+        <span class="label">薪资原文本</span>
+        <input v-model="form.salary_text" placeholder="如：20-40K·14薪（展示用）" />
       </label>
       <label class="field">
         <span class="label">城市</span>

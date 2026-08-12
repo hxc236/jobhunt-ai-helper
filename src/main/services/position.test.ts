@@ -115,6 +115,21 @@ describe('PositionService.create', () => {
     expect(svc.list()).toHaveLength(2)
   })
 
+  it('列表筛选（issue #58）：招聘类型 + 薪资下限区间匹配', () => {
+    const svc = makeService()
+    // 区间：15-25K（与 ≥20K 相交 → 命中）、10-15K（不命中）、30K以上（min=30 → 命中）、无薪资（不命中）
+    svc.create({ ...validInput, hire_type: '社招', salary_min: 15, salary_max: 25 })
+    svc.create({ ...validInput, company: '乙公司', hire_type: '社招', salary_min: 10, salary_max: 15 })
+    svc.create({ ...validInput, company: '丙公司', hire_type: '社招', salary_min: 30 })
+    svc.create({ ...validInput, company: '丁公司', hire_type: '校招' }) // 无薪资
+    svc.create({ ...validInput, company: '戊公司', hire_type: '实习', salary_min: 20, salary_max: 30 })
+
+    expect(svc.list({ hire_type: '社招' })).toHaveLength(3)
+    expect(svc.list({ salary_min: 20 })).toHaveLength(3) // 15-25K / 30K以上 / 实习 20-30K
+    expect(svc.list({ hire_type: '社招', salary_min: 20 })).toHaveLength(2) // 组合：15-25K + 30K以上
+    expect(svc.list({ salary_min: 60 })).toHaveLength(0)
+  })
+
   it('秋招季必填（dedupe_key 组成部分）', () => {
     const svc = makeService()
     expect(() => svc.create({ ...validInput, recruit_season: '  ' })).toThrowError(/秋招季必填/)

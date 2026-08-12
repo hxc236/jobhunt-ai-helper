@@ -403,7 +403,7 @@ export interface Position {
 }
 
 /** 职位列表筛选（F-02/#18 四维：企业性质/批次/状态/秋招季；缺省维度 = 不过滤，可任意组合；
- *  F-05/#21 增投递状态维度 application_status）。 */
+ *  F-05/#21 增投递状态维度 application_status；issue #58 增招聘类型/薪资下限）。 */
 export interface PositionFilters {
   company_type?: CompanyType
   batch?: Batch
@@ -411,6 +411,10 @@ export interface PositionFilters {
   recruit_season?: string
   /** 投递状态（applications.status）：planned 含无投递记录职位（未投递）；其余只匹配有记录的职位。 */
   application_status?: ApplicationStatus
+  /** 招聘类型（校招/社招/实习）。 */
+  hire_type?: HireType
+  /** 薪资下限（K/月）：区间匹配——职位薪资区间与 [T,∞) 相交（max≥T 或 max 空时 min≥T）。 */
+  salary_min?: number
 }
 
 /** 职位列表行 = 职位卡 + 网申截止倒计时天数（null = 无 end_date，UI 显「待核实」）+ 投递状态（无记录为 null）。 */

@@ -302,6 +302,18 @@ export class PositionService {
       clauses.push('p.recruit_season = @recruit_season')
       params.recruit_season = season
     }
+    if (filters.hire_type !== undefined) {
+      clauses.push('p.hire_type = @hire_type')
+      params.hire_type = filters.hire_type
+    }
+    if (filters.salary_min !== undefined) {
+      // 区间匹配（issue #58）：职位薪资区间与 [T,∞) 相交——max≥T，或 max 空时 min≥T；
+      // 两端都空的职位不命中（无薪资证据）
+      clauses.push(
+        '((p.salary_max IS NOT NULL AND p.salary_max >= @salary_min) OR (p.salary_max IS NULL AND p.salary_min >= @salary_min))'
+      )
+      params.salary_min = String(filters.salary_min)
+    }
     if (filters.application_status !== undefined) {
       // planned：记录为 planned 或尚无投递记录（未投递）；其余状态：存在该状态记录
       clauses.push(`(

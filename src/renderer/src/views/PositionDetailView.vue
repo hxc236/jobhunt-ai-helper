@@ -7,11 +7,13 @@ import {
   APPLICATION_TRANSITIONS,
   BATCHES,
   COMPANY_TYPES,
+  HIRE_TYPES,
   POSITION_STATUSES,
   type Application,
   type ApplicationStatus,
   type Batch,
   type CompanyType,
+  type HireType,
   type Position,
   type PositionStatus
 } from '@shared/types'
@@ -165,7 +167,11 @@ type EditFormState = {
   city: string
   channel: string
   channel_url: string
+  hire_type: HireType
   recruit_season: string
+  salary_min: string
+  salary_max: string
+  salary_text: string
   batch: Batch | ''
   start_date: string
   end_date: string
@@ -185,7 +191,11 @@ const form = reactive<EditFormState>({
   city: '',
   channel: '',
   channel_url: '',
+  hire_type: '校招',
   recruit_season: '',
+  salary_min: '',
+  salary_max: '',
+  salary_text: '',
   batch: '',
   start_date: '',
   end_date: '',
@@ -307,7 +317,11 @@ function startEdit(): void {
     city: p.city ?? '',
     channel: p.channel ?? '',
     channel_url: p.channel_url ?? '',
+    hire_type: p.hire_type,
     recruit_season: p.recruit_season,
+    salary_min: p.salary_min === null ? '' : String(p.salary_min),
+    salary_max: p.salary_max === null ? '' : String(p.salary_max),
+    salary_text: p.salary_text ?? '',
     batch: p.batch ?? '',
     start_date: p.start_date ?? '',
     end_date: p.end_date ?? '',
@@ -335,7 +349,11 @@ async function saveEdit(): Promise<void> {
       city: form.city === '' ? null : form.city,
       channel: form.channel === '' ? null : form.channel,
       channel_url: form.channel_url === '' ? null : form.channel_url,
+      hire_type: form.hire_type,
       recruit_season: form.recruit_season.trim(),
+      salary_min: form.salary_min === '' ? null : Number(form.salary_min),
+      salary_max: form.salary_max === '' ? null : Number(form.salary_max),
+      salary_text: form.salary_text.trim() === '' ? null : form.salary_text.trim(),
       batch: form.batch === '' ? null : form.batch,
       start_date: form.start_date === '' ? null : form.start_date,
       end_date: form.end_date === '' ? null : form.end_date,
@@ -425,11 +443,18 @@ onMounted(() => void load())
       <div class="d-sub">{{ position.company }} · {{ SOURCE_LABELS[position.source] }}</div>
       <div class="d-meta">
         <Pill>{{ position.company_type }}</Pill>
+        <Pill v-if="position.hire_type" :tone="position.hire_type === '校招' ? '' : 'tint'">{{ position.hire_type }}</Pill>
+        <Pill v-if="position.salary_text" tone="tint">{{ position.salary_text }}</Pill>
         <Pill v-if="position.batch">{{ position.batch }}</Pill>
         <Pill v-if="position.city">{{ position.city }}</Pill>
         <span class="d-window">
-          网申 {{ position.start_date ?? '—' }} → {{ position.end_date ?? '待核实' }}
-          <template v-if="daysLeftValue !== null && daysLeftValue > 0">· <b>剩 {{ daysLeftValue }} 天</b></template>
+          <template v-if="position.hire_type !== '校招'">
+            长期有效（无网申窗口）
+          </template>
+          <template v-else>
+            网申 {{ position.start_date ?? '—' }} → {{ position.end_date ?? '待核实' }}
+            <template v-if="daysLeftValue !== null && daysLeftValue > 0">· <b>剩 {{ daysLeftValue }} 天</b></template>
+          </template>
         </span>
       </div>
 
@@ -693,8 +718,26 @@ onMounted(() => void load())
             </select>
           </label>
           <label class="field">
+            <span class="label">招聘类型</span>
+            <select v-model="form.hire_type">
+              <option v-for="h in HIRE_TYPES" :key="h" :value="h">{{ h }}</option>
+            </select>
+          </label>
+          <label class="field">
             <span class="label">秋招季</span>
-            <input v-model="form.recruit_season" />
+            <input v-model="form.recruit_season" :disabled="form.hire_type !== '校招'" placeholder="校招必填" />
+          </label>
+          <label class="field">
+            <span class="label">薪资下限（K/月）</span>
+            <input v-model="form.salary_min" type="number" min="1" placeholder="留空清除" />
+          </label>
+          <label class="field">
+            <span class="label">薪资上限（K/月）</span>
+            <input v-model="form.salary_max" type="number" min="1" placeholder="留空清除" />
+          </label>
+          <label class="field span2">
+            <span class="label">薪资原文本</span>
+            <input v-model="form.salary_text" placeholder="如：20-40K·14薪" />
           </label>
           <label class="field">
             <span class="label">城市</span>
