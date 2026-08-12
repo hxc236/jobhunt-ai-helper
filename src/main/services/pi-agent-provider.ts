@@ -53,7 +53,9 @@ const TASK_STRATEGIES: Record<AgentTaskType, TaskStrategy> = {
   interview: { continueRecent: false },
   learn: { tools: ['read', 'write', 'edit', 'bash', 'ls', 'grep', 'find'], continueRecent: true },
   // 企业性质推断（issue #54）：inMemory 单次会话，无工具（联网搜索由服务层编排，不扩 agent 工具面）
-  company_type: { continueRecent: false }
+  company_type: { continueRecent: false },
+  // Agent 通道（issue #59）：决策循环单次会话，无工具（只输出动作 JSON，driver 执行）
+  agent_channel: { continueRecent: false }
 }
 
 /** auth.json 里 api_key 凭据的最小形状（与 pi 的 Credential 兼容）。 */

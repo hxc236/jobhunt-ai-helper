@@ -9,6 +9,8 @@ import { PiAgentProvider } from './services/pi-agent-provider'
 import { BrowserWindowFetcher } from './services/browser-window-fetcher'
 import { BossFetcher, CompositeFetcher } from './services/boss-fetcher'
 import { CrawlService } from './services/crawl'
+import { CrawlAgentChannelImpl } from './services/crawl-agent-channel'
+import { PlaywrightCdpDriver } from './services/crawl-driver'
 import { CrawlPresetService } from './services/crawl-presets'
 import { OptimizeService } from './services/optimize'
 import { TopicService } from './services/topic'
@@ -23,8 +25,7 @@ import { PositionService } from './services/position'
 import { ResumeService } from './services/resume'
 import { SettingsService } from './services/settings'
 
-/** agent 事件 → 主 → 渲染事件推送（agent:delta 流式文本 / agent:status 状态与错误）。 */
-function forwardAgentEvent(sessionId: string, event: AgentEvent): void {
+/** agent 事件 → 主 → 渲染事件推送（agent:delta 流式文本 / agent:status 状态与错误）。 */function forwardAgentEvent(sessionId: string, event: AgentEvent): void {
   switch (event.type) {
     case 'text_delta':
       pushEvent(IpcEvent.AgentDelta, { sessionId, delta: event.delta })
@@ -75,6 +76,10 @@ function createWindow(): void {
   }
 }
 
+// issue #59：Agent 通道的 CDP 驱动基础——随机本地调试端口（只绑 127.0.0.1，端口号写
+// userData/DevToolsActivePort），playwright-core connectOverCDP 驱动应用自带 Chromium。
+app.commandLine.appendSwitch('remote-debugging-port', '0')
+
 app.whenReady().then(() => {
   // 单文件本地库：userData/jobhunt.db（EF-02；测试注入 :memory: 见 db/database.ts）
   const db = openDatabase(join(app.getPath('userData'), 'jobhunt.db'))
@@ -83,6 +88,24 @@ app.whenReady().then(() => {
   const positions = new PositionService(db)
   // F-12（issue #19）：简历 CRUD（schema 校验 + 删除语义，见 services/resume.ts）
   const resumes = new ResumeService(db)
+  // EF-04：AgentService（pi SDK 封装 + fake 可注入）。认证目录为应用自有 userData/pi
+  // （auth.json/models.json/sessions），不依赖用户 ~/.pi/agent；teach 技能用仓库内置副本。
+  const agent = new AgentService(
+    new PiAgentProvider({
+      dataDir: join(app.getPath('userData'), 'pi'),
+      teachSkillDir: join(app.getAppPath(), 'resources', 'teach'),
+      settings
+    }),
+    { onEvent: forwardAgentEvent }
+  )
+  // issue #59：Agent 通道（决策循环 + playwright-core CDP 驱动；登录/异常场景介入）
+  const agentChannel = new CrawlAgentChannelImpl(
+    new PlaywrightCdpDriver({
+      userDataDir: app.getPath('userData'),
+      urlPrefix: 'https://www.zhipin.com/'
+    }),
+    agent
+  )
   // F-08（#22）：采集执行框架（隐藏 BrowserWindow 抓取 + 节流/重试/上限 + 留痕；
   // 解析器由 #23 牛客 / #24 猎聘 注册；进度经 crawl:progress 事件推送）
   const crawls = new CrawlService(
@@ -95,7 +118,8 @@ app.whenReady().then(() => {
     {
       // BOSS 频率纪律（issue #55/#56）：窗口间 30s 冷却（调研实测 30-60s）
       cooldownMs: 30_000,
-      onProgress: ({ runId, done, total }) => pushEvent(IpcEvent.CrawlProgress, { runId, done, total })
+      onProgress: ({ runId, done, total }) => pushEvent(IpcEvent.CrawlProgress, { runId, done, total }),
+      agentChannel
     }
   )
   const bossLogin = new BossLoginService()
@@ -107,17 +131,6 @@ app.whenReady().then(() => {
   crawls.registerParser(new LiepinParser())
   // issue #53/#56：BOSS直聘解析器（SPA 接口 JSON → 职位卡；结构化采集条件驱动）
   crawls.registerParser(new BossParser())
-
-  // EF-04：AgentService（pi SDK 封装 + fake 可注入）。认证目录为应用自有 userData/pi
-  // （auth.json/models.json/sessions），不依赖用户 ~/.pi/agent；teach 技能用仓库内置副本。
-  const agent = new AgentService(
-    new PiAgentProvider({
-      dataDir: join(app.getPath('userData'), 'pi'),
-      teachSkillDir: join(app.getAppPath(), 'resources', 'teach'),
-      settings
-    }),
-    { onEvent: forwardAgentEvent }
-  )
 
   // F-07（#28/#32）：优化流程服务（三轮编排 + jd_analysis 缓存；进度 → optimize:progress）
   const optimize = new OptimizeService(db, positions, resumes, agent, {

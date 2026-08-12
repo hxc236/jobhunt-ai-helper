@@ -256,6 +256,66 @@ describe('CrawlService 采集执行框架（F-08/#22）', () => {
     })
   })
 
+  describe('Agent 通道集成（issue #59）', () => {
+    it('重试耗尽后通道返回 true → 再重试一次成功；候选入库', async () => {
+      // 前三次失败（耗尽内置重试 2 次），第四次（通道介入后）成功
+      const calls: string[] = []
+      const flakyFetcher: CrawlFetcher = {
+        async fetch(url) {
+          calls.push(url)
+          if (url === 'https://nowcoder.test/list?p=1' && calls.filter((u) => u === url).length <= 3) {
+            throw new Error('code:37 环境异常')
+          }
+          return PAGES[url as keyof typeof PAGES] ?? '<html>page</html>'
+        }
+      }
+      const parser = makeFakeParser(Object.keys(PAGES), ALL_PAGES)
+      let channelCalls = 0
+      const channel = {
+        async handleFetchFailure() {
+          channelCalls++
+          return true
+        }
+      }
+      const svc = makeService(flakyFetcher, parser, { agentChannel: channel })
+
+      const result = await svc.run('nowcoder', { mode: 'full' })
+      expect(channelCalls).toBe(1)
+      expect(result.run.status).toBe('success')
+      expect(result.candidates).toHaveLength(5)
+    })
+
+    it('通道返回 false → 错误留痕带"需人工介入"标记；采集继续（partial）', async () => {
+      const fetcher = makeFakeFetcher({ ...PAGES }, ['https://nowcoder.test/list?p=2'])
+      const parser = makeFakeParser(Object.keys(PAGES), ALL_PAGES)
+      const channel = {
+        async handleFetchFailure() {
+          return false
+        }
+      }
+      const svc = makeService(fetcher, parser, { agentChannel: channel })
+
+      const result = await svc.run('nowcoder', { mode: 'full' })
+      expect(result.run.status).toBe('partial')
+      expect(result.run.errors.some((e) => e.includes('需人工介入'))).toBe(true)
+    })
+
+    it('通道自身抛错 → 不阻塞采集（按普通失败留痕）', async () => {
+      const fetcher = makeFakeFetcher({ ...PAGES }, ['https://nowcoder.test/list?p=3'])
+      const parser = makeFakeParser(Object.keys(PAGES), ALL_PAGES)
+      const channel = {
+        async handleFetchFailure() {
+          throw new Error('channel boom')
+        }
+      }
+      const svc = makeService(fetcher, parser, { agentChannel: channel })
+
+      const result = await svc.run('nowcoder', { mode: 'full' })
+      expect(result.run.status).toBe('partial')
+      expect(result.candidates).toHaveLength(3) // 成功页的候选保留
+    })
+  })
+
   describe('节流（spec #13-21：请求间隔 ≥2s）', () => {
     it('除首个请求外，每次 fetch 前 sleep(throttleMs)', async () => {
       const fetcher = makeFakeFetcher({ ...PAGES })

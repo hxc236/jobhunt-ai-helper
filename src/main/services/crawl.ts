@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { Db } from '../db/migrations'
+import type { CrawlAgentChannel } from './crawl-agent-channel'
 import type {
   CrawlCandidate,
   CrawlConditions,
@@ -85,6 +86,8 @@ export interface CrawlServiceOptions {
   sleep?: (ms: number) => Promise<void>
   /** 进度回调（URL 级；IPC 层接事件推送 crawl:progress）。 */
   onProgress?: (progress: { runId: number; done: number; total: number }) => void
+  /** Agent 通道（issue #59）：重试耗尽后介入（登录/异常场景）；返回 true 则再重试一次。 */
+  agentChannel?: CrawlAgentChannel
 }
 
 /** crawl_runs 行（DB 形态：truncated 为 0/1，errors 存 JSON 列）。 */
@@ -110,6 +113,7 @@ export class CrawlService {
   private readonly maxItems: number
   private readonly sleep: (ms: number) => Promise<void>
   private readonly onProgress: CrawlServiceOptions['onProgress']
+  private readonly agentChannel: CrawlAgentChannel | undefined
 
   constructor(
     private readonly db: Db,
@@ -122,6 +126,7 @@ export class CrawlService {
     this.maxItems = options.maxItems ?? 100
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)))
     this.onProgress = options.onProgress
+    this.agentChannel = options.agentChannel
   }
 
   /** 注册解析器（#23/#24 接入点；同 source 重复注册覆盖）。 */
@@ -243,7 +248,8 @@ export class CrawlService {
     return row === undefined ? null : this.mapRun(row)
   }
 
-  /** 抓取 URL + 重试（retries 次指数退避）；耗尽返回 null（错误入 errors）。 */
+  /** 抓取 URL + 重试（retries 次指数退避）；耗尽后 Agent 通道介入一次（true 则再试一次）；
+   *  仍未成功返回 null（错误入 errors）。 */
   private async fetchWithRetry(url: string, errors: string[]): Promise<string | null> {
     let lastError: unknown
     for (let attempt = 0; attempt <= this.retries; attempt++) {
@@ -254,6 +260,24 @@ export class CrawlService {
         if (attempt < this.retries) {
           await this.sleep(this.backoffMs * 2 ** attempt)
         }
+      }
+    }
+    // Agent 通道（issue #59）：解决（如等待登录/交互恢复）→ 再试一次；否则交还用户
+    if (this.agentChannel !== undefined) {
+      const message = lastError instanceof Error ? lastError.message : String(lastError)
+      try {
+        if (await this.agentChannel.handleFetchFailure({ url, error: message })) {
+          try {
+            return await this.fetcher.fetch(url)
+          } catch (retryErr) {
+            lastError = retryErr
+          }
+        } else {
+          errors.push(`${url}: ${message}（Agent 通道无法处理，需人工介入）`)
+          return null
+        }
+      } catch {
+        // 通道自身异常：不阻塞采集，交还用户
       }
     }
     const message = lastError instanceof Error ? lastError.message : String(lastError)
