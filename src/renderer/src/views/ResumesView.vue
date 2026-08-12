@@ -2,6 +2,8 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import type { Resume, StoredResume } from '@shared/types/resume'
 import { emptyResumeForm, formToResume, issueSection, resumeToForm, type ResumeForm } from '../resume-form'
+import { draftToResume, draftWarnings } from '../draft-form'
+import type { ResumeDraft } from '@shared/types'
 
 /**
  * 简历模块（F-13/#25）：简历列表（基准/派生分组）+ 分节表单编辑器（国企字段）+ JSON 模式。
@@ -62,6 +64,99 @@ async function exportPdf(): Promise<void> {
 }
 
 const form = reactive<ResumeForm>(emptyResumeForm())
+
+/** 上传草稿确认（F-16/#31）：文件选择 → 解析草稿 → 逐节核对修正 → 确认入库。 */
+const uploading = ref(false)
+const uploadError = ref('')
+const draft = ref<ResumeDraft | null>(null)
+const draftTitle = ref('')
+const draftForm = reactive({
+  name: '', phone: '', email: '', gender: '' as '' | '男' | '女', birthday: '',
+  school: '', degree: '', major: '', period: '', skillsText: ''
+})
+const confirmingDraft = ref(false)
+
+function onFilePicked(event: Event): void {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = '' // 允许重复选择同一文件
+  if (file === undefined) return
+  const filePath = (file as unknown as { path?: string }).path
+  if (filePath === undefined) {
+    uploadError.value = '无法获取文件路径'
+    return
+  }
+  void parseFile(filePath)
+}
+
+async function parseFile(filePath: string): Promise<void> {
+  uploadError.value = ''
+  uploading.value = true
+  try {
+    const d = await window.api.resumes.uploadParse(filePath)
+    draft.value = d
+    draftTitle.value = d.fileName.replace(/\.(docx|pdf)$/i, '')
+    Object.assign(draftForm, {
+      name: d.fields.name ?? '',
+      phone: d.fields.phone ?? '',
+      email: d.fields.email ?? '',
+      gender: d.fields.gender ?? '',
+      birthday: d.fields.birthday ?? '',
+      school: d.fields.education[0]?.school ?? '',
+      degree: d.fields.education[0]?.degree ?? '',
+      major: d.fields.education[0]?.major ?? '',
+      period: d.fields.education[0]?.period ?? '',
+      skillsText: d.fields.skills.join('\n')
+    })
+  } catch (err) {
+    uploadError.value = String(err)
+  } finally {
+    uploading.value = false
+  }
+}
+
+async function confirmDraft(): Promise<void> {
+  if (draft.value === null) return
+  confirmingDraft.value = true
+  uploadError.value = ''
+  try {
+    const resume = draftToResume(
+      {
+        ...draft.value,
+        fields: {
+          name: draftForm.name,
+          phone: draftForm.phone,
+          email: draftForm.email,
+          gender: draftForm.gender,
+          birthday: draftForm.birthday,
+          education:
+            draftForm.school === '' && draftForm.degree === '' && draftForm.major === ''
+              ? []
+              : [{ school: draftForm.school, degree: draftForm.degree, major: draftForm.major, period: draftForm.period }],
+          skills: draftForm.skillsText
+            .split(/[\n,，、]+/)
+            .map((t) => t.trim())
+            .filter((t) => t !== '')
+        }
+      },
+      draftTitle.value
+    )
+    // 确认后才入库（acceptance：确认前库中无数据）
+    const stored = await window.api.resumes.create(resume)
+    successMessage.value = `已保存「${stored.meta.title ?? stored.meta.id}」`
+    draft.value = null
+    await load()
+  } catch (err) {
+    uploadError.value = String(err)
+  } finally {
+    confirmingDraft.value = false
+  }
+}
+
+function cancelDraft(): void {
+  draft.value = null
+  uploadError.value = ''
+}
 
 const bases = computed(() => resumes.value.filter((r) => r.meta.baseResumeId == null))
 const derived = computed(() => resumes.value.filter((r) => r.meta.baseResumeId != null))
@@ -204,6 +299,87 @@ onMounted(() => void load())
 
     <!-- 列表模式 -->
     <template v-if="editingId === null">
+      <section class="card">
+        <h2 class="card-title">上传简历 <span class="hint-inline">docx / PDF → 自动解析为草稿，核对修正后确认为基准简历</span></h2>
+        <div class="upload-bar">
+          <label class="btn btn-primary upload-btn">
+            选择文件…
+            <input type="file" accept=".docx,.pdf" hidden @change="onFilePicked" :disabled="uploading" />
+          </label>
+          <span v-if="uploading" class="hint">解析中…</span>
+        </div>
+        <p v-if="uploadError" class="message error">{{ uploadError }}</p>
+
+        <!-- 草稿核对/修正 -->
+        <div v-if="draft" class="draft-panel">
+          <div class="draft-head">
+            <span class="draft-file">{{ draft.fileName }}</span>
+            <span class="pill" :class="draft.scanned ? 'pill-missing' : 'pill-base'">
+              置信度 {{ Math.round(draft.confidence * 100) }}%
+            </span>
+          </div>
+          <ul v-if="draftWarnings(draft).length > 0" class="warnings">
+            <li v-for="w in draftWarnings(draft)" :key="w">{{ w }}</li>
+          </ul>
+          <div class="form-grid">
+            <label class="field">
+              <span class="label">简历名</span>
+              <input v-model="draftTitle" class="input" />
+            </label>
+            <label class="field">
+              <span class="label">姓名 <em class="required">*</em></span>
+              <input v-model="draftForm.name" class="input" />
+            </label>
+            <label class="field">
+              <span class="label">电话</span>
+              <input v-model="draftForm.phone" class="input" />
+            </label>
+            <label class="field">
+              <span class="label">邮箱</span>
+              <input v-model="draftForm.email" class="input" />
+            </label>
+            <label class="field">
+              <span class="label">性别</span>
+              <select v-model="draftForm.gender" class="input">
+                <option value="">未填</option>
+                <option value="男">男</option>
+                <option value="女">女</option>
+              </select>
+            </label>
+            <label class="field">
+              <span class="label">生日（YYYY-MM）</span>
+              <input v-model="draftForm.birthday" class="input" placeholder="2004-06" />
+            </label>
+            <label class="field">
+              <span class="label">学校</span>
+              <input v-model="draftForm.school" class="input" />
+            </label>
+            <label class="field">
+              <span class="label">学历</span>
+              <input v-model="draftForm.degree" class="input" placeholder="本科 / 硕士 / 博士" />
+            </label>
+            <label class="field">
+              <span class="label">专业</span>
+              <input v-model="draftForm.major" class="input" />
+            </label>
+            <label class="field">
+              <span class="label">起止时间（如 2022.09 ~ 2026.06）</span>
+              <input v-model="draftForm.period" class="input" />
+            </label>
+            <label class="field field-wide">
+              <span class="label">技能（每行一个）</span>
+              <textarea v-model="draftForm.skillsText" class="input textarea" rows="3" />
+            </label>
+          </div>
+          <div class="form-actions">
+            <button class="btn btn-primary" type="button" :disabled="confirmingDraft" @click="confirmDraft">
+              {{ confirmingDraft ? '保存中…' : '确认存为基准简历' }}
+            </button>
+            <button class="btn" type="button" :disabled="confirmingDraft" @click="cancelDraft">放弃</button>
+          </div>
+        </div>
+      </section>
+
       <section class="card">
         <div class="card-head">
           <h2 class="card-title">基准简历 <span class="count">{{ bases.length }}</span></h2>
@@ -948,6 +1124,53 @@ onMounted(() => void load())
   line-height: 1.6;
   box-sizing: border-box;
   resize: vertical;
+}
+
+/* 上传草稿确认（F-16/#31） */
+.upload-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.upload-btn {
+  display: inline-block;
+  cursor: pointer;
+}
+
+.draft-panel {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #f0f1f3;
+}
+
+.draft-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.draft-file {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.warnings {
+  margin: 0 0 12px;
+  padding: 8px 12px 8px 28px;
+  background: #fef3c7;
+  border: 1px solid #fde68a;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #92400e;
+}
+
+.hint-inline {
+  margin-left: 8px;
+  color: #6b7280;
+  font-weight: 400;
+  font-size: 12px;
 }
 
 /* A4 预览（F-15/#30） */
