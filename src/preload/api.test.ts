@@ -173,6 +173,15 @@ describe('createRendererApi（渲染侧 api 客户端）', () => {
     expect(fake.invocations).toEqual([{ channel: IpcChannel.CrawlGetRun, args: [{ id: 7 }] }])
   })
 
+  it('resumes.uploadParse 映射到 resumes:upload-parse 并传 { filePath }', async () => {
+    const fake = makeFakeBridge()
+    const api = createRendererApi(fake.bridge)
+    await api.resumes.uploadParse('C:/tmp/resume.docx')
+    expect(fake.invocations).toEqual([
+      { channel: IpcChannel.ResumesUploadParse, args: [{ filePath: 'C:/tmp/resume.docx' }] }
+    ])
+  })
+
   it('resumes.list 映射到 resumes:list，不带参数', async () => {
     const fake = makeFakeBridge()
     const api = createRendererApi(fake.bridge)

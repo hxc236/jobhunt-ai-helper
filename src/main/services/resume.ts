@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import type { Db } from '../db/migrations'
 import type { Resume, StoredResume } from '../../shared/types/resume'
+import type { ResumeDraft } from '../../shared/types'
 import { assertValidResume } from './resume-schema'
+import { parseUploadFile } from './resume-parse'
 
 const LIST = 'SELECT json FROM resumes ORDER BY created_at, id'
 const GET = 'SELECT json FROM resumes WHERE id = ?'
@@ -103,5 +105,13 @@ export class ResumeService {
   delete(id: string): void {
     const result = this.db.prepare(DELETE).run(id)
     if (result.changes === 0) throw new ResumeNotFoundError(id)
+  }
+
+  /**
+   * 上传解析（F-14/#26）：docx（mammoth）/ pdf（pdfjs）→ 文本 → 结构化草稿
+   * （带置信度/待确认标记；扫描件 scanned 降级提示，UI 引导手动录入）。
+   */
+  parseUpload(filePath: string): Promise<ResumeDraft> {
+    return parseUploadFile(filePath)
   }
 }

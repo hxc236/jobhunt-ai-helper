@@ -41,7 +41,8 @@ export function createRendererApi(bridge: IpcBridge): RendererApi {
       list: () => bridge.invoke(IpcChannel.ResumesList),
       create: (resume) => bridge.invoke(IpcChannel.ResumesCreate, { resume }),
       update: (id, resume) => bridge.invoke(IpcChannel.ResumesUpdate, { id, resume }),
-      delete: (id) => bridge.invoke(IpcChannel.ResumesDelete, { id })
+      delete: (id) => bridge.invoke(IpcChannel.ResumesDelete, { id }),
+      uploadParse: (filePath) => bridge.invoke(IpcChannel.ResumesUploadParse, { filePath })
     },
     crawls: {
       run: (source, options) => bridge.invoke(IpcChannel.CrawlRun, { source, options }),

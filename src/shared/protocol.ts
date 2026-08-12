@@ -22,7 +22,8 @@ import type {
   PositionInput,
   PositionListItem,
   PositionPatch,
-  PositionSource
+  PositionSource,
+  ResumeDraft
 } from './types'
 import type { Resume, StoredResume } from './types/resume'
 
@@ -118,6 +119,8 @@ export interface IpcProtocol {
   [IpcChannel.CrawlRun]: { request: { source: PositionSource; options: CrawlRunOptions }; response: CrawlRunResult }
   [IpcChannel.CrawlRuns]: { request: void; response: CrawlRun[] }
   [IpcChannel.CrawlGetRun]: { request: { id: number }; response: CrawlRun | null }
+  // F-14（#26）：简历上传解析 —— docx/pdf → 文本 → 结构化草稿（置信度/待确认标记；扫描件降级）
+  [IpcChannel.ResumesUploadParse]: { request: { filePath: string }; response: ResumeDraft }
   // F-12（issue #19）：简历 CRUD —— 入库前服务层做 resume.schema.json 校验；
   // 删除语义：删除基准简历不影响已存派生稿（独立副本）。
   [IpcChannel.ResumesList]: { request: void; response: StoredResume[] }
@@ -199,12 +202,14 @@ export interface CrawlApi {
   getRun: (id: number) => Promise<CrawlRun | null>
 }
 
-/** 渲染进程可见的 resumes api 表面（F-12：多份基准简历 CRUD + 删除语义）。 */
+/** 渲染进程可见的 resumes api 表面（F-12：多份基准简历 CRUD + 删除语义；F-14：上传解析）。 */
 export interface ResumeApi {
   list: () => Promise<StoredResume[]>
   create: (resume: Resume) => Promise<StoredResume>
   update: (id: string, resume: Resume) => Promise<StoredResume>
   delete: (id: string) => Promise<void>
+  /** 上传解析（F-14/#26）：docx/pdf → 草稿（扫描件 scanned 降级提示）。 */
+  uploadParse: (filePath: string) => Promise<ResumeDraft>
 }
 
 /**

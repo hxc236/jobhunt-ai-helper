@@ -80,4 +80,6 @@ export function registerIpcHandlers({ settings, agent, positions, resumes, crawl
   handleRequest(IpcChannel.ResumesCreate, (request) => resumes.create(request.resume))
   handleRequest(IpcChannel.ResumesUpdate, (request) => resumes.update(request.id, request.resume))
   handleRequest(IpcChannel.ResumesDelete, (request) => resumes.delete(request.id))
+  // F-14（#26）：简历上传解析（docx/pdf → 草稿；不支持类型/解析失败错误 message 透传）
+  handleRequest(IpcChannel.ResumesUploadParse, (request) => resumes.parseUpload(request.filePath))
 }
