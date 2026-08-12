@@ -29,7 +29,10 @@ export function createRendererApi(bridge: IpcBridge): RendererApi {
     },
     positions: {
       create: (input) => bridge.invoke(IpcChannel.PositionsCreate, input),
-      list: (filters) => bridge.invoke(IpcChannel.PositionsList, filters ?? {})
+      list: (filters) => bridge.invoke(IpcChannel.PositionsList, filters ?? {}),
+      get: (id) => bridge.invoke(IpcChannel.PositionsGet, { id }),
+      update: (id, patch) => bridge.invoke(IpcChannel.PositionsUpdate, { id, patch }),
+      delete: (id) => bridge.invoke(IpcChannel.PositionsDelete, { id })
     },
     resumes: {
       list: () => bridge.invoke(IpcChannel.ResumesList),

@@ -11,7 +11,7 @@
  * 作为后续服务 ticket（EF-04 起）的协议预留；请求/响应类型随各 ticket 逐个补齐。
  */
 
-import type { Position, PositionFilters, PositionInput, PositionListItem } from './types'
+import type { Position, PositionFilters, PositionInput, PositionListItem, PositionPatch } from './types'
 import type { Resume, StoredResume } from './types/resume'
 
 /** 请求-响应通道常量。 */
@@ -26,7 +26,9 @@ export const IpcChannel = {
   SettingsConfigureProvider: 'settings:configure-provider',
   PositionsList: 'positions:list',
   PositionsCreate: 'positions:create',
+  PositionsGet: 'positions:get',
   PositionsUpdate: 'positions:update',
+  PositionsDelete: 'positions:delete',
   PositionsSetApplication: 'positions:set-application',
   ResumesList: 'resumes:list',
   ResumesCreate: 'resumes:create',
@@ -84,6 +86,12 @@ export interface IpcProtocol {
   [IpcChannel.PositionsCreate]: { request: PositionInput; response: Position }
   // F-02（#18）：职位列表（四维筛选 + 倒计时）—— filters 缺省维度 = 不过滤
   [IpcChannel.PositionsList]: { request: PositionFilters; response: PositionListItem[] }
+  // F-03（#20）：职位详情 + 编辑/删除 —— get 返回完整职位卡（JD 全文/渠道链接）；
+  // update 为 patch 语义（未传字段不变，可空字段 null/空串清空，键字段变化重算 dedupe）；
+  // delete 级联删除投递记录（applications 表由 #21 建，删除路径已探测兼容）。
+  [IpcChannel.PositionsGet]: { request: { id: string }; response: Position }
+  [IpcChannel.PositionsUpdate]: { request: { id: string; patch: PositionPatch }; response: Position }
+  [IpcChannel.PositionsDelete]: { request: { id: string }; response: void }
   // F-12（issue #19）：简历 CRUD —— 入库前服务层做 resume.schema.json 校验；
   // 删除语义：删除基准简历不影响已存派生稿（独立副本）。
   [IpcChannel.ResumesList]: { request: void; response: StoredResume[] }
@@ -136,12 +144,18 @@ export interface SettingsApi {
   configureProvider: (provider: string, apiKey: string, model?: string) => Promise<void>
 }
 
-/** 渲染进程可见的 positions api 表面（F-01 录入 + F-02 列表筛选/倒计时）。 */
+/** 渲染进程可见的 positions api 表面（F-01 录入 + F-02 列表筛选/倒计时 + F-03 详情/编辑/删除）。 */
 export interface PositionsApi {
   /** 创建职位卡；校验失败/重复录入时 reject（错误 message 含原因）。 */
   create: (input: PositionInput) => Promise<Position>
   /** 职位列表（F-02：企业性质/批次/状态/秋招季四维筛选可组合；days_left=倒计时，null=待核实）。 */
   list: (filters?: PositionFilters) => Promise<PositionListItem[]>
+  /** 职位卡详情（F-03：完整 JD 全文/渠道链接；id 不存在 reject not-found）。 */
+  get: (id: string) => Promise<Position>
+  /** 编辑职位卡（F-03：patch 语义——未传字段不变；可空字段 null/空串清空；返回更新后职位卡）。 */
+  update: (id: string, patch: PositionPatch) => Promise<Position>
+  /** 删除职位卡（F-03：级联删除该职位投递记录）。 */
+  delete: (id: string) => Promise<void>
 }
 
 /** 渲染进程可见的 resumes api 表面（F-12：多份基准简历 CRUD + 删除语义）。 */

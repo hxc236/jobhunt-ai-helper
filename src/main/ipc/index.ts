@@ -55,6 +55,11 @@ export function registerIpcHandlers({ settings, agent, positions, resumes }: Ipc
   handleRequest(IpcChannel.PositionsCreate, (request) => positions.create(request))
   // F-02（#18）：职位列表 —— 四维筛选 + days_left 倒计时（服务层计算，null=待核实）
   handleRequest(IpcChannel.PositionsList, (request) => positions.list(request))
+  // F-03（#20）：职位详情/编辑/删除 —— get 详情页数据源；update patch 语义（校验/查重服务层完成）；
+  // delete 级联删投递记录（applications 表由 #21 建，服务层探测兼容）
+  handleRequest(IpcChannel.PositionsGet, (request) => positions.get(request.id))
+  handleRequest(IpcChannel.PositionsUpdate, (request) => positions.update(request.id, request.patch))
+  handleRequest(IpcChannel.PositionsDelete, (request) => positions.delete(request.id))
 
   // F-12（issue #19）：简历 CRUD —— 服务层负责 schema 校验与删除语义（基准删除不影响派生稿）
   handleRequest(IpcChannel.ResumesList, () => resumes.list())

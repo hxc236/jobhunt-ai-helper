@@ -2,10 +2,12 @@ import { randomUUID } from 'node:crypto'
 import {
   BATCHES,
   COMPANY_TYPES,
+  POSITION_STATUSES,
   type Position,
   type PositionFilters,
   type PositionInput,
-  type PositionListItem
+  type PositionListItem,
+  type PositionPatch
 } from '../../shared/types'
 import type { Db } from '../db/migrations'
 
@@ -36,11 +38,12 @@ export function daysUntil(endDate: string, today: Date = new Date()): number {
   return endDay - todayDay
 }
 const BY_DEDUPE = 'SELECT id FROM positions WHERE dedupe_key = ?'
+const BY_ID = 'SELECT * FROM positions WHERE id = ?'
 
 /** 职位服务错误：code 供渲染层区分「校验失败」与「重复录入」两类提示。 */
 export class PositionError extends Error {
   constructor(
-    readonly code: 'validation' | 'duplicate',
+    readonly code: 'validation' | 'duplicate' | 'not-found',
     message: string
   ) {
     super(message)
@@ -116,6 +119,120 @@ export class PositionService {
   }
 
   /**
+   * 职位卡详情（F-03/#20）：完整职位卡（含 JD 全文/渠道链接），详情页数据源。
+   * id 不存在抛 PositionError('not-found')。
+   */
+  get(id: string): Position {
+    const row = this.db.prepare(BY_ID).get(id) as Position | undefined
+    if (row === undefined) throw new PositionError('not-found', '职位不存在或已删除')
+    return row
+  }
+
+  /**
+   * 职位卡编辑（F-03/#20）：patch 语义——未传字段保持不变；可空字段 null/空串 → 清空；
+   * 公司/岗位/秋招季变化时重算 dedupe_key 并查重（排除自身，命中抛 duplicate）。
+   * 校验规则与 create 一致（必填/枚举/日期）；成功后 updated_at 刷新（now 可注入，测试 seam）。
+   */
+  update(id: string, patch: PositionPatch, now: () => string = () => new Date().toISOString()): Position {
+    const existing = this.get(id)
+
+    const company = patch.company === undefined ? existing.company : patch.company.trim()
+    const title = patch.title === undefined ? existing.title : patch.title.trim()
+    const recruitSeason =
+      patch.recruit_season === undefined ? existing.recruit_season : patch.recruit_season.trim()
+    const companyType = patch.company_type ?? existing.company_type
+    const status = patch.status ?? existing.status
+    const jd = patch.jd === undefined ? existing.jd : patch.jd
+    const notes = patch.notes === undefined ? existing.notes : patch.notes
+
+    if (company === '') throw new PositionError('validation', '公司必填')
+    if (title === '') throw new PositionError('validation', '岗位必填')
+    if (recruitSeason === '') throw new PositionError('validation', '秋招季必填（去重键组成部分）')
+    if (!(COMPANY_TYPES as readonly string[]).includes(companyType)) {
+      throw new PositionError('validation', `企业性质只能是：${COMPANY_TYPES.join('/')}`)
+    }
+    if (!(POSITION_STATUSES as readonly string[]).includes(status)) {
+      throw new PositionError('validation', `状态只能是：${POSITION_STATUSES.join('/')}`)
+    }
+    const batch = patch.batch === undefined ? existing.batch : patch.batch === '' ? null : patch.batch
+    if (batch !== null && !(BATCHES as readonly string[]).includes(batch)) {
+      throw new PositionError('validation', `批次只能是：${BATCHES.join('/')}`)
+    }
+    const startDate = toNullable(patch.start_date, existing.start_date)
+    const endDate = toNullable(patch.end_date, existing.end_date)
+    for (const [field, value] of [
+      ['start_date', startDate],
+      ['end_date', endDate]
+    ] as const) {
+      if (value !== null && !isIsoDate(value)) {
+        throw new PositionError('validation', `${field} 日期必须为 YYYY-MM-DD 格式`)
+      }
+    }
+
+    // 语义键变化 → 重算并查重（排除自身；唯一索引 uq_positions_dedupe 兜底并发）
+    const dedupeKey = `${company}|${title}|${recruitSeason}`
+    if (dedupeKey !== existing.dedupe_key) {
+      const conflict = this.db.prepare('SELECT id FROM positions WHERE dedupe_key = ? AND id != ?').get(dedupeKey, id)
+      if (conflict !== undefined) {
+        throw new PositionError(
+          'duplicate',
+          `已存在相同职位（${company} · ${title} · ${recruitSeason}），请勿重复录入`
+        )
+      }
+    }
+
+    this.db
+      .prepare(
+        `UPDATE positions SET
+          company=@company, company_type=@company_type, title=@title, jd=@jd,
+          city=@city, channel=@channel, channel_url=@channel_url,
+          dedupe_key=@dedupe_key, recruit_season=@recruit_season, batch=@batch,
+          start_date=@start_date, end_date=@end_date, status=@status, notes=@notes,
+          updated_at=@updated_at
+         WHERE id=@id`
+      )
+      .run({
+        id,
+        company,
+        company_type: companyType,
+        title,
+        jd,
+        city: toNullable(patch.city, existing.city),
+        channel: toNullable(patch.channel, existing.channel),
+        channel_url: toNullable(patch.channel_url, existing.channel_url),
+        dedupe_key: dedupeKey,
+        recruit_season: recruitSeason,
+        batch,
+        start_date: startDate,
+        end_date: endDate,
+        status,
+        notes,
+        updated_at: now()
+      })
+    return this.get(id)
+  }
+
+  /**
+   * 职位卡删除（F-03/#20）：级联删除该职位的投递记录（applications 表由 F-05/#21 建表，
+   * 此处先探测表存在性——#21 建表后删除路径自动生效，之前照常可用）；
+   * 整操作在同一事务内：not-found 或失败不产生部分删除。
+   */
+  delete(id: string): void {
+    this.db.transaction(() => {
+      const existing = this.db.prepare('SELECT id FROM positions WHERE id = ?').get(id)
+      if (existing === undefined) throw new PositionError('not-found', '职位不存在或已删除')
+
+      const tables = this.db
+        .prepare("SELECT count(*) AS n FROM sqlite_master WHERE type = 'table' AND name = 'applications'")
+        .get() as { n: number }
+      if (tables.n > 0) {
+        this.db.prepare('DELETE FROM applications WHERE position_id = ?').run(id)
+      }
+      this.db.prepare('DELETE FROM positions WHERE id = ?').run(id)
+    })()
+  }
+
+  /**
    * 职位卡列表（F-02/#18：四维筛选 + 倒计时）。
    * - filters：企业性质/批次/状态/秋招季，缺省维度不过滤，可任意组合（交集）；
    * - 返回行带 days_left（网申截止剩余日历天；无 end_date → null，UI 显「待核实」）；
@@ -155,4 +272,12 @@ function isIsoDate(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
   const date = new Date(`${value}T00:00:00Z`)
   return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value
+}
+
+/** patch 可空字段归一：undefined = 保持原值；null/空串 = 清空为 NULL；其余 trim 后使用。 */
+function toNullable(value: string | null | undefined, existing: string | null): string | null {
+  if (value === undefined) return existing
+  if (value === null) return null
+  const trimmed = value.trim()
+  return trimmed === '' ? null : trimmed
 }

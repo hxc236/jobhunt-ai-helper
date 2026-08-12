@@ -73,3 +73,25 @@ export interface PositionInput {
   end_date?: string
   notes?: string
 }
+
+/**
+ * 职位卡编辑补丁（F-03/#20）：全部可选，未传字段保持不变；
+ * 可空字段传 null 或空串 → 清空为 NULL（与录入时空串归一 null 的语义一致）；
+ * 公司/岗位/秋招季变化时服务重算 dedupe_key 并查重（排除自身）。
+ */
+export interface PositionPatch {
+  company?: string
+  company_type?: CompanyType
+  title?: string
+  jd?: string
+  city?: string | null
+  channel?: string | null
+  channel_url?: string | null
+  recruit_season?: string
+  /** 空串或 null → 清空（未指定批次）。 */
+  batch?: Batch | '' | null
+  start_date?: string | null
+  end_date?: string | null
+  status?: PositionStatus
+  notes?: string
+}

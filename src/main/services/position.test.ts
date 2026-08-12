@@ -113,6 +113,169 @@ describe('PositionService.create', () => {
   })
 })
 
+describe('PositionService.get（F-03/#20）', () => {
+  it('按 id 返回完整职位卡（含 JD 全文）', () => {
+    const svc = makeService()
+    const created = svc.create(validInput)
+
+    expect(svc.get(created.id)).toEqual(created)
+  })
+
+  it('id 不存在 → PositionError not-found（渲染层引导回列表）', () => {
+    const svc = makeService()
+    expect(() => svc.get('no-such-id')).toThrowError(PositionError)
+    expect(() => svc.get('no-such-id')).toThrowError(/不存在/)
+  })
+})
+
+describe('PositionService.update（F-03/#20）', () => {
+  function seed(): { svc: PositionService; id: string } {
+    const svc = makeService()
+    const { id } = svc.create(validInput)
+    return { svc, id }
+  }
+
+  it('修改任意字段生效（JD 更新/截止修正/备注），updated_at 刷新、id 不变', () => {
+    const { svc, id } = seed()
+    const before = svc.get(id)
+
+    const updated = svc.update(
+      id,
+      {
+        jd: '刷新后的 JD 全文',
+        end_date: '2026-11-30',
+        notes: '已内推'
+      },
+      () => '2026-08-13T00:00:00.000Z' // 注入时钟：断言 updated_at 刷新（服务默认用真实时间）
+    )
+
+    expect(updated.id).toBe(id)
+    expect(updated.jd).toBe('刷新后的 JD 全文')
+    expect(updated.end_date).toBe('2026-11-30')
+    expect(updated.notes).toBe('已内推')
+    expect(updated.updated_at).toBe('2026-08-13T00:00:00.000Z')
+    expect(updated.updated_at).not.toBe(before.updated_at)
+    // 未传字段保持不变
+    expect(updated.company).toBe('腾讯')
+    expect(updated.company_type).toBe('大厂')
+    expect(updated.channel_url).toBe('https://careers.tencent.com')
+    // 服务返回与库中一致
+    expect(svc.get(id)).toEqual(updated)
+  })
+
+  it('空串/null 清空可选字段为 null（city/channel/channel_url/start_date/end_date/batch）', () => {
+    const { svc, id } = seed()
+    const updated = svc.update(id, {
+      city: '',
+      channel: '',
+      channel_url: null,
+      start_date: '',
+      end_date: null,
+      batch: ''
+    })
+    expect(updated.city).toBeNull()
+    expect(updated.channel).toBeNull()
+    expect(updated.channel_url).toBeNull()
+    expect(updated.start_date).toBeNull()
+    expect(updated.end_date).toBeNull()
+    expect(updated.batch).toBeNull()
+  })
+
+  it('公司/岗位/秋招季改为空白 → 校验错误', () => {
+    const { svc, id } = seed()
+    expect(() => svc.update(id, { company: '  ' })).toThrowError(/公司必填/)
+    expect(() => svc.update(id, { title: '' })).toThrowError(/岗位必填/)
+    expect(() => svc.update(id, { recruit_season: '' })).toThrowError(/秋招季必填/)
+  })
+
+  it('非法枚举/非法日期/非法状态 → 校验错误', () => {
+    const { svc, id } = seed()
+    expect(() => svc.update(id, { company_type: '上市公司' as never })).toThrowError(/企业性质只能是/)
+    expect(() => svc.update(id, { batch: '秋招' as never })).toThrowError(/批次只能是/)
+    expect(() => svc.update(id, { end_date: '2026-02-31' })).toThrowError(/日期/)
+    expect(() => svc.update(id, { status: 'archived' as never })).toThrowError(/状态只能是/)
+  })
+
+  it('改公司/岗位/秋招季 → dedupe_key 重算；与另一条重复 → duplicate 错误', () => {
+    const svc = makeService()
+    const a = svc.create(validInput) // 腾讯|前端开发工程师|2026秋招
+    // 两个碰撞目标：同季不同岗位 / 同岗位不同季
+    svc.create({ ...validInput, title: '后端开发工程师' }) // 腾讯|后端开发工程师|2026秋招
+    svc.create({ ...validInput, recruit_season: '2025秋招' }) // 腾讯|前端开发工程师|2025秋招
+
+    expect(() => svc.update(a.id, { title: '后端开发工程师' })).toThrowError(/已存在相同职位/)
+    expect(() => svc.update(a.id, { recruit_season: '2025秋招' })).toThrowError(/已存在相同职位/)
+    expect(svc.list()).toHaveLength(3) // 失败不落库
+  })
+
+  it('改公司后 dedupe_key 更新为新的 company|title|recruit_season；仅改非键字段不触发 duplicate', () => {
+    const svc = makeService()
+    const a = svc.create(validInput)
+    svc.create({ ...validInput, title: '后端开发工程师' })
+
+    const updated = svc.update(a.id, { company: '腾讯云' })
+    expect(updated.dedupe_key).toBe('腾讯云|前端开发工程师|2026秋招')
+    expect(() => svc.update(a.id, { jd: 'x' })).not.toThrow()
+  })
+
+  it('状态可编辑（active ↔ closed，列表状态筛选用）', () => {
+    const { svc, id } = seed()
+    expect(svc.update(id, { status: 'closed' }).status).toBe('closed')
+    expect(svc.list({ status: 'closed' }).map((p) => p.id)).toEqual([id])
+  })
+
+  it('id 不存在 → not-found', () => {
+    const svc = makeService()
+    expect(() => svc.update('no-such-id', { jd: 'x' })).toThrowError(/不存在/)
+  })
+})
+
+describe('PositionService.delete（F-03/#20）', () => {
+  it('删除后列表与 get 均不可见；其他职位不受影响；重复删除 → not-found', () => {
+    const svc = makeService()
+    const { id } = svc.create(validInput)
+    const other = svc.create({ ...validInput, title: '后端开发工程师' })
+
+    expect(svc.list()).toHaveLength(2)
+    svc.delete(id)
+
+    expect(svc.list().map((p) => p.id)).toEqual([other.id])
+    expect(() => svc.get(id)).toThrowError(/不存在/)
+    expect(() => svc.delete(id)).toThrowError(/不存在/)
+  })
+
+  it('投递记录级联删除：applications 表存在时该职位的记录一并删除，其他职位记录保留', () => {
+    const db = openDatabase(':memory:')
+    // #21 建表前的兼容验证：测试内按 ADR-0005 applications 契约（position_id 关联）建表
+    db.exec(`
+      CREATE TABLE applications (
+        id TEXT PRIMARY KEY,
+        position_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        applied_at TEXT,
+        channel TEXT
+      )
+    `)
+    const svc = new PositionService(db)
+    const { id } = svc.create(validInput)
+    db.prepare("INSERT INTO applications (id, position_id, status) VALUES ('app-1', ?, 'applied')").run(id)
+    db.prepare("INSERT INTO applications (id, position_id, status) VALUES ('app-2', ?, 'planned')").run(id)
+    db.prepare("INSERT INTO applications (id, position_id, status) VALUES ('app-3', 'other-position', 'applied')").run()
+
+    svc.delete(id)
+
+    const remaining = db.prepare('SELECT id FROM applications ORDER BY id').all() as Array<{ id: string }>
+    expect(remaining.map((r) => r.id)).toEqual(['app-3'])
+  })
+
+  it('applications 表尚未建（#21 之前）时删除照常可用', () => {
+    const svc = makeService()
+    const { id } = svc.create(validInput)
+    expect(() => svc.delete(id)).not.toThrow()
+    expect(svc.list()).toHaveLength(0)
+  })
+})
+
 describe('PositionService.list', () => {
   it('新库返回空列表；按创建时间倒序返回全部职位卡', () => {
     const svc = makeService()

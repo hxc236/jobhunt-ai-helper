@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import {
   BATCHES,
   COMPANY_TYPES,
@@ -10,6 +11,8 @@ import {
   type PositionListItem,
   type PositionStatus
 } from '@shared/types'
+
+const router = useRouter()
 
 /** 表单态：batch 额外允许空串（「未指定」选项），提交时转 undefined。 */
 type PositionFormState = Omit<PositionInput, 'batch'> & { batch: Batch | '' }
@@ -283,7 +286,7 @@ onMounted(() => void refresh())
         </template>
       </div>
       <ul v-else class="position-list">
-        <li v-for="p in positions" :key="p.id" class="position-row">
+        <li v-for="p in positions" :key="p.id" class="position-row" @click="router.push(`/jobs/${p.id}`)">
           <span class="company">{{ p.company }}</span>
           <span class="title">{{ p.title }}</span>
           <span :class="badgeClass(p.days_left)">{{ badgeText(p.days_left) }}</span>
@@ -296,6 +299,7 @@ onMounted(() => void refresh())
           <span class="meta">
             网申：{{ p.start_date ?? '—' }} ~ {{ p.end_date ?? '待核实' }}
           </span>
+          <span class="row-action">详情 ›</span>
         </li>
       </ul>
     </section>
@@ -405,10 +409,22 @@ onMounted(() => void refresh())
   gap: 8px;
   padding: 10px 0;
   border-bottom: 1px solid #f0f1f3;
+  cursor: pointer;
+}
+
+.position-row:hover {
+  background: #fafbfc;
 }
 
 .position-row:last-child {
   border-bottom: none;
+}
+
+.row-action {
+  margin-left: auto;
+  color: #2b5ca8;
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .company {
