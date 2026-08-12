@@ -148,6 +148,33 @@ export interface CrawlRunResult {
   candidates: CrawlCandidate[]
 }
 
+/**
+ * 上传解析草稿（F-14/#26：docx/pdf → 文本 → 结构化字段 + 置信度）。
+ * 渲染层（#31 上传草稿确认 UI）据此展示待确认字段；扫描件走降级提示。
+ */
+export interface ResumeDraft {
+  /** 原始文件名。 */
+  fileName: string
+  /** 提取的全文文本（扫描件为空）。 */
+  text: string
+  fields: {
+    name?: string
+    phone?: string
+    email?: string
+    /** YYYY-MM。 */
+    birthday?: string
+    gender?: string
+    education: Array<{ school?: string; degree?: string; major?: string; period?: string }>
+    skills: string[]
+  }
+  /** 0-1：关键字段（姓名/电话/邮箱/教育）命中比例；扫描件恒 0。 */
+  confidence: number
+  /** 缺失关键字段（UI 提示用户补全）。 */
+  missingFields: string[]
+  /** 扫描件（无可提取文本）→ UI 降级提示手动录入。 */
+  scanned: boolean
+}
+
 /** positions 表一行（职位卡）。字段名与列名一致，行对象可直接落库/返回。 */
 export interface Position {
   id: string
