@@ -4,7 +4,7 @@ import type { AgentService, AgentSession } from './agent'
 import type { PositionService } from './position'
 import type { ResumeService } from './resume'
 import type { TopicService } from './topic'
-import type { JdAnalysis } from '../../shared/types'
+import type { JdAnalysis, InterviewReview } from '../../shared/types'
 
 /**
  * 模拟面试编排（F-23/#37）。
@@ -126,6 +126,7 @@ export class InterviewService {
       STYLE_PROMPTS[style],
       `职位：${position.company} · ${position.title}`,
       `JD 分析：${JSON.stringify(jdAnalysis ?? {})}`,
+
       `优化简历：${JSON.stringify(optimized ?? {})}`,
       `候选人已掌握：${learned.join('、') || '（无）'}`,
       '请用一段话开场并请候选人做自我介绍。'
@@ -226,6 +227,12 @@ export class InterviewService {
     this.db
       .prepare("UPDATE interviews SET status = 'ended', updated_at = ? WHERE id = ?")
       .run(now, state.interviewId)
+    // F-25（#39）：LLM 复盘生成（失败不影响面试结束——review 留空，UI 可重试）
+    try {
+      await this.generateReview(state.interviewId)
+    } catch {
+      // review 生成失败仅置空，不阻断结束流程
+    }
     const record = this.getInterview(state.interviewId) as InterviewRecord
     state.session.dispose()
     this.sessions.delete(sessionId)
@@ -240,7 +247,8 @@ export class InterviewService {
     if (row === undefined) return null
     return {
       ...row,
-      transcript: JSON.parse(row.transcript) as TranscriptEntry[]
+      transcript: JSON.parse(row.transcript) as TranscriptEntry[],
+      review: row.review === null || row.review === undefined ? null : (JSON.parse(String(row.review)) as unknown)
     }
   }
 
@@ -251,7 +259,8 @@ export class InterviewService {
       .all() as Array<Omit<InterviewRecord, 'transcript'> & { transcript: string }>
     return rows.map((row) => ({
       ...row,
-      transcript: JSON.parse(row.transcript) as TranscriptEntry[]
+      transcript: JSON.parse(row.transcript) as TranscriptEntry[],
+      review: row.review === null || row.review === undefined ? null : (JSON.parse(String(row.review)) as unknown)
     }))
   }
 
@@ -292,6 +301,35 @@ export class InterviewService {
       .run(JSON.stringify(transcript), now, state.interviewId)
   }
 
+  /** 生成复盘（F-25/#39）：transcript + JD 分析 → 结构化复盘 JSON → 校验 → 写 interviews.review。 */
+  async generateReview(interviewId: string): Promise<InterviewReview> {
+    const record = this.getInterview(interviewId)
+    if (record === null) throw new InterviewError('session-not-found', `面试记录不存在：${interviewId}`)
+    const transcriptText = record.transcript.map((t) => `${t.role}: ${t.text}`).join(String.fromCharCode(10))
+    const jdAnalysis = record.job_id === null ? null : this.readJdAnalysis(record.job_id)
+    const session = await this.agent.createSession('optimize')
+    try {
+      const prompt = [
+      `[面试复盘] 基于面试 transcript 生成结构化复盘（transcript 见下），输出 JSON：`,
+        '{"total": 0-100, "dimensions": [{"name": "技术深度|表达逻辑|应变|匹配度", "score": 0-100, "comment": ""}],',
+        ' "strengths": ["亮点"], "weaknesses": [{"item": "薄弱点", "reference": "参考回答"}], "nextSteps": ["下一步"]}',
+        '约束：只基于 transcript 事实，不虚构；4 个维度必须齐全。',
+        `JD 分析：${JSON.stringify(jdAnalysis ?? {})}`,
+      transcriptText
+      ].join(String.fromCharCode(10))
+      const reply = await session.prompt(prompt)
+      const review = parseReview(reply)
+      this.db.prepare('UPDATE interviews SET review = ?, updated_at = ? WHERE id = ?').run(
+        JSON.stringify(review),
+        new Date().toISOString(),
+        interviewId
+      )
+      return review
+    } finally {
+      session.dispose()
+    }
+  }
+
   private readJdAnalysis(jobId: string): JdAnalysis | null {
     const row = this.db.prepare('SELECT jd_analysis FROM positions WHERE id = ?').get(jobId) as
       | { jd_analysis: string | null }
@@ -327,4 +365,47 @@ function parseQuestion(reply: string): { difficulty: InterviewDifficulty; questi
     }
   }
   return { difficulty: 'standard', question: reply }
+}
+
+/** 解析复盘输出：JSON 结构校验（4 维度齐全/字段类型）；非法抛错。 */
+export function parseReview(reply: string): InterviewReview {
+  const fence = /```(?:json)?\s*([\s\S]*?)```/.exec(reply)
+  const candidate = fence !== null ? fence[1] : reply
+  const start = candidate.indexOf('{')
+  if (start === -1) throw new Error('复盘输出中未找到 JSON')
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(candidate.slice(start, candidate.lastIndexOf('}') + 1))
+  } catch (err) {
+    throw new Error(`复盘 JSON 解析失败：${err instanceof Error ? err.message : String(err)}`)
+  }
+  if (typeof parsed !== 'object' || parsed === null) throw new Error('复盘输出结构非法')
+  const review = parsed as Record<string, unknown>
+  const dimensions = Array.isArray(review.dimensions)
+    ? (review.dimensions as Array<Record<string, unknown>>).filter((d) => typeof d === 'object' && d !== null)
+    : []
+  if (dimensions.length !== 4) throw new Error(`复盘维度必须为 4 个，实际 ${dimensions.length}`)
+  const names = ['技术深度', '表达逻辑', '应变', '匹配度']
+  for (const d of dimensions) {
+    if (typeof d.name !== 'string' || typeof d.score !== 'number' || typeof d.comment !== 'string') {
+      throw new Error(`复盘维度字段非法：${JSON.stringify(d)}`)
+    }
+    if (!names.includes(d.name as string)) throw new Error(`未知复盘维度：${String(d.name)}`)
+  }
+  const weaknesses = Array.isArray(review.weaknesses)
+    ? (review.weaknesses as Array<Record<string, unknown>>).filter(
+        (w) => typeof w === 'object' && w !== null && typeof w.item === 'string' && typeof w.reference === 'string'
+      )
+    : []
+  return {
+    total: typeof review.total === 'number' ? review.total : 0,
+    dimensions: dimensions as unknown as InterviewReview['dimensions'],
+    strengths: Array.isArray(review.strengths)
+      ? (review.strengths as unknown[]).filter((x): x is string => typeof x === 'string')
+      : [],
+    weaknesses: weaknesses as InterviewReview['weaknesses'],
+    nextSteps: Array.isArray(review.nextSteps)
+      ? (review.nextSteps as unknown[]).filter((x): x is string => typeof x === 'string')
+      : []
+  }
 }

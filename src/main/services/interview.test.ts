@@ -2,11 +2,11 @@ import { describe, expect, it } from 'vitest'
 import { openDatabase } from '../db/database'
 import { AgentService } from './agent'
 import { FakeAgentProvider, type FakeAgentSession } from './fake-agent-provider'
-import { InterviewError, InterviewService } from './interview'
+import { InterviewError, InterviewService, parseReview } from './interview'
 import { PositionService } from './position'
 import { ResumeService } from './resume'
 import { TopicService } from './topic'
-import type { JdAnalysis } from '../../shared/types'
+import type { InterviewReview, JdAnalysis } from '../../shared/types'
 
 const JD = '要求：Java、Spring Boot、MySQL、分布式；本科及以上'
 
@@ -223,5 +223,99 @@ describe('InterviewService 会话编排（F-23/#37）', () => {
       new AgentService(new FakeAgentProvider())
     )
     await expect(svc2.start('no-job', 'real')).rejects.toThrowError(/职位不存在/)
+  })
+})
+
+
+describe('InterviewService 复盘生成（F-25/#39）', () => {
+  it('end 后自动生成复盘：4 维度/亮点/薄弱点（含参考回答）/下一步 校验通过并落库 interviews.review', async () => {
+    const db = openDatabase(':memory:')
+    const positions = new PositionService(db)
+    const resumes = new ResumeService(db)
+    const topics = new TopicService(db, positions)
+    const provider = new FakeAgentProvider({
+      onPrompt: (prompt) => {
+        if (prompt.includes('[面试开场]')) return '开场白'
+        if (prompt.includes('[技术面')) {
+          return JSON.stringify({ difficulty: 'standard', question: '问题' })
+        }
+        if (prompt.includes('[面试复盘]')) {
+          return JSON.stringify({
+            total: 82,
+            dimensions: [
+              { name: '技术深度', score: 80, comment: '基础扎实' },
+              { name: '表达逻辑', score: 85, comment: '条理清晰' },
+              { name: '应变', score: 75, comment: '追问时稍显紧张' },
+              { name: '匹配度', score: 88, comment: '与 JD 高度匹配' }
+            ],
+            strengths: ['Java 基础好'],
+            weaknesses: [{ item: '分布式经验不足', reference: '建议补充 CAP 与一致性协议' }],
+            nextSteps: ['深入学习分布式']
+          })
+        }
+        return 'reply'
+      }
+    })
+    const svc = new InterviewService(db, positions, resumes, topics, new AgentService(provider))
+    const job = positions.create({
+      company: '腾讯', company_type: '大厂', title: '后端', jd: JD, recruit_season: '2026秋招'
+    })
+    db.prepare('UPDATE positions SET jd_analysis = ? WHERE id = ?').run(JSON.stringify(analysis), job.id)
+
+    const { sessionId, interviewId } = await svc.start(job.id, 'real')
+    await svc.answer(sessionId, '我熟悉 Java 与 Spring Boot')
+    const record = await svc.end(sessionId)
+
+    expect(record.status).toBe('ended')
+    const stored = svc.getInterview(interviewId)
+    const review = stored?.review as InterviewReview | null
+    expect(review).not.toBeNull()
+    expect(review!.total).toBe(82)
+    expect(review!.dimensions).toHaveLength(4)
+    expect(review!.dimensions.map((d) => d.name)).toEqual(['技术深度', '表达逻辑', '应变', '匹配度'])
+    expect(review!.weaknesses[0]).toMatchObject({ item: '分布式经验不足', reference: expect.any(String) })
+    expect(review!.nextSteps).toHaveLength(1)
+  })
+
+  it('复盘输出结构非法（维度缺失）→ 抛错；end 不因复盘失败而中断（review 为空）', async () => {
+    const db = openDatabase(':memory:')
+    const positions = new PositionService(db)
+    const resumes = new ResumeService(db)
+    const topics = new TopicService(db, positions)
+    const provider = new FakeAgentProvider({
+      onPrompt: (prompt) => {
+        if (prompt.includes('[面试开场]')) return '开场白'
+        if (prompt.includes('[技术面')) return JSON.stringify({ difficulty: 'standard', question: 'q' })
+        return JSON.stringify({ total: 50, dimensions: [] }) // 维度缺失
+      }
+    })
+    const svc = new InterviewService(db, positions, resumes, topics, new AgentService(provider))
+    const job = positions.create({
+      company: '腾讯', company_type: '大厂', title: '后端', jd: JD, recruit_season: '2026秋招'
+    })
+    const { sessionId, interviewId } = await svc.start(job.id, 'real')
+    await svc.answer(sessionId, '答')
+    const record = await svc.end(sessionId) // 复盘失败不阻断
+    expect(record.status).toBe('ended')
+    expect(svc.getInterview(interviewId)?.review).toBeNull()
+  })
+
+  it('parseReview：维度数量/字段/未知维度校验', () => {
+    const good = {
+      total: 1, dimensions: [
+        { name: '技术深度', score: 1, comment: 'a' },
+        { name: '表达逻辑', score: 1, comment: 'a' },
+        { name: '应变', score: 1, comment: 'a' },
+        { name: '匹配度', score: 1, comment: 'a' }
+      ], strengths: [], weaknesses: [], nextSteps: []
+    }
+    expect(parseReview(JSON.stringify(good)).dimensions).toHaveLength(4)
+    expect(() => parseReview('{"total":1,"dimensions":[{"name":"技术深度","score":1,"comment":"a"}]}')).toThrowError(/4 个/)
+    expect(() => parseReview('not json')).toThrowError(/JSON/)
+    expect(() =>
+      parseReview(
+        JSON.stringify({ ...good, dimensions: [...good.dimensions.slice(0, 3), { name: '未知维度', score: 1, comment: 'a' }] })
+      )
+    ).toThrowError(/未知复盘维度/)
   })
 })
