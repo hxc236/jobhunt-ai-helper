@@ -26,6 +26,7 @@ import type {
   PositionPatch,
   OptimizationMode,
   OptimizeResult,
+  AsrStatus,
   PositionSource,
   Topic,
   TopicGenerateInput,
@@ -72,6 +73,8 @@ export const IpcChannel = {
   InterviewAnswer: 'interview:answer',
   InterviewInterrupt: 'interview:interrupt',
   InterviewFollowUp: 'interview:follow-up',
+  AsrGetStatus: 'asr:get-status',
+  AsrTranscribe: 'asr:transcribe',
   InterviewEnd: 'interview:end',
   InterviewHistory: 'interview:history',
   CrawlRun: 'crawl:run',
@@ -173,6 +176,10 @@ export interface IpcProtocol {
     response: { sessionId: string; topicTitle: string; resumed: boolean }
   }
   [IpcChannel.LearnSend]: { request: { sessionId: string; text: string }; response: string }
+  // F-26（#40）：语音输入 —— get-status 就绪检查（未就绪 → 渲染层降级文字输入）；
+  // transcribe 收渲染层 MediaRecorder 的 wav → 识别文本（PTT）。
+  [IpcChannel.AsrGetStatus]: { request: void; response: AsrStatus }
+  [IpcChannel.AsrTranscribe]: { request: { wav: number[] }; response: string }
   // F-23（#37）：面试会话 —— start 注入 JD 分析/优化稿/learned 清单；answer 阶段推进
   // （硬性要求→项目深挖→learned 检验→反问→收尾，动态难度）；interrupt 打断；end 收尾落 transcript。
   [IpcChannel.InterviewStart]: {
@@ -261,6 +268,13 @@ export interface PositionsApi {
   getApplication: (positionId: string) => Promise<Application | null>
   /** 投递状态操作（F-05：状态机校验；同状态调用 = 编辑渠道/投递日期；非法流转 reject transition）。 */
   setApplication: (positionId: string, patch: ApplicationPatch) => Promise<Application>
+}
+
+/** 渲染进程可见的 asr api 表面（F-26/#40：PTT 语音输入 + 降级）。 */
+export interface AsrApi {
+  getStatus: () => Promise<AsrStatus>
+  /** PTT 松开后转写（wav PCM 16k 单声道；未就绪 reject ASR_NOT_READY）。 */
+  transcribe: (wav: Uint8Array) => Promise<string>
 }
 
 /** 渲染进程可见的 interview api 表面（F-23/#37）。 */
@@ -355,6 +369,7 @@ export interface RendererApi {
   topics: TopicsApi
   learn: LearnApi
   interview: InterviewApi
+  asr: AsrApi
   /** 订阅主进程事件推送；返回取消订阅函数。 */
   on: <E extends IpcEventName>(event: E, listener: (payload: IpcEventMap[E]) => void) => () => void
 }

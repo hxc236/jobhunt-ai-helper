@@ -12,6 +12,7 @@ import { OptimizeService } from './services/optimize'
 import { TopicService } from './services/topic'
 import { LearnService } from './services/learn'
 import { InterviewService } from './services/interview'
+import { AsrService, SherpaAsrProvider } from './services/asr'
 import { NowcoderParser } from './services/parsers/nowcoder'
 import { LiepinParser } from './services/parsers/liepin'
 import { PositionService } from './services/position'
@@ -108,8 +109,12 @@ app.whenReady().then(() => {
   const learn = new LearnService(agent, topics)
   // F-23（#37）：模拟面试编排（四阶段 + 风格 + 动态难度 + transcript 落库；复盘 #39）
   const interview = new InterviewService(db, positions, resumes, topics, agent)
+  // F-26（#40）：语音输入（PTT + sherpa-onnx 流式 + VAD 端点切句；模型缺失 → 降级文字输入）
+  const asr = new AsrService(
+    new SherpaAsrProvider(join(app.getAppPath(), 'resources', 'sherpa-onnx'))
+  )
 
-  registerIpcHandlers({ settings, agent, positions, resumes, crawls, optimize, topics, learn, interview })
+  registerIpcHandlers({ settings, agent, positions, resumes, crawls, optimize, topics, learn, interview, asr })
   createWindow()
 
   app.on('activate', () => {

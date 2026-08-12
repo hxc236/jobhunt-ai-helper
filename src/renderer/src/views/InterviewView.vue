@@ -30,6 +30,70 @@ const followUpText = ref('')
 const errorMessage = ref('')
 const endMessage = ref('')
 
+/** 语音输入（F-26/#40）：PTT 按住说话 → MediaRecorder 录音 → asr:transcribe → 回填输入框。 */
+const asrReady = ref(false)
+const asrHint = ref('')
+const recording = ref(false)
+const transcribing = ref(false)
+const mediaRecorder = ref<MediaRecorder | null>(null)
+
+async function checkAsr(): Promise<void> {
+  try {
+    const status = await window.api.asr.getStatus()
+    asrReady.value = status.ready
+    asrHint.value = status.reason ?? ''
+  } catch {
+    asrReady.value = false
+    asrHint.value = '语音识别不可用——请使用文字输入'
+  }
+}
+
+async function pttStart(event: PointerEvent): Promise<void> {
+  if (!asrReady.value || recording.value) return
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    const recorder = new MediaRecorder(stream)
+    const chunks: Blob[] = []
+    recorder.ondataavailable = (e) => {
+      if (e.data.size > 0) chunks.push(e.data)
+    }
+    recorder.onstop = async () => {
+      stream.getTracks().forEach((t) => t.stop())
+      const blob = new Blob(chunks, { type: 'audio/webm' })
+      const buf = await blob.arrayBuffer()
+      if (buf.byteLength === 0) return
+      transcribing.value = true
+      try {
+        const text = await window.api.asr.transcribe(new Uint8Array(buf))
+        inputText.value = inputText.value === '' ? text : `${inputText.value} ${text}`
+      } catch (err) {
+        errorMessage.value = String(err)
+      } finally {
+        transcribing.value = false
+      }
+    }
+    mediaRecorder.value = recorder
+    recorder.start()
+    recording.value = true
+    // 忽略事件（保留类型签名）
+    void event
+  } catch (err) {
+    asrReady.value = false
+    asrHint.value = `麦克风不可用：${String(err)}——请使用文字输入`
+  }
+}
+
+function pttStop(): void {
+  if (!recording.value) return
+  recording.value = false
+  try {
+    mediaRecorder.value?.stop()
+  } catch {
+    // 已停止
+  }
+  mediaRecorder.value = null
+}
+
 const STYLE_DESCS: Record<string, string> = {
   real: '真实面试官：追问细节、验证真实性',
   coach: '教练式：多鼓励、给提示、引导思考',
@@ -119,6 +183,7 @@ async function endInterview(): Promise<void> {
 
 onMounted(() => {
   void loadPositions()
+  void checkAsr()
   // 面试流式增量（agent:delta 按会话过滤）——打字机渲染
   const unsubscribe = window.api.on(IpcEvent.AgentDelta, (payload) => {
     if (payload.sessionId !== sessionId.value || !started.value) return
@@ -154,7 +219,8 @@ onMounted(() => {
           {{ starting ? '准备中…' : '开始面试' }}
         </button>
       </div>
-      <p class="hint">文字输入即可完成整场面试（语音输入接入后可作为补充，当前为文字兜底）。</p>
+      <p class="hint">文字输入即可完成整场面试。</p>
+      <p v-if="asrHint !== '' && !asrReady" class="message error asr-hint">{{ asrHint }}</p>
     </section>
 
     <!-- 会话 -->
@@ -188,6 +254,17 @@ onMounted(() => {
           />
           <button class="btn btn-primary" type="button" :disabled="sending" @click="send">
             {{ sending ? '思考中…' : '发送' }}
+          </button>
+          <button
+            v-if="asrReady"
+            class="btn ptt-btn"
+            :class="{ recording }"
+            type="button"
+            @pointerdown="pttStart"
+            @pointerup="pttStop"
+            @pointerleave="pttStop"
+          >
+            {{ transcribing ? '识别中…' : recording ? '松开结束说话' : '按住说话' }}
           </button>
           <button class="btn" type="button" :disabled="!sending && streamingText === ''" @click="interrupt">
             打断
@@ -380,6 +457,16 @@ onMounted(() => {
   background: #dc2626;
   border-color: #dc2626;
   color: #fff;
+}
+
+.ptt-btn.recording {
+  background: #dc2626;
+  border-color: #dc2626;
+  color: #fff;
+}
+
+.asr-hint {
+  font-size: 12px;
 }
 
 .btn:disabled {
