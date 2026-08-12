@@ -15,6 +15,8 @@ import {
   type Position,
   type PositionStatus
 } from '@shared/types'
+import type { StoredResume } from '@shared/types/resume'
+import { score, type FitScore } from '@shared/score'
 
 const route = useRoute()
 const router = useRouter()
@@ -46,6 +48,51 @@ const appError = ref('')
 const appSaving = ref(false)
 /** 投递渠道/日期编辑表单（预填当前值，保存走同状态 setApplication）。 */
 const appForm = reactive({ channel: '', appliedDate: '' })
+
+/** 匹配度评估（F-06/#27：规则打分，无 LLM 依赖；仪表 UI 数据源）。 */
+const resumes = ref<StoredResume[]>([])
+const selectedResumeId = ref('')
+const fitScore = ref<FitScore | null>(null)
+const scoring = ref(false)
+const scoreError = ref('')
+/** 维度依据展开态（按维度名）。 */
+const expandedDims = ref<Set<string>>(new Set())
+
+/** 环形总分 SVG 弧长参数（r=42，周长 ≈ 263.9）。 */
+const RING_CIRCUMFERENCE = 2 * Math.PI * 42
+
+function ringOffset(scoreValue: number): number {
+  return RING_CIRCUMFERENCE * (1 - scoreValue / 100)
+}
+
+/** 总分颜色：≥80 绿 / ≥60 蓝 / 其余红。 */
+function totalClass(scoreValue: number): string {
+  if (scoreValue >= 80) return 'ring-green'
+  if (scoreValue >= 60) return 'ring-blue'
+  return 'ring-red'
+}
+
+function toggleDim(name: string): void {
+  const next = new Set(expandedDims.value)
+  if (next.has(name)) next.delete(name)
+  else next.add(name)
+  expandedDims.value = next
+}
+
+async function runScore(): Promise<void> {
+  const pos = position.value
+  const resume = resumes.value.find((r) => r.meta.id === selectedResumeId.value)
+  if (pos === null || resume === undefined) return
+  scoreError.value = ''
+  scoring.value = true
+  try {
+    fitScore.value = score({ jd: pos.jd, resume })
+  } catch (err) {
+    scoreError.value = `评估失败：${String(err)}`
+  } finally {
+    scoring.value = false
+  }
+}
 /** 编辑模式：详情展示 ⇄ 编辑表单。 */
 const editing = ref(false)
 /** 删除确认：两步内联确认（避免误删；确认文案明示级联删除投递记录）。 */
@@ -129,6 +176,7 @@ async function load(): Promise<void> {
   try {
     position.value = await window.api.positions.get(positionId)
     application.value = await window.api.positions.getApplication(positionId)
+    resumes.value = await window.api.resumes.list()
     fillAppForm()
   } catch (err) {
     errorMessage.value = `加载职位详情失败：${String(err)}`
@@ -397,6 +445,70 @@ onMounted(() => void load())
         </template>
 
         <p v-if="appError" class="message error">{{ appError }}</p>
+      </section>
+
+      <!-- 匹配度仪表（F-06/#27：环形总分 + 维度条 + 依据展开；规则打分无 LLM 依赖） -->
+      <section class="card">
+        <h2 class="card-title">匹配度评估</h2>
+        <p class="hint">
+          按 JD 关键词对所选简历做 5 维度规则打分（关键词25/技能25/项目20/经历15/学历15）——
+          纯规则计算，未配置模型时也可用。
+        </p>
+
+        <div class="score-bar">
+          <select v-model="selectedResumeId" class="input">
+            <option value="" disabled>选择简历…</option>
+            <option v-for="r in resumes" :key="r.meta.id" :value="r.meta.id">
+              {{ r.meta.title ?? '未命名简历' }}
+            </option>
+          </select>
+          <button class="btn btn-primary" type="button" :disabled="scoring || selectedResumeId === ''" @click="runScore">
+            {{ scoring ? '评估中…' : '开始评估' }}
+          </button>
+        </div>
+
+        <p v-if="scoreError" class="message error">{{ scoreError }}</p>
+
+        <div v-if="fitScore" class="gauge">
+          <div class="ring-wrap" :class="totalClass(fitScore.total)">
+            <svg viewBox="0 0 100 100" class="ring">
+              <circle cx="50" cy="50" r="42" class="ring-track" />
+              <circle
+                cx="50"
+                cy="50"
+                r="42"
+                class="ring-value"
+                :stroke-dasharray="RING_CIRCUMFERENCE"
+                :stroke-dashoffset="ringOffset(fitScore.total)"
+                transform="rotate(-90 50 50)"
+              />
+            </svg>
+            <div class="ring-center">
+              <span class="ring-total">{{ fitScore.total }}</span>
+              <span class="ring-label">匹配度</span>
+            </div>
+          </div>
+
+          <div class="dims">
+            <div v-for="d in fitScore.dimensions" :key="d.name" class="dim">
+              <div class="dim-head" @click="toggleDim(d.name)">
+                <span class="dim-label">{{ d.label }}</span>
+                <span class="dim-bar"><i :style="{ width: d.score + '%' }" :class="totalClass(d.score)" /></span>
+                <span class="dim-score">{{ d.score }}</span>
+                <span class="dim-chevron">{{ expandedDims.has(d.name) ? '▾' : '▸' }}</span>
+              </div>
+              <div v-if="expandedDims.has(d.name)" class="dim-detail">
+                <p v-if="d.evidence.length > 0" class="detail-line">
+                  <span class="detail-label">命中：</span>{{ d.evidence.join('、') }}
+                </p>
+                <p v-if="d.misses.length > 0" class="detail-line miss">
+                  <span class="detail-label">缺失：</span>{{ d.misses.join('、') }}
+                </p>
+                <p v-if="d.evidence.length === 0 && d.misses.length === 0" class="detail-line">无</p>
+              </div>
+            </div>
+          </div>
+        </div>
       </section>
 
       <!-- 编辑表单卡片 -->
@@ -724,6 +836,144 @@ onMounted(() => void load())
 .app-edit .input {
   flex: 1;
   min-width: 160px;
+}
+
+/* 匹配度仪表（F-06/#27） */
+.score-bar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 14px;
+}
+
+.score-bar .input {
+  flex: 1;
+  max-width: 320px;
+}
+
+.gauge {
+  display: flex;
+  gap: 24px;
+  align-items: center;
+}
+
+.ring-wrap {
+  position: relative;
+  width: 120px;
+  height: 120px;
+  flex-shrink: 0;
+}
+
+.ring {
+  width: 100%;
+  height: 100%;
+}
+
+.ring-track {
+  fill: none;
+  stroke: #f0f1f3;
+  stroke-width: 10;
+}
+
+.ring-value {
+  fill: none;
+  stroke-width: 10;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.4s ease;
+}
+
+.ring-green .ring-value {
+  stroke: #059669;
+}
+
+.ring-blue .ring-value {
+  stroke: #2b5ca8;
+}
+
+.ring-red .ring-value {
+  stroke: #dc2626;
+}
+
+.ring-center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.ring-total {
+  font-size: 26px;
+  font-weight: 700;
+}
+
+.ring-label {
+  font-size: 11px;
+  color: #6b7280;
+}
+
+.dims {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dim-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  padding: 2px 0;
+}
+
+.dim-label {
+  width: 72px;
+  font-size: 13px;
+  color: #374151;
+  flex-shrink: 0;
+}
+
+.dim-bar {
+  flex: 1;
+  height: 8px;
+  background: #f0f1f3;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.dim-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+}
+
+.dim-score {
+  width: 28px;
+  text-align: right;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.dim-chevron {
+  color: #9ca3af;
+  font-size: 12px;
+}
+
+.dim-detail {
+  margin: 4px 0 8px 82px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: #374151;
+}
+
+.detail-label {
+  color: #6b7280;
+}
+
+.detail-line.miss {
+  color: #dc2626;
 }
 
 .card-title {
