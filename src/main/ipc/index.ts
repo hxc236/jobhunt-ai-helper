@@ -60,6 +60,11 @@ export function registerIpcHandlers({ settings, agent, positions, resumes }: Ipc
   handleRequest(IpcChannel.PositionsGet, (request) => positions.get(request.id))
   handleRequest(IpcChannel.PositionsUpdate, (request) => positions.update(request.id, request.patch))
   handleRequest(IpcChannel.PositionsDelete, (request) => positions.delete(request.id))
+  // F-05（#21）：投递状态流转 —— 状态机校验在服务层（非法流转抛 transition，message 透传）
+  handleRequest(IpcChannel.PositionsGetApplication, (request) => positions.getApplication(request.positionId))
+  handleRequest(IpcChannel.PositionsSetApplication, (request) =>
+    positions.setApplicationState(request.positionId, request.patch)
+  )
 
   // F-12（issue #19）：简历 CRUD —— 服务层负责 schema 校验与删除语义（基准删除不影响派生稿）
   handleRequest(IpcChannel.ResumesList, () => resumes.list())

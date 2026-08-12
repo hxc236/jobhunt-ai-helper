@@ -130,6 +130,25 @@ describe('createRendererApi（渲染侧 api 客户端）', () => {
     expect(fake.invocations).toEqual([{ channel: IpcChannel.PositionsDelete, args: [{ id: 'pos-1' }] }])
   })
 
+  it('positions.getApplication 映射到 positions:get-application 并传 { positionId }', async () => {
+    const fake = makeFakeBridge()
+    const api = createRendererApi(fake.bridge)
+    await api.positions.getApplication('pos-1')
+    expect(fake.invocations).toEqual([
+      { channel: IpcChannel.PositionsGetApplication, args: [{ positionId: 'pos-1' }] }
+    ])
+  })
+
+  it('positions.setApplication 映射到 positions:set-application 并传 { positionId, patch }', async () => {
+    const fake = makeFakeBridge()
+    const api = createRendererApi(fake.bridge)
+    const patch = { status: 'applied', channel: '牛客' } as const
+    await api.positions.setApplication('pos-1', patch)
+    expect(fake.invocations).toEqual([
+      { channel: IpcChannel.PositionsSetApplication, args: [{ positionId: 'pos-1', patch }] }
+    ])
+  })
+
   it('resumes.list 映射到 resumes:list，不带参数', async () => {
     const fake = makeFakeBridge()
     const api = createRendererApi(fake.bridge)

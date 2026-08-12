@@ -60,6 +60,28 @@ export const MIGRATIONS: readonly string[] = [
   );
   CREATE INDEX idx_resumes_base_resume_id ON resumes(base_resume_id);
   CREATE INDEX idx_resumes_target_job_id ON resumes(target_job_id);
+  `,
+  // v4: applications 表（F-05 / issue #21）—— 投递状态机记录，与 positions 1:1
+  // （position_id UNIQUE）；各 *_at 列为状态进入时刻（复盘数据来源，ADR-0005）；
+  // applied_date 为实际投递日期（用户可编辑，进入 applied 自动填当天）；
+  // ON DELETE CASCADE 兜底：删职位卡连带删投递记录（服务层另有显式删除，见 F-03/#20）。
+  `
+  CREATE TABLE applications (
+    id            TEXT PRIMARY KEY,
+    position_id   TEXT NOT NULL UNIQUE REFERENCES positions(id) ON DELETE CASCADE,
+    status        TEXT NOT NULL CHECK (status IN ('planned','applied','interviewing','offer','rejected','withdrawn')),
+    channel       TEXT,
+    applied_date  TEXT,
+    planned_at    TEXT,
+    applied_at    TEXT,
+    interviewing_at TEXT,
+    offer_at      TEXT,
+    rejected_at   TEXT,
+    withdrawn_at  TEXT,
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL
+  );
+  CREATE INDEX idx_applications_status ON applications(status);
   `
 ]
 

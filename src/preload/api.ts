@@ -32,7 +32,10 @@ export function createRendererApi(bridge: IpcBridge): RendererApi {
       list: (filters) => bridge.invoke(IpcChannel.PositionsList, filters ?? {}),
       get: (id) => bridge.invoke(IpcChannel.PositionsGet, { id }),
       update: (id, patch) => bridge.invoke(IpcChannel.PositionsUpdate, { id, patch }),
-      delete: (id) => bridge.invoke(IpcChannel.PositionsDelete, { id })
+      delete: (id) => bridge.invoke(IpcChannel.PositionsDelete, { id }),
+      getApplication: (positionId) => bridge.invoke(IpcChannel.PositionsGetApplication, { positionId }),
+      setApplication: (positionId, patch) =>
+        bridge.invoke(IpcChannel.PositionsSetApplication, { positionId, patch })
     },
     resumes: {
       list: () => bridge.invoke(IpcChannel.ResumesList),
