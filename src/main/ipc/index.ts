@@ -14,6 +14,7 @@ import type { CrawlService } from '../services/crawl'
 import type { OptimizeService } from '../services/optimize'
 import type { TopicService } from '../services/topic'
 import type { LearnService } from '../services/learn'
+import type { InterviewService } from '../services/interview'
 import type { PositionService } from '../services/position'
 import { exportResumePdf } from '../services/resume-export'
 import type { ResumeService } from '../services/resume'
@@ -37,13 +38,14 @@ export interface IpcDeps {
   optimize: OptimizeService
   topics: TopicService
   learn: LearnService
+  interview: InterviewService
 }
 
 /**
  * 注册全部 IPC handler（薄层：仅参数校验 + 转调服务）。
  * 主进程启动时调用一次；后续通道（EF-04 起）在此追加。
  */
-export function registerIpcHandlers({ settings, agent, positions, resumes, crawls, optimize, topics, learn }: IpcDeps): void {
+export function registerIpcHandlers({ settings, agent, positions, resumes, crawls, optimize, topics, learn, interview }: IpcDeps): void {
   handleRequest(IpcChannel.Ping, (): PingResponse => ping())
 
   handleRequest(IpcChannel.SettingsGet, (request) => settings.get(request.key))
@@ -99,6 +101,12 @@ export function registerIpcHandlers({ settings, agent, positions, resumes, crawl
   // F-22（#36）：teach 聊天会话（流式增量经全局 agent:delta 推送，UI 打字机消费）
   handleRequest(IpcChannel.LearnStart, (request) => learn.start(request.topicId))
   handleRequest(IpcChannel.LearnSend, (request) => learn.send(request.sessionId, request.text))
+  // F-23（#37）：面试会话编排（阶段推进/风格/动态难度/transcript 落库）
+  handleRequest(IpcChannel.InterviewStart, (request) => interview.start(request.jobId, request.style))
+  handleRequest(IpcChannel.InterviewAnswer, (request) => interview.answer(request.sessionId, request.text))
+  handleRequest(IpcChannel.InterviewInterrupt, (request) => interview.interrupt(request.sessionId))
+  handleRequest(IpcChannel.InterviewEnd, (request) => interview.end(request.sessionId))
+  handleRequest(IpcChannel.InterviewHistory, () => interview.history())
   handleRequest(IpcChannel.CrawlConfirmImport, (request) =>
     crawls.confirmImport(request.runId, request.sourceUrls)
   )

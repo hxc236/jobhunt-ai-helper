@@ -125,6 +125,22 @@ export const MIGRATIONS: readonly string[] = [
   );
   CREATE INDEX idx_topics_status ON topics(status);
   CREATE INDEX idx_topics_job ON topics(job_id);
+  `,
+  // v8: interviews 表（F-23/#37）—— 模拟面试记录。
+  // - transcript：JSON 数组 [{role: 'user'|'assistant', text, ts}]（逐轮追加）；
+  // - review：复盘 JSON（#39 生成后写入）；style：real/coach/strict。
+  `
+  CREATE TABLE interviews (
+    id         TEXT PRIMARY KEY,
+    job_id     TEXT,
+    style      TEXT NOT NULL CHECK (style IN ('real','coach','strict')),
+    transcript TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(transcript)),
+    status     TEXT NOT NULL DEFAULT 'in_progress' CHECK (status IN ('in_progress','ended')),
+    review     TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX idx_interviews_created ON interviews(created_at DESC);
   `
 ]
 

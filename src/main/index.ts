@@ -11,6 +11,7 @@ import { CrawlService } from './services/crawl'
 import { OptimizeService } from './services/optimize'
 import { TopicService } from './services/topic'
 import { LearnService } from './services/learn'
+import { InterviewService } from './services/interview'
 import { NowcoderParser } from './services/parsers/nowcoder'
 import { LiepinParser } from './services/parsers/liepin'
 import { PositionService } from './services/position'
@@ -105,8 +106,10 @@ app.whenReady().then(() => {
   const topics = new TopicService(db, positions)
   // F-22（#36）：teach 聊天会话（learn 任务 /skill:teach + continueRecent 跨次续接）
   const learn = new LearnService(agent, topics)
+  // F-23（#37）：模拟面试编排（四阶段 + 风格 + 动态难度 + transcript 落库；复盘 #39）
+  const interview = new InterviewService(db, positions, resumes, topics, agent)
 
-  registerIpcHandlers({ settings, agent, positions, resumes, crawls, optimize, topics, learn })
+  registerIpcHandlers({ settings, agent, positions, resumes, crawls, optimize, topics, learn, interview })
   createWindow()
 
   app.on('activate', () => {
