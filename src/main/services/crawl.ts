@@ -8,6 +8,12 @@ import type {
   PositionSource
 } from '../../shared/types'
 
+/** 解析上下文：执行框架透传本次运行的模式与关键词（#23 牛客 filter 按公司名过滤）。 */
+export interface CrawlParseContext {
+  mode: CrawlMode
+  filter: string | undefined
+}
+
 /**
  * 采集解析器（F-08/#22 框架；#23 牛客 / #24 猎聘 逐个实现注册）。
  * 解析/映射为纯函数（spec Testing Decisions：解析与抓取分离，可测；
@@ -15,10 +21,12 @@ import type {
  */
 export interface CrawlParser {
   readonly source: PositionSource
-  /** 列表页 URL（分页含全部页）；mode/filter 由执行框架透传（spec #13-16）。 */
+  /** 起始列表页 URL（分页经 nextListUrl 逐个追加；mode/filter 透传，spec #13-16）。 */
   buildUrls(mode: CrawlMode, filter: string | undefined): string[]
   /** 列表页 HTML → 候选行（纯函数；detailUrl 存在时框架抓详情补全）。 */
-  parseList(html: string): CrawlCandidate[]
+  parseList(html: string, context: CrawlParseContext): CrawlCandidate[]
+  /** 从当前列表页 HTML 提取下一页 URL（翻页参数；null = 无更多页）。 */
+  nextListUrl?(html: string): string | null
   /** 详情页 HTML → 补全候选字段（JD 全文等；可选）。 */
   parseDetail?(html: string, candidate: CrawlCandidate): CrawlCandidate
 }
@@ -121,8 +129,10 @@ export class CrawlService {
     let truncated = false
 
     try {
+      // 队列式执行：起始 URL + 解析器 nextListUrl 追加翻页；节流/上限作用于每次抓取
+      const queue: string[] = [...urls]
       let firstFetch = true
-      for (const url of urls) {
+      while (queue.length > 0) {
         if (candidates.length >= this.maxItems) {
           truncated = true
           break
@@ -130,11 +140,12 @@ export class CrawlService {
         if (!firstFetch) await this.sleep(this.throttleMs)
         firstFetch = false
 
+        const url = queue.shift() as string
         const html = await this.fetchWithRetry(url, errors)
         if (html === null) continue // 重试耗尽：错误已入 errors
         fetchedCount++
 
-        for (const raw of parser.parseList(html)) {
+        for (const raw of parser.parseList(html, { mode: options.mode, filter: options.filter })) {
           if (candidates.length >= this.maxItems) {
             truncated = true
             break
@@ -150,7 +161,14 @@ export class CrawlService {
           candidates.push(candidate)
         }
 
-        this.onProgress?.({ runId, done: fetchedCount, total: urls.length })
+        // 翻页：解析器从当前页提取下一页 URL（无则队列耗尽结束）
+        if (parser.nextListUrl !== undefined) {
+          const next = parser.nextListUrl(html)
+          if (next !== null && next !== url) queue.push(next)
+        }
+
+        // 进度：done=已抓页数，total=已抓+待抓（翻页过程中动态增长）
+        this.onProgress?.({ runId, done: fetchedCount, total: fetchedCount + queue.length })
       }
     } catch (err) {
       // 意外错误（如解析器抛错）：留痕标记 failed 后上抛，渲染层可见

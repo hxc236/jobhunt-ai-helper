@@ -8,6 +8,7 @@ import { AgentService, type AgentEvent } from './services/agent'
 import { PiAgentProvider } from './services/pi-agent-provider'
 import { BrowserWindowFetcher } from './services/browser-window-fetcher'
 import { CrawlService } from './services/crawl'
+import { NowcoderParser } from './services/parsers/nowcoder'
 import { PositionService } from './services/position'
 import { ResumeService } from './services/resume'
 import { SettingsService } from './services/settings'
@@ -76,6 +77,8 @@ app.whenReady().then(() => {
   const crawls = new CrawlService(db, new BrowserWindowFetcher(), {
     onProgress: ({ runId, done, total }) => pushEvent(IpcEvent.CrawlProgress, { runId, done, total })
   })
+  // F-09（#23）：牛客校招日程解析器（列表/翻页/详情 → 字段映射，纯函数）
+  crawls.registerParser(new NowcoderParser())
 
   // EF-04：AgentService（pi SDK 封装 + fake 可注入）。认证目录为应用自有 userData/pi
   // （auth.json/models.json/sessions），不依赖用户 ~/.pi/agent；teach 技能用仓库内置副本。
