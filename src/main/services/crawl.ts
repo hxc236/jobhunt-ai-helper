@@ -156,6 +156,7 @@ export class CrawlService {
     const urls = parser.buildUrls(options.mode, options.filter, parseContext)
     const filter = options.filter?.trim() || null
     const cooldownMs = options.cooldownMs ?? this.cooldownMs
+    const maxItems = options.maxItems ?? this.maxItems
     const runId = this.insertRun(source, options.mode, filter, urls.length, conditionsJson)
 
     const candidates: CrawlCandidate[] = []
@@ -170,7 +171,7 @@ export class CrawlService {
       const seen = new Set<string>(urls)
       let firstFetch = true
       while (queue.length > 0) {
-        if (candidates.length >= this.maxItems) {
+        if (candidates.length >= maxItems) {
           truncated = true
           break
         }
@@ -183,7 +184,7 @@ export class CrawlService {
         fetchedCount++
 
         for (const raw of parser.parseList(html, parseContext)) {
-          if (candidates.length >= this.maxItems) {
+          if (candidates.length >= maxItems) {
             truncated = true
             break
           }

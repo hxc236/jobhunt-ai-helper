@@ -164,6 +164,8 @@ export interface CrawlRunOptions {
   city?: string
   /** 本次运行的抓取冷却间隔覆盖（ms；缺省用服务默认 cooldownMs）。 */
   cooldownMs?: number
+  /** 本次运行的候选上限覆盖（缺省用服务默认 maxItems=100）。 */
+  maxItems?: number
 }
 
 /** 结构化采集条件快照（crawl_runs.conditions_json；issue #55 留痕）。 */

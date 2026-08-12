@@ -200,6 +200,16 @@ describe('CrawlService 采集执行框架（F-08/#22）', () => {
   })
 
   describe('频率纪律（issue #55）', () => {
+    it('运行级 maxItems 覆盖服务默认上限（截断标记）', async () => {
+      const fetcher = makeFakeFetcher({ ...PAGES })
+      const parser = makeFakeParser(Object.keys(PAGES), ALL_PAGES)
+      const svc = makeService(fetcher, parser)
+
+      const result = await svc.run('nowcoder', { mode: 'full', maxItems: 2 })
+      expect(result.candidates).toHaveLength(2)
+      expect(result.run.truncated).toBe(true)
+    })
+
     it('cooldownMs 生效：除首个请求外每次 fetch 前等待冷却间隔', async () => {
       const fetcher = makeFakeFetcher({ ...PAGES })
       const parser = makeFakeParser(Object.keys(PAGES), ALL_PAGES)
