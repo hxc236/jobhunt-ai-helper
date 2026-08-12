@@ -89,6 +89,24 @@ async function startCrawl(): Promise<void> {
   }
 }
 
+/* ---------- BOSS 登录态（issue #51） ---------- */
+const bossLoginStatus = ref(false)
+const bossLoginChecking = ref(false)
+
+async function checkBossLogin(): Promise<void> {
+  bossLoginChecking.value = true
+  try {
+    bossLoginStatus.value = await window.api.crawls.bossLogin.status()
+  } finally {
+    bossLoginChecking.value = false
+  }
+}
+
+async function openBossLogin(): Promise<void> {
+  await window.api.crawls.bossLogin.open()
+  await checkBossLogin()
+}
+
 function toggleSelect(url: string): void {
   const next = new Set(selectedUrls.value)
   if (next.has(url)) next.delete(url)
@@ -567,6 +585,7 @@ onMounted(() => {
         <select v-model="crawlSource" :disabled="crawling">
           <option value="nowcoder">牛客校招日程</option>
           <option value="liepin">猎聘校招</option>
+          <option value="boss">BOSS直聘</option>
         </select>
       </label>
       <label class="field" style="flex: 1">
@@ -584,6 +603,25 @@ onMounted(() => {
       <button class="btn primary" type="button" :disabled="crawling" style="align-self: flex-end" @click="startCrawl">
         {{ crawling ? '采集中…' : '开始采集' }}
       </button>
+    </div>
+    <!-- issue #51：BOSS 登录态（薪资可见性前提）——扫码登录 + 状态检测 -->
+    <div v-if="crawlSource === 'boss'" class="crawl-boss-login">
+      <span class="hint">
+        BOSS 采集需登录后薪资才可见（匿名会话薪资为空）。登录态持久化，重启不丢。
+      </span>
+      <div style="display: flex; gap: 8px; align-items: center">
+        <button
+          class="btn"
+          type="button"
+          :disabled="bossLoginChecking"
+          @click="openBossLogin"
+        >
+          {{ bossLoginStatus ? '已登录' : '未登录' }}
+        </button>
+        <button class="btn ghost" type="button" :disabled="bossLoginChecking" @click="checkBossLogin">
+          {{ bossLoginChecking ? '检测中…' : '刷新状态' }}
+        </button>
+      </div>
     </div>
     <p v-if="crawlProgress" class="hint">
       抓取中 {{ crawlProgress.done }}/{{ crawlProgress.total }}（每次请求间隔 ≥2s，失败自动重试）…

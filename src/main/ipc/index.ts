@@ -21,6 +21,7 @@ import { exportResumePdf } from '../services/resume-export'
 import type { ResumeService } from '../services/resume'
 import type { SettingsService } from '../services/settings'
 import { pushEvent } from './events'
+import type { BossLoginService } from '../services/boss-login'
 
 /** 类型化 handler 注册：通道与请求/响应类型由 IpcProtocol 推导（无类型绕过）。 */
 function handleRequest<C extends IpcChannelName>(
@@ -36,6 +37,7 @@ export interface IpcDeps {
   positions: PositionService
   resumes: ResumeService
   crawls: CrawlService
+  bossLogin: BossLoginService
   optimize: OptimizeService
   topics: TopicService
   learn: LearnService
@@ -47,7 +49,7 @@ export interface IpcDeps {
  * 注册全部 IPC handler（薄层：仅参数校验 + 转调服务）。
  * 主进程启动时调用一次；后续通道（EF-04 起）在此追加。
  */
-export function registerIpcHandlers({ settings, agent, positions, resumes, crawls, optimize, topics, learn, interview, asr }: IpcDeps): void {
+export function registerIpcHandlers({ settings, agent, positions, resumes, crawls, bossLogin, optimize, topics, learn, interview, asr }: IpcDeps): void {
   handleRequest(IpcChannel.Ping, (): PingResponse => ping())
 
   handleRequest(IpcChannel.SettingsGet, (request) => settings.get(request.key))
@@ -85,6 +87,8 @@ export function registerIpcHandlers({ settings, agent, positions, resumes, crawl
   )
   handleRequest(IpcChannel.CrawlRuns, () => crawls.runs())
   handleRequest(IpcChannel.CrawlGetRun, (request) => crawls.getRun(request.id))
+  handleRequest(IpcChannel.BossLoginOpen, () => bossLogin.openLoginWindow())
+  handleRequest(IpcChannel.BossLoginStatus, () => bossLogin.isLoggedIn())
   // F-11（#29）：预览统计 + 确认导入（upsert：source_url 优先 + dedupe_key 兜底）
   handleRequest(IpcChannel.CrawlPreview, (request) => crawls.preview(request.runId))
   // #32：优化流程触发（三轮进度已由 OptimizeService onProgress → optimize:progress 推送）

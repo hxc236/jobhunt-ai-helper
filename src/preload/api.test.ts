@@ -198,6 +198,17 @@ describe('createRendererApi（渲染侧 api 客户端）', () => {
     ])
   })
 
+  it('crawls.bossLogin.open 映射到 boss-login:open；status 映射到 boss-login:status', async () => {
+    const fake = makeFakeBridge()
+    const api = createRendererApi(fake.bridge)
+    await api.crawls.bossLogin.open()
+    await api.crawls.bossLogin.status()
+    expect(fake.invocations).toEqual([
+      { channel: IpcChannel.BossLoginOpen, args: [] },
+      { channel: IpcChannel.BossLoginStatus, args: [] }
+    ])
+  })
+
   it('resumes.list 映射到 resumes:list，不带参数', async () => {
     const fake = makeFakeBridge()
     const api = createRendererApi(fake.bridge)

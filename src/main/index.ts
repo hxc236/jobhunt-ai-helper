@@ -15,6 +15,7 @@ import { InterviewService } from './services/interview'
 import { AsrService, SherpaAsrProvider } from './services/asr'
 import { NowcoderParser } from './services/parsers/nowcoder'
 import { LiepinParser } from './services/parsers/liepin'
+import { BossLoginService } from './services/boss-login'
 import { PositionService } from './services/position'
 import { ResumeService } from './services/resume'
 import { SettingsService } from './services/settings'
@@ -82,8 +83,11 @@ app.whenReady().then(() => {
   // F-08（#22）：采集执行框架（隐藏 BrowserWindow 抓取 + 节流/重试/上限 + 留痕；
   // 解析器由 #23 牛客 / #24 猎聘 注册；进度经 crawl:progress 事件推送）
   const crawls = new CrawlService(db, new BrowserWindowFetcher(), {
+    // BOSS 频率纪律（issue #55/#56）：窗口间 30s 冷却（调研实测 30-60s）
+    cooldownMs: 30_000,
     onProgress: ({ runId, done, total }) => pushEvent(IpcEvent.CrawlProgress, { runId, done, total })
   })
+  const bossLogin = new BossLoginService()
   // F-09（#23）：牛客校招日程解析器（列表/翻页/详情 → 字段映射，纯函数）
   crawls.registerParser(new NowcoderParser())
   // F-10（#24）：猎聘校招项目卡解析器（SSR 列表 → 字段映射；end_date 恒 null → 待核实）
@@ -115,7 +119,7 @@ app.whenReady().then(() => {
     new SherpaAsrProvider(join(app.getAppPath(), 'resources', 'sherpa-onnx'))
   )
 
-  registerIpcHandlers({ settings, agent, positions, resumes, crawls, optimize, topics, learn, interview, asr })
+  registerIpcHandlers({ settings, agent, positions, resumes, crawls, bossLogin, optimize, topics, learn, interview, asr })
   createWindow()
 
   app.on('activate', () => {

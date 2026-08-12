@@ -52,7 +52,11 @@ export function createRendererApi(bridge: IpcBridge): RendererApi {
       getRun: (id) => bridge.invoke(IpcChannel.CrawlGetRun, { id }),
       preview: (runId) => bridge.invoke(IpcChannel.CrawlPreview, { runId }),
       confirmImport: (runId, sourceUrls) =>
-        bridge.invoke(IpcChannel.CrawlConfirmImport, { runId, sourceUrls })
+        bridge.invoke(IpcChannel.CrawlConfirmImport, { runId, sourceUrls }),
+      bossLogin: {
+        open: () => bridge.invoke(IpcChannel.BossLoginOpen),
+        status: () => bridge.invoke(IpcChannel.BossLoginStatus)
+      }
     },
     optimize: {
       run: (jobId, resumeId, mode) =>

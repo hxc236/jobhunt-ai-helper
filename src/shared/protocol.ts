@@ -83,6 +83,8 @@ export const IpcChannel = {
   CrawlPreview: 'crawl:preview',
   CrawlRuns: 'crawl:runs',
   CrawlGetRun: 'crawl:get-run',
+  BossLoginOpen: 'boss-login:open',
+  BossLoginStatus: 'boss-login:status',
   AsrStart: 'asr:start',
   AsrStop: 'asr:stop'
 } as const
@@ -145,6 +147,10 @@ export interface IpcProtocol {
     request: { runId: number; sourceUrls: string[] }
     response: CrawlImportResult
   }
+  // issue #51：BOSS 登录态 —— open 打开可见登录窗口（persist:boss 分区，扫码）；
+  // status 检测登录态（分区内页面 fetch getUserInfo，code===0 = 已登录）。
+  [IpcChannel.BossLoginOpen]: { request: void; response: void }
+  [IpcChannel.BossLoginStatus]: { request: void; response: boolean }
   // F-14（#26）：简历上传解析 —— docx/pdf → 文本 → 结构化草稿（置信度/待确认标记；扫描件降级）
   [IpcChannel.ResumesUploadParse]: { request: { filePath: string }; response: ResumeDraft }
   // F-15（#30）：A4 渲染与 PDF 导出 —— render-html 纯函数（iframe 预览）；
@@ -356,6 +362,13 @@ export interface CrawlApi {
   preview: (runId: number) => Promise<CrawlPreview>
   /** 确认导入（F-11：勾选候选 upsert 入库——重复 URL 更新而非新建）。 */
   confirmImport: (runId: number, sourceUrls: string[]) => Promise<CrawlImportResult>
+  /** BOSS 登录态（issue #51：扫码登录窗口 + 状态检测；薪资可见性的前提）。 */
+  bossLogin: {
+    /** 打开可见登录窗口（persist:boss 分区，登录态落盘）。 */
+    open: () => Promise<void>
+    /** 登录状态（分区内 getUserInfo code===0 = 已登录）。 */
+    status: () => Promise<boolean>
+  }
 }
 
 /** 渲染进程可见的 resumes api 表面（F-12：多份基准简历 CRUD + 删除语义；F-14：上传解析）。 */
