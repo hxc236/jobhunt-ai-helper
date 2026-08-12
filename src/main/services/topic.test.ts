@@ -6,10 +6,13 @@ import type { JdAnalysis } from '../../shared/types'
 
 const JD = '要求：Java、Spring Boot、MySQL、分布式；本科及以上，计算机相关专业'
 
-function seedJob(jd: string = JD): { db: ReturnType<typeof openDatabase>; topics: TopicService; jobId: string } {
+function seedJob(
+  jd: string = JD,
+  now: () => string = () => new Date().toISOString()
+): { db: ReturnType<typeof openDatabase>; topics: TopicService; jobId: string } {
   const db = openDatabase(':memory:')
   const positions = new PositionService(db)
-  const topics = new TopicService(db, positions)
+  const topics = new TopicService(db, positions, now)
   const job = positions.create({
     company: '腾讯',
     company_type: '大厂',
@@ -120,7 +123,9 @@ describe('TopicService.generateFromJob（F-19/#33）', () => {
 
 describe('TopicService 人工 CRUD 与三态（F-19/#33 验收）', () => {
   it('create（manual，优先级 5）→ list → update → setStatus → delete 全链路', () => {
-    const { topics } = seedJob()
+    // 注入递增时钟：断言 updated_at 刷新（默认真实时间可能同毫秒）
+    let tick = 0
+    const { topics } = seedJob(JD, () => `2026-08-13T00:00:00.${String(tick++).padStart(3, '0')}Z`)
     const created = topics.create({ title: '学习 Kafka 深入原理', note: '配合项目实践', jobId: null })
     expect(created).toMatchObject({
       title: '学习 Kafka 深入原理',

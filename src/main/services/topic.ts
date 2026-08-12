@@ -41,7 +41,8 @@ const LIST_ORDER = 'ORDER BY priority ASC, created_at ASC'
 export class TopicService {
   constructor(
     private readonly db: Db,
-    private readonly positions: PositionService
+    private readonly positions: PositionService,
+    private readonly now: () => string = () => new Date().toISOString()
   ) {}
 
   /**
@@ -57,7 +58,7 @@ export class TopicService {
 
     const createdIds: string[] = []
     let skipped = 0
-    const now = new Date().toISOString()
+    const now = this.now()
 
     const insert = (title: string, priority: number, source: TopicSource): void => {
       const trimmed = title.trim()
@@ -109,7 +110,7 @@ export class TopicService {
   create(input: TopicInput): Topic {
     const title = input.title.trim()
     if (title === '') throw new TopicError('validation', '条目标题必填')
-    const now = new Date().toISOString()
+    const now = this.now()
     const id = `topic-${randomUUID()}`
     this.db
       .prepare(
@@ -129,7 +130,7 @@ export class TopicService {
     if (priority < 1 || priority > 5) throw new TopicError('validation', '优先级必须是 1-5')
     this.db
       .prepare('UPDATE topics SET title = ?, note = ?, priority = ?, updated_at = ? WHERE id = ?')
-      .run(title, patch.note?.trim() ?? existing.note, priority, new Date().toISOString(), id)
+      .run(title, patch.note?.trim() ?? existing.note, priority, this.now(), id)
     return this.get(id)
   }
 
@@ -141,7 +142,7 @@ export class TopicService {
     }
     this.db
       .prepare('UPDATE topics SET status = ?, updated_at = ? WHERE id = ?')
-      .run(status, new Date().toISOString(), id)
+      .run(status, this.now(), id)
     return this.get(id)
   }
 
