@@ -1,6 +1,7 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 import PositionsView from './views/PositionsView.vue'
 import PositionDetailView from './views/PositionDetailView.vue'
+import ResumesView from './views/ResumesView.vue'
 import PlaceholderView from './views/PlaceholderView.vue'
 import SettingsView from './views/SettingsView.vue'
 
@@ -16,7 +17,7 @@ export const router = createRouter({
     { path: '/', redirect: '/jobs' },
     { path: '/jobs', name: 'jobs', component: PositionsView },
     { path: '/jobs/:id', name: 'job-detail', component: PositionDetailView },
-    { path: '/resumes', name: 'resumes', component: PlaceholderView, props: { title: '简历' } },
+    { path: '/resumes', name: 'resumes', component: ResumesView },
     { path: '/learn', name: 'learn', component: PlaceholderView, props: { title: '学习' } },
     { path: '/interview', name: 'interview', component: PlaceholderView, props: { title: '面试' } },
     { path: '/settings', name: 'settings', component: SettingsView }
