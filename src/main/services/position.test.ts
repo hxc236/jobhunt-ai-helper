@@ -118,7 +118,9 @@ describe('PositionService.get（F-03/#20）', () => {
     const svc = makeService()
     const created = svc.create(validInput)
 
-    expect(svc.get(created.id)).toEqual(created)
+    const got = svc.get(created.id)
+    // 行对象含 jd_analysis 缓存列（#28 起，服务层透传 null）
+    expect(got).toEqual({ ...created, jd_analysis: null })
   })
 
   it('id 不存在 → PositionError not-found（渲染层引导回列表）', () => {
