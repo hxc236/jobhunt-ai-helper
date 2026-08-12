@@ -105,6 +105,7 @@ export function registerIpcHandlers({ settings, agent, positions, resumes, crawl
   handleRequest(IpcChannel.InterviewStart, (request) => interview.start(request.jobId, request.style))
   handleRequest(IpcChannel.InterviewAnswer, (request) => interview.answer(request.sessionId, request.text))
   handleRequest(IpcChannel.InterviewInterrupt, (request) => interview.interrupt(request.sessionId))
+  handleRequest(IpcChannel.InterviewFollowUp, (request) => interview.followUp(request.sessionId, request.text))
   handleRequest(IpcChannel.InterviewEnd, (request) => interview.end(request.sessionId))
   handleRequest(IpcChannel.InterviewHistory, () => interview.history())
   handleRequest(IpcChannel.CrawlConfirmImport, (request) =>

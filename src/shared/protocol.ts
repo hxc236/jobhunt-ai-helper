@@ -71,6 +71,7 @@ export const IpcChannel = {
   InterviewStart: 'interview:start',
   InterviewAnswer: 'interview:answer',
   InterviewInterrupt: 'interview:interrupt',
+  InterviewFollowUp: 'interview:follow-up',
   InterviewEnd: 'interview:end',
   InterviewHistory: 'interview:history',
   CrawlRun: 'crawl:run',
@@ -180,6 +181,7 @@ export interface IpcProtocol {
   }
   [IpcChannel.InterviewAnswer]: { request: { sessionId: string; text: string }; response: string }
   [IpcChannel.InterviewInterrupt]: { request: { sessionId: string }; response: void }
+  [IpcChannel.InterviewFollowUp]: { request: { sessionId: string; text: string }; response: void }
   [IpcChannel.InterviewEnd]: {
     request: { sessionId: string }
     response: { id: string; job_id: string | null; status: string; transcript: Array<{ role: 'user' | 'assistant'; text: string; ts: string }> }
@@ -270,6 +272,8 @@ export interface InterviewApi {
   }>
   answer: (sessionId: string, text: string) => Promise<string>
   interrupt: (sessionId: string) => Promise<void>
+  /** 补充说明（当前生成结束后排队投递）。 */
+  followUp: (sessionId: string, text: string) => Promise<void>
   end: (sessionId: string) => Promise<{
     id: string
     job_id: string | null
