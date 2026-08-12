@@ -172,6 +172,22 @@ export interface IpcProtocol {
     response: { sessionId: string; topicTitle: string; resumed: boolean }
   }
   [IpcChannel.LearnSend]: { request: { sessionId: string; text: string }; response: string }
+  // F-23（#37）：面试会话 —— start 注入 JD 分析/优化稿/learned 清单；answer 阶段推进
+  // （硬性要求→项目深挖→learned 检验→反问→收尾，动态难度）；interrupt 打断；end 收尾落 transcript。
+  [IpcChannel.InterviewStart]: {
+    request: { jobId: string; style: 'real' | 'coach' | 'strict' }
+    response: { sessionId: string; interviewId: string; opening: string }
+  }
+  [IpcChannel.InterviewAnswer]: { request: { sessionId: string; text: string }; response: string }
+  [IpcChannel.InterviewInterrupt]: { request: { sessionId: string }; response: void }
+  [IpcChannel.InterviewEnd]: {
+    request: { sessionId: string }
+    response: { id: string; job_id: string | null; status: string; transcript: Array<{ role: 'user' | 'assistant'; text: string; ts: string }> }
+  }
+  [IpcChannel.InterviewHistory]: {
+    request: void
+    response: Array<{ id: string; job_id: string | null; style: string; status: string; transcript: Array<{ role: 'user' | 'assistant'; text: string; ts: string }>; created_at: string }>
+  }
   // F-12（issue #19）：简历 CRUD —— 入库前服务层做 resume.schema.json 校验；
   // 删除语义：删除基准简历不影响已存派生稿（独立副本）。
   [IpcChannel.ResumesList]: { request: void; response: StoredResume[] }
@@ -245,6 +261,33 @@ export interface PositionsApi {
   setApplication: (positionId: string, patch: ApplicationPatch) => Promise<Application>
 }
 
+/** 渲染进程可见的 interview api 表面（F-23/#37）。 */
+export interface InterviewApi {
+  start: (jobId: string, style: 'real' | 'coach' | 'strict') => Promise<{
+    sessionId: string
+    interviewId: string
+    opening: string
+  }>
+  answer: (sessionId: string, text: string) => Promise<string>
+  interrupt: (sessionId: string) => Promise<void>
+  end: (sessionId: string) => Promise<{
+    id: string
+    job_id: string | null
+    status: string
+    transcript: Array<{ role: 'user' | 'assistant'; text: string; ts: string }>
+  }>
+  history: () => Promise<
+    Array<{
+      id: string
+      job_id: string | null
+      style: string
+      status: string
+      transcript: Array<{ role: 'user' | 'assistant'; text: string; ts: string }>
+      created_at: string
+    }>
+  >
+}
+
 /** 渲染进程可见的 learn api 表面（F-22/#36：teach 会话）。 */
 export interface LearnApi {
   start: (topicId: string) => Promise<{ sessionId: string; topicTitle: string; resumed: boolean }>
@@ -307,6 +350,7 @@ export interface RendererApi {
   optimize: OptimizeApi
   topics: TopicsApi
   learn: LearnApi
+  interview: InterviewApi
   /** 订阅主进程事件推送；返回取消订阅函数。 */
   on: <E extends IpcEventName>(event: E, listener: (payload: IpcEventMap[E]) => void) => () => void
 }

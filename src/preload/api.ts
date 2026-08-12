@@ -62,6 +62,13 @@ export function createRendererApi(bridge: IpcBridge): RendererApi {
       start: (topicId) => bridge.invoke(IpcChannel.LearnStart, { topicId }),
       send: (sessionId, text) => bridge.invoke(IpcChannel.LearnSend, { sessionId, text })
     },
+    interview: {
+      start: (jobId, style) => bridge.invoke(IpcChannel.InterviewStart, { jobId, style }),
+      answer: (sessionId, text) => bridge.invoke(IpcChannel.InterviewAnswer, { sessionId, text }),
+      interrupt: (sessionId) => bridge.invoke(IpcChannel.InterviewInterrupt, { sessionId }),
+      end: (sessionId) => bridge.invoke(IpcChannel.InterviewEnd, { sessionId }),
+      history: () => bridge.invoke(IpcChannel.InterviewHistory)
+    },
     topics: {
       list: (filters) => bridge.invoke(IpcChannel.TopicsList, filters ?? {}),
       generate: (jobId, extras) => bridge.invoke(IpcChannel.TopicsGenerate, { jobId, extras }),
