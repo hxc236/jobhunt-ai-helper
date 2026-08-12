@@ -1,5 +1,12 @@
 import { randomUUID } from 'node:crypto'
-import { BATCHES, COMPANY_TYPES, type Position, type PositionInput } from '../../shared/types'
+import {
+  BATCHES,
+  COMPANY_TYPES,
+  type Position,
+  type PositionFilters,
+  type PositionInput,
+  type PositionListItem
+} from '../../shared/types'
 import type { Db } from '../db/migrations'
 
 const INSERT = `
@@ -13,10 +20,21 @@ const INSERT = `
     @start_date, @end_date, 'active', @notes, @created_at, @updated_at
   )
 `
-const LIST = `
-  SELECT * FROM positions
-  ORDER BY created_at DESC, rowid DESC
-`
+const LIST_SELECT = 'SELECT * FROM positions'
+const LIST_ORDER = 'ORDER BY created_at DESC, rowid DESC'
+
+const MS_PER_DAY = 86_400_000
+
+/**
+ * 网申截止倒计时（日历天）：end_date 当天 = 0、次日 = -1（已截止）。
+ * 用 UTC 日序号差值，避免时区/夏令时误差；today 可注入（服务层测试 seam）。
+ */
+export function daysUntil(endDate: string, today: Date = new Date()): number {
+  const [year, month, day] = endDate.split('-').map(Number)
+  const endDay = Date.UTC(year, month - 1, day) / MS_PER_DAY
+  const todayDay = Math.floor(Date.UTC(today.getFullYear(), today.getMonth(), today.getDate()) / MS_PER_DAY)
+  return endDay - todayDay
+}
 const BY_DEDUPE = 'SELECT id FROM positions WHERE dedupe_key = ?'
 
 /** 职位服务错误：code 供渲染层区分「校验失败」与「重复录入」两类提示。 */
@@ -97,9 +115,38 @@ export class PositionService {
     return row
   }
 
-  /** 职位卡列表（按创建时间倒序）。筛选/倒计时/空状态属 F-02（#18）。 */
-  list(): Position[] {
-    return this.db.prepare(LIST).all() as Position[]
+  /**
+   * 职位卡列表（F-02/#18：四维筛选 + 倒计时）。
+   * - filters：企业性质/批次/状态/秋招季，缺省维度不过滤，可任意组合（交集）；
+   * - 返回行带 days_left（网申截止剩余日历天；无 end_date → null，UI 显「待核实」）；
+   * - 排序保持 F-01 约定：创建时间倒序。
+   */
+  list(filters: PositionFilters = {}, today: Date = new Date()): PositionListItem[] {
+    const clauses: string[] = []
+    const params: Record<string, string> = {}
+    const season = filters.recruit_season?.trim() ?? ''
+    if (filters.company_type !== undefined) {
+      clauses.push('company_type = @company_type')
+      params.company_type = filters.company_type
+    }
+    if (filters.batch !== undefined) {
+      clauses.push('batch = @batch')
+      params.batch = filters.batch
+    }
+    if (filters.status !== undefined) {
+      clauses.push('status = @status')
+      params.status = filters.status
+    }
+    if (season !== '') {
+      clauses.push('recruit_season = @recruit_season')
+      params.recruit_season = season
+    }
+    const where = clauses.length === 0 ? '' : ` WHERE ${clauses.join(' AND ')}`
+    const rows = this.db.prepare(`${LIST_SELECT}${where} ${LIST_ORDER}`).all(params) as Position[]
+    return rows.map((row) => ({
+      ...row,
+      days_left: row.end_date === null ? null : daysUntil(row.end_date, today)
+    }))
   }
 }
 

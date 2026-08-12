@@ -53,7 +53,8 @@ export function registerIpcHandlers({ settings, agent, positions, resumes }: Ipc
 
   // F-01（#17）：职位录入 —— 服务层负责校验/去重（dedupe_key），错误 message 透传渲染层提示
   handleRequest(IpcChannel.PositionsCreate, (request) => positions.create(request))
-  handleRequest(IpcChannel.PositionsList, () => positions.list())
+  // F-02（#18）：职位列表 —— 四维筛选 + days_left 倒计时（服务层计算，null=待核实）
+  handleRequest(IpcChannel.PositionsList, (request) => positions.list(request))
 
   // F-12（issue #19）：简历 CRUD —— 服务层负责 schema 校验与删除语义（基准删除不影响派生稿）
   handleRequest(IpcChannel.ResumesList, () => resumes.list())

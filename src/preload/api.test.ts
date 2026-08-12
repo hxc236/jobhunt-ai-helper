@@ -94,11 +94,16 @@ describe('createRendererApi（渲染侧 api 客户端）', () => {
     expect(fake.invocations).toEqual([{ channel: IpcChannel.PositionsCreate, args: [input] }])
   })
 
-  it('positions.list 映射到 positions:list，不带参数', async () => {
+  it('positions.list 映射到 positions:list 并传筛选（缺省空对象 = 不过滤）', async () => {
     const fake = makeFakeBridge()
     const api = createRendererApi(fake.bridge)
     await api.positions.list()
-    expect(fake.invocations).toEqual([{ channel: IpcChannel.PositionsList, args: [] }])
+    expect(fake.invocations).toEqual([{ channel: IpcChannel.PositionsList, args: [{}] }])
+    await api.positions.list({ company_type: '大厂', recruit_season: '2026秋招' })
+    expect(fake.invocations[1]).toEqual({
+      channel: IpcChannel.PositionsList,
+      args: [{ company_type: '大厂', recruit_season: '2026秋招' }]
+    })
   })
 
   it('resumes.list 映射到 resumes:list，不带参数', async () => {

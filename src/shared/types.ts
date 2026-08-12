@@ -15,6 +15,10 @@ export type Batch = (typeof BATCHES)[number]
 export const POSITION_SOURCES = ['manual', 'nowcoder', 'liepin'] as const
 export type PositionSource = (typeof POSITION_SOURCES)[number]
 
+/** 职位卡生命周期状态（positions.status；投递状态机 planned→… 属 applications 表，见 F-05/#21）。 */
+export const POSITION_STATUSES = ['active', 'closed'] as const
+export type PositionStatus = (typeof POSITION_STATUSES)[number]
+
 /** positions 表一行（职位卡）。字段名与列名一致，行对象可直接落库/返回。 */
 export interface Position {
   id: string
@@ -36,11 +40,22 @@ export interface Position {
   start_date: string | null
   /** 网申截止 YYYY-MM-DD（null = 待核实）。 */
   end_date: string | null
-  status: 'active' | 'closed'
+  status: PositionStatus
   notes: string
   created_at: string
   updated_at: string
 }
+
+/** 职位列表筛选（F-02/#18 四维：企业性质/批次/状态/秋招季；缺省维度 = 不过滤，可任意组合）。 */
+export interface PositionFilters {
+  company_type?: CompanyType
+  batch?: Batch
+  status?: PositionStatus
+  recruit_season?: string
+}
+
+/** 职位列表行 = 职位卡 + 网申截止倒计时天数（null = 无 end_date，UI 显「待核实」）。 */
+export type PositionListItem = Position & { days_left: number | null }
 
 /** 手动录入表单输入（source 固定 'manual'；去重键与时间戳由服务生成）。 */
 export interface PositionInput {

@@ -1,9 +1,26 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
-import { BATCHES, COMPANY_TYPES, type Batch, type Position, type PositionInput } from '@shared/types'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import {
+  BATCHES,
+  COMPANY_TYPES,
+  type Batch,
+  type CompanyType,
+  type Position,
+  type PositionInput,
+  type PositionListItem,
+  type PositionStatus
+} from '@shared/types'
 
 /** 表单态：batch 额外允许空串（「未指定」选项），提交时转 undefined。 */
 type PositionFormState = Omit<PositionInput, 'batch'> & { batch: Batch | '' }
+
+/** 筛选态：空串 = 「全部」（提交时转 undefined）。 */
+type FilterState = {
+  company_type: CompanyType | ''
+  batch: Batch | ''
+  status: PositionStatus | ''
+  recruit_season: string
+}
 
 /** 录入表单初始态：必填=公司+岗位（F-01 规则）；企业性质默认「其他」兜底 NOT NULL 约束。 */
 function emptyForm(): PositionFormState {
@@ -23,24 +40,72 @@ function emptyForm(): PositionFormState {
   }
 }
 
+function emptyFilters(): FilterState {
+  return { company_type: '', batch: '', status: '', recruit_season: '' }
+}
+
 const form = reactive<PositionFormState>(emptyForm())
-const positions = ref<Position[]>([])
+const filters = reactive<FilterState>(emptyFilters())
+const positions = ref<PositionListItem[]>([])
+/** 全量列表：仅用于秋招季下拉选项（筛选后仍保留全部季度可选）。 */
+const allPositions = ref<Position[]>([])
+const seasons = computed(() => [...new Set(allPositions.value.map((p) => p.recruit_season))])
+const hasFilters = computed(
+  () =>
+    filters.company_type !== '' ||
+    filters.batch !== '' ||
+    filters.status !== '' ||
+    filters.recruit_season !== ''
+)
 const submitting = ref(false)
 const loading = ref(false)
 /** 表单级错误提示（校验失败/重复录入等；主进程 PositionError message 透传）。 */
 const errorMessage = ref('')
 const successMessage = ref('')
+/** 空状态引导「录入第一条」：聚焦表单公司输入框。 */
+const companyInput = ref<HTMLInputElement>()
 
 async function loadPositions(): Promise<void> {
   loading.value = true
   try {
-    positions.value = await window.api.positions.list()
+    positions.value = await window.api.positions.list({
+      company_type: filters.company_type || undefined,
+      batch: filters.batch || undefined,
+      status: filters.status || undefined,
+      recruit_season: filters.recruit_season || undefined
+    })
   } catch (err) {
     errorMessage.value = `加载职位列表失败：${String(err)}`
   } finally {
     loading.value = false
   }
 }
+
+async function refresh(): Promise<void> {
+  await Promise.all([
+    loadPositions(),
+    // 全量列表仅用于秋招季选项：加载失败不阻塞已过滤列表展示
+    window.api.positions.list().then(
+      (rows) => (allPositions.value = rows),
+      () => {}
+    )
+  ])
+}
+
+function clearFilters(): void {
+  Object.assign(filters, emptyFilters()) // watch 触发重新加载
+}
+
+function focusEntryForm(): void {
+  companyInput.value?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  companyInput.value?.focus()
+}
+
+/** 四维筛选任一变化即重新查询（服务层组合生效）。 */
+watch(
+  [() => filters.company_type, () => filters.batch, () => filters.status, () => filters.recruit_season],
+  () => void loadPositions()
+)
 
 async function submit(): Promise<void> {
   errorMessage.value = ''
@@ -63,7 +128,7 @@ async function submit(): Promise<void> {
     })
     successMessage.value = `已录入「${form.company} · ${form.title}」`
     Object.assign(form, emptyForm())
-    await loadPositions()
+    await refresh()
   } catch (err) {
     errorMessage.value = String(err)
   } finally {
@@ -71,7 +136,20 @@ async function submit(): Promise<void> {
   }
 }
 
-onMounted(loadPositions)
+/** 倒计时徽标文案：null=待核实（灰）；≤0=已截止；其余「剩 N 天」。 */
+function badgeText(daysLeft: number | null): string {
+  if (daysLeft === null) return '待核实'
+  if (daysLeft <= 0) return '已截止'
+  return `剩 ${daysLeft} 天`
+}
+
+/** 倒计时徽标样式：≤14 天（含已截止）红，其余常规，无截止灰。 */
+function badgeClass(daysLeft: number | null): string {
+  if (daysLeft === null) return 'badge badge-unknown'
+  return daysLeft <= 14 ? 'badge badge-urgent' : 'badge badge-normal'
+}
+
+onMounted(() => void refresh())
 </script>
 
 <template>
@@ -85,7 +163,7 @@ onMounted(loadPositions)
         <div class="form-grid">
           <label class="field">
             <span class="label">公司 <em class="required">*</em></span>
-            <input v-model="form.company" class="input" placeholder="如：腾讯" />
+            <input ref="companyInput" v-model="form.company" class="input" placeholder="如：腾讯" />
           </label>
           <label class="field">
             <span class="label">岗位 <em class="required">*</em></span>
@@ -149,17 +227,72 @@ onMounted(loadPositions)
 
     <section class="card">
       <h2 class="card-title">职位列表 <span class="count">{{ positions.length }}</span></h2>
+
+      <div class="filters">
+        <label class="filter">
+          <span class="label">企业性质</span>
+          <select v-model="filters.company_type" class="input">
+            <option value="">全部</option>
+            <option v-for="t in COMPANY_TYPES" :key="t" :value="t">{{ t }}</option>
+          </select>
+        </label>
+        <label class="filter">
+          <span class="label">批次</span>
+          <select v-model="filters.batch" class="input">
+            <option value="">全部</option>
+            <option v-for="b in BATCHES" :key="b" :value="b">{{ b }}</option>
+          </select>
+        </label>
+        <label class="filter">
+          <span class="label">状态</span>
+          <select v-model="filters.status" class="input">
+            <option value="">全部</option>
+            <option value="active">进行中</option>
+            <option value="closed">已关闭</option>
+          </select>
+        </label>
+        <label class="filter">
+          <span class="label">秋招季</span>
+          <select v-model="filters.recruit_season" class="input">
+            <option value="">全部</option>
+            <option v-for="s in seasons" :key="s" :value="s">{{ s }}</option>
+          </select>
+        </label>
+        <button
+          v-if="hasFilters"
+          class="btn btn-ghost"
+          type="button"
+          @click="clearFilters"
+        >
+          清空筛选
+        </button>
+      </div>
+
       <p v-if="loading" class="hint">加载中…</p>
-      <p v-else-if="positions.length === 0" class="hint">
-        暂无职位卡。录入第一条后即在此可见（筛选与倒计时徽标见 F-02）。
-      </p>
+      <div v-else-if="positions.length === 0" class="empty-state">
+        <template v-if="hasFilters">
+          <p class="hint">没有符合条件的职位卡，试试调整或清空筛选。</p>
+          <button class="btn btn-ghost" type="button" @click="clearFilters">清空筛选</button>
+        </template>
+        <template v-else>
+          <p class="hint">
+            暂无职位卡——录入第一条后即在此可见，并按企业性质/批次/状态/秋招季筛选；
+            网申截止 ≤14 天会标红提醒，无截止日期显示「待核实」。
+          </p>
+          <button class="btn btn-primary" type="button" @click="focusEntryForm">录入第一条职位卡</button>
+        </template>
+      </div>
       <ul v-else class="position-list">
         <li v-for="p in positions" :key="p.id" class="position-row">
           <span class="company">{{ p.company }}</span>
           <span class="title">{{ p.title }}</span>
+          <span :class="badgeClass(p.days_left)">{{ badgeText(p.days_left) }}</span>
           <span class="pill">{{ p.company_type }}</span>
           <span v-if="p.batch" class="pill pill-batch">{{ p.batch }}</span>
           <span v-if="p.city" class="meta">{{ p.city }}</span>
+          <span class="pill" :class="p.status === 'active' ? 'pill-active' : 'pill-closed'">
+            {{ p.status === 'active' ? '进行中' : '已关闭' }}
+          </span>
           <span class="meta">
             网申：{{ p.start_date ?? '—' }} ~ {{ p.end_date ?? '待核实' }}
           </span>
@@ -171,7 +304,7 @@ onMounted(loadPositions)
 
 <style scoped>
 .jobs-view {
-  max-width: 720px;
+  max-width: 880px;
 }
 
 .page-title {
@@ -292,11 +425,90 @@ onMounted(loadPositions)
   background: #eff6ff;
   color: #1d4ed8;
   font-size: 12px;
+  white-space: nowrap;
 }
 
 .pill-batch {
   background: #f3f4f6;
   color: #374151;
+}
+
+.pill-active {
+  background: #ecfdf5;
+  color: #059669;
+}
+
+.pill-closed {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+.badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* 倒计时徽标：≤14 天（含已截止）红（DESIGN.md 组件清单） */
+.badge-urgent {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.badge-normal {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+/* 无 end_date → 「待核实」灰 */
+.badge-unknown {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #f0f1f3;
+}
+
+.filter {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 16px 0;
+}
+
+.btn {
+  padding: 6px 14px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #fff;
+  color: #374151;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.btn-ghost {
+  border-color: transparent;
+  background: transparent;
+  color: #2b5ca8;
+}
+
+.btn-ghost:hover {
+  background: #f3f6fb;
 }
 
 .meta {

@@ -11,7 +11,7 @@
  * 作为后续服务 ticket（EF-04 起）的协议预留；请求/响应类型随各 ticket 逐个补齐。
  */
 
-import type { Position, PositionInput } from './types'
+import type { Position, PositionFilters, PositionInput, PositionListItem } from './types'
 import type { Resume, StoredResume } from './types/resume'
 
 /** 请求-响应通道常量。 */
@@ -80,9 +80,10 @@ export interface IpcProtocol {
     request: { provider: string; apiKey: string; model?: string }
     response: void
   }
-  // F-01（#17）：职位卡创建与列表（校验失败/重复录入抛 PositionError，message 透传渲染层）
+  // F-01（#17）：职位卡创建（校验失败/重复录入抛 PositionError，message 透传渲染层）
   [IpcChannel.PositionsCreate]: { request: PositionInput; response: Position }
-  [IpcChannel.PositionsList]: { request: void; response: Position[] }
+  // F-02（#18）：职位列表（四维筛选 + 倒计时）—— filters 缺省维度 = 不过滤
+  [IpcChannel.PositionsList]: { request: PositionFilters; response: PositionListItem[] }
   // F-12（issue #19）：简历 CRUD —— 入库前服务层做 resume.schema.json 校验；
   // 删除语义：删除基准简历不影响已存派生稿（独立副本）。
   [IpcChannel.ResumesList]: { request: void; response: StoredResume[] }
@@ -135,12 +136,12 @@ export interface SettingsApi {
   configureProvider: (provider: string, apiKey: string, model?: string) => Promise<void>
 }
 
-/** 渲染进程可见的 positions api 表面（F-01：手动录入 + 列表）。 */
+/** 渲染进程可见的 positions api 表面（F-01 录入 + F-02 列表筛选/倒计时）。 */
 export interface PositionsApi {
   /** 创建职位卡；校验失败/重复录入时 reject（错误 message 含原因）。 */
   create: (input: PositionInput) => Promise<Position>
-  /** 职位卡列表（按创建时间倒序；筛选见 F-02）。 */
-  list: () => Promise<Position[]>
+  /** 职位列表（F-02：企业性质/批次/状态/秋招季四维筛选可组合；days_left=倒计时，null=待核实）。 */
+  list: (filters?: PositionFilters) => Promise<PositionListItem[]>
 }
 
 /** 渲染进程可见的 resumes api 表面（F-12：多份基准简历 CRUD + 删除语义）。 */

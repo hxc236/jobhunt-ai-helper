@@ -29,7 +29,7 @@ export function createRendererApi(bridge: IpcBridge): RendererApi {
     },
     positions: {
       create: (input) => bridge.invoke(IpcChannel.PositionsCreate, input),
-      list: () => bridge.invoke(IpcChannel.PositionsList)
+      list: (filters) => bridge.invoke(IpcChannel.PositionsList, filters ?? {})
     },
     resumes: {
       list: () => bridge.invoke(IpcChannel.ResumesList),
