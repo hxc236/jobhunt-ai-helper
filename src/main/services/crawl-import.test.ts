@@ -234,4 +234,26 @@ describe('CrawlService 导入新字段（issue #52：招聘类型/薪资/BOSS �
     expect(rows[0]?.jd).toBe('某公司-后端工程师 JD') // 采集内容刷新
     expect(rows[0]?.hire_type).toBe('社招')
   })
+
+  it('缺字段判定按招聘类型（issue #53）：社招 end_date=null 不算缺（长期有效）', async () => {
+    const db = openDatabase(':memory:')
+    const svc = new CrawlService(db, anyPageFetcher)
+    svc.registerParser({
+      source: 'boss',
+      buildUrls: () => ['https://boss.test/list'],
+      parseList: () => [
+        candidate('某公司', '后端工程师', 'https://boss.test/job/1', {
+          hire_type: '社招',
+          recruit_season: '',
+          end_date: null
+        }),
+        candidate('乙公司', '前端工程师', 'https://boss.test/job/2', { end_date: null })
+      ]
+    })
+    const { run } = await svc.run('boss', { mode: 'full' })
+
+    const items = svc.preview(run.id).items
+    expect(items[0]?.missingFields).toEqual([]) // 社招：end_date 空不算缺
+    expect(items[1]?.missingFields).toEqual(['end_date']) // 校招（缺省）：仍标待核实
+  })
 })

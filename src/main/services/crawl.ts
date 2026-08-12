@@ -9,13 +9,23 @@ import type {
   CrawlRun,
   CrawlRunOptions,
   CrawlRunResult,
+  HireType,
   PositionSource
 } from '../../shared/types'
 
-/** 解析上下文：执行框架透传本次运行的模式与关键词（#23 牛客 filter 按公司名过滤）。 */
+/**
+ * 解析上下文：执行框架透传本次运行的模式与条件（#23 牛客 filter 按公司名过滤；
+ * issue #55 结构化采集条件扩展：hire_type/keyword/city 由运行选项透传，BOSS 解析器消费）。
+ */
 export interface CrawlParseContext {
   mode: CrawlMode
   filter: string | undefined
+  /** 招聘类型（BOSS 采集条件；缺省校招）。 */
+  hire_type?: HireType
+  /** 岗位关键词（BOSS 搜索 query）。 */
+  keyword?: string
+  /** 城市码（BOSS city 参数，如 101020100=上海）。 */
+  city?: string
 }
 
 /**
@@ -29,8 +39,8 @@ export interface CrawlParser {
   buildUrls(mode: CrawlMode, filter: string | undefined): string[]
   /** 列表页 HTML → 候选行（纯函数；detailUrl 存在时框架抓详情补全）。 */
   parseList(html: string, context: CrawlParseContext): CrawlCandidate[]
-  /** 从当前列表页 HTML 提取下一页 URL（翻页参数；null = 无更多页）。 */
-  nextListUrl?(html: string): string | null
+  /** 从当前列表页 HTML 提取下一页 URL（翻页参数；null = 无更多页；context 供拼页 URL）。 */
+  nextListUrl?(html: string, context: CrawlParseContext): string | null
   /** 详情页 HTML → 补全候选字段（JD 全文等；可选）。 */
   parseDetail?(html: string, candidate: CrawlCandidate): CrawlCandidate
 }
@@ -167,7 +177,7 @@ export class CrawlService {
 
         // 翻页：解析器从当前页提取下一页 URL（无则队列耗尽结束）
         if (parser.nextListUrl !== undefined) {
-          const next = parser.nextListUrl(html)
+          const next = parser.nextListUrl(html, { mode: options.mode, filter: options.filter })
           if (next !== null && next !== url) queue.push(next)
         }
 
@@ -423,11 +433,17 @@ export class CrawlService {
 }
 
 
-/** 候选缺字段判定：title/end_date 为空（UI 标「待补全/待核实」）。 */
+/**
+ * 候选缺字段判定（issue #53）：title 为空恒缺；end_date 仅校招缺
+ * （社招/实习无网申窗口，end_date 视为「长期有效」，UI 显示长期而非待补全）。
+ */
 function missingFieldsOf(candidate: CrawlCandidate): string[] {
   const missing: string[] = []
   if (candidate.title.trim() === '') missing.push('title')
-  if (candidate.end_date === null || candidate.end_date.trim() === '') missing.push('end_date')
+  const hireType = candidate.hire_type ?? '校招'
+  if (hireType === '校招' && (candidate.end_date === null || candidate.end_date.trim() === '')) {
+    missing.push('end_date')
+  }
   return missing
 }
 
