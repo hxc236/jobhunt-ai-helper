@@ -2,9 +2,14 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
+  APPLICATION_STATUSES,
+  APPLICATION_STATUS_LABELS,
+  APPLICATION_TRANSITIONS,
   BATCHES,
   COMPANY_TYPES,
   POSITION_STATUSES,
+  type Application,
+  type ApplicationStatus,
   type Batch,
   type CompanyType,
   type Position,
@@ -33,8 +38,14 @@ type EditFormState = {
 }
 
 const position = ref<Position | null>(null)
+const application = ref<Application | null>(null)
 const loading = ref(true)
 const errorMessage = ref('')
+/** 投递状态操作错误（非法流转等；message 透传）。 */
+const appError = ref('')
+const appSaving = ref(false)
+/** 投递渠道/日期编辑表单（预填当前值，保存走同状态 setApplication）。 */
+const appForm = reactive({ channel: '', appliedDate: '' })
 /** 编辑模式：详情展示 ⇄ 编辑表单。 */
 const editing = ref(false)
 /** 删除确认：两步内联确认（避免误删；确认文案明示级联删除投递记录）。 */
@@ -62,6 +73,32 @@ const SOURCE_LABELS: Record<Position['source'], string> = {
   nowcoder: '牛客采集',
   liepin: '猎聘采集'
 }
+
+/** 投递状态 → 进入时刻列（applications 表；渲染层展示时间线用）。 */
+const STATUS_TS_KEY: Record<ApplicationStatus, keyof Application> = {
+  planned: 'planned_at',
+  applied: 'applied_at',
+  interviewing: 'interviewing_at',
+  offer: 'offer_at',
+  rejected: 'rejected_at',
+  withdrawn: 'withdrawn_at'
+}
+
+function formatTs(ts: string | null): string {
+  return ts === null ? '—' : ts.slice(0, 16).replace('T', ' ')
+}
+
+/** 当前状态可达的下一步（状态机表共用 shared；withdrawn 为终态时为空数组）。 */
+const nextActions = computed<ApplicationStatus[]>(() =>
+  application.value === null ? [] : [...APPLICATION_TRANSITIONS[application.value.status]]
+)
+
+/** 是否有已记录的状态时刻（时间线显示开关）。 */
+const hasTimeline = computed(
+  () =>
+    application.value !== null &&
+    APPLICATION_STATUSES.some((s) => application.value?.[STATUS_TS_KEY[s]] !== null)
+)
 
 /** 网申截止倒计时（与列表 days_left 同口径：日历天，null=待核实；仅详情展示用）。 */
 function daysLeft(endDate: string | null): number | null {
@@ -91,10 +128,50 @@ async function load(): Promise<void> {
   errorMessage.value = ''
   try {
     position.value = await window.api.positions.get(positionId)
+    application.value = await window.api.positions.getApplication(positionId)
+    fillAppForm()
   } catch (err) {
     errorMessage.value = `加载职位详情失败：${String(err)}`
   } finally {
     loading.value = false
+  }
+}
+
+/** 渠道/日期表单预填；空值用空串（保存时转 null 清空）。 */
+function fillAppForm(): void {
+  appForm.channel = application.value?.channel ?? ''
+  appForm.appliedDate = application.value?.applied_date ?? ''
+}
+
+/** 状态流转（含首次创建：隐含起点 planned，可直达 applied/withdrawn）。 */
+async function transition(target: ApplicationStatus): Promise<void> {
+  appError.value = ''
+  appSaving.value = true
+  try {
+    application.value = await window.api.positions.setApplication(positionId, { status: target })
+    fillAppForm()
+  } catch (err) {
+    appError.value = String(err)
+  } finally {
+    appSaving.value = false
+  }
+}
+
+/** 编辑渠道/投递日期：同状态调用（不触发流转；空串 → null 清空）。 */
+async function saveApplicationEdit(): Promise<void> {
+  if (application.value === null) return
+  appError.value = ''
+  appSaving.value = true
+  try {
+    application.value = await window.api.positions.setApplication(positionId, {
+      status: application.value.status,
+      channel: appForm.channel === '' ? null : appForm.channel,
+      appliedDate: appForm.appliedDate === '' ? null : appForm.appliedDate
+    })
+  } catch (err) {
+    appError.value = String(err)
+  } finally {
+    appSaving.value = false
   }
 }
 
@@ -260,6 +337,66 @@ onMounted(() => void load())
             <button class="btn" type="button" :disabled="saving" @click="deleteConfirming = false">取消</button>
           </div>
         </div>
+      </section>
+
+      <!-- 投递状态卡片（F-05/#21：状态机操作 + 记录展示） -->
+      <section class="card">
+        <h2 class="card-title">投递状态</h2>
+
+        <template v-if="application">
+          <div class="app-status-row">
+            <span class="app-badge" :class="`app-${application.status}`">
+              {{ APPLICATION_STATUS_LABELS[application.status] }}
+            </span>
+            <span class="meta">渠道：{{ application.channel ?? '—' }}</span>
+            <span class="meta">投递日期：{{ application.applied_date ?? '—' }}</span>
+          </div>
+
+          <!-- 投递记录时间线（各状态进入时刻；复盘数据来源） -->
+          <ul v-if="hasTimeline" class="timeline">
+            <li v-for="s in APPLICATION_STATUSES" :key="s" v-show="application[STATUS_TS_KEY[s]] !== null">
+              <span class="timeline-label">{{ APPLICATION_STATUS_LABELS[s] }}</span>
+              <span class="meta">{{ formatTs(application[STATUS_TS_KEY[s]]) }}</span>
+            </li>
+          </ul>
+
+          <div v-if="nextActions.length > 0" class="app-actions">
+            <button
+              v-for="target in nextActions"
+              :key="target"
+              class="btn"
+              :class="target === 'withdrawn' ? 'btn-danger' : 'btn-primary'"
+              type="button"
+              :disabled="appSaving"
+              @click="transition(target)"
+            >
+              {{ APPLICATION_STATUS_LABELS[target] }}
+            </button>
+          </div>
+          <p v-else class="hint">已到终态（{{ APPLICATION_STATUS_LABELS[application.status] }}）。</p>
+
+          <form class="app-edit" @submit.prevent="saveApplicationEdit">
+            <input v-model="appForm.channel" class="input" placeholder="投递渠道（留空清除）" />
+            <input v-model="appForm.appliedDate" class="input" type="date" />
+            <button class="btn" type="submit" :disabled="appSaving">保存渠道/日期</button>
+          </form>
+        </template>
+
+        <template v-else>
+          <p class="hint">
+            尚未开始投递——标记后即可跟踪状态流转（已投递 → 面试中 → offer/已拒绝，可随时放弃）。
+          </p>
+          <div class="app-actions">
+            <button class="btn btn-primary" type="button" :disabled="appSaving" @click="transition('applied')">
+              标记已投递
+            </button>
+            <button class="btn btn-danger" type="button" :disabled="appSaving" @click="transition('withdrawn')">
+              标记已放弃
+            </button>
+          </div>
+        </template>
+
+        <p v-if="appError" class="message error">{{ appError }}</p>
       </section>
 
       <!-- 编辑表单卡片 -->
@@ -507,6 +644,86 @@ onMounted(() => void load())
 .form-actions {
   display: flex;
   gap: 10px;
+}
+
+.app-status-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.app-badge {
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.app-planned {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+.app-applied {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.app-interviewing {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.app-offer {
+  background: #ecfdf5;
+  color: #059669;
+}
+
+.app-rejected {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.app-withdrawn {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+.timeline {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+}
+
+.timeline li {
+  display: flex;
+  gap: 10px;
+  padding: 2px 0;
+  font-size: 13px;
+}
+
+.timeline-label {
+  color: #374151;
+}
+
+.app-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.app-edit {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.app-edit .input {
+  flex: 1;
+  min-width: 160px;
 }
 
 .card-title {

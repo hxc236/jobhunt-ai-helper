@@ -246,26 +246,18 @@ describe('PositionService.delete（F-03/#20）', () => {
 
   it('投递记录级联删除：applications 表存在时该职位的记录一并删除，其他职位记录保留', () => {
     const db = openDatabase(':memory:')
-    // #21 建表前的兼容验证：测试内按 ADR-0005 applications 契约（position_id 关联）建表
-    db.exec(`
-      CREATE TABLE applications (
-        id TEXT PRIMARY KEY,
-        position_id TEXT NOT NULL,
-        status TEXT NOT NULL,
-        applied_at TEXT,
-        channel TEXT
-      )
-    `)
     const svc = new PositionService(db)
     const { id } = svc.create(validInput)
-    db.prepare("INSERT INTO applications (id, position_id, status) VALUES ('app-1', ?, 'applied')").run(id)
-    db.prepare("INSERT INTO applications (id, position_id, status) VALUES ('app-2', ?, 'planned')").run(id)
-    db.prepare("INSERT INTO applications (id, position_id, status) VALUES ('app-3', 'other-position', 'applied')").run()
+    const other = svc.create({ ...validInput, title: '后端开发工程师' })
+    // 经服务创建投递记录（applications 表由 #21 迁移建表）
+    svc.setApplicationState(id, { status: 'applied' }, () => '2026-08-01T00:00:00.000Z')
+    svc.setApplicationState(id, { status: 'interviewing' }, () => '2026-08-02T00:00:00.000Z')
+    svc.setApplicationState(other.id, { status: 'applied' }, () => '2026-08-01T00:00:00.000Z')
 
     svc.delete(id)
 
-    const remaining = db.prepare('SELECT id FROM applications ORDER BY id').all() as Array<{ id: string }>
-    expect(remaining.map((r) => r.id)).toEqual(['app-3'])
+    expect(svc.getApplication(id)).toBeNull()
+    expect(svc.getApplication(other.id)).not.toBeNull() // 其他职位的投递记录保留
   })
 
   it('applications 表尚未建（#21 之前）时删除照常可用', () => {

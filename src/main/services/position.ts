@@ -1,8 +1,14 @@
 import { randomUUID } from 'node:crypto'
 import {
+  APPLICATION_STATUSES,
+  APPLICATION_STATUS_LABELS,
+  APPLICATION_TRANSITIONS,
   BATCHES,
   COMPANY_TYPES,
   POSITION_STATUSES,
+  type Application,
+  type ApplicationPatch,
+  type ApplicationStatus,
   type Position,
   type PositionFilters,
   type PositionInput,
@@ -22,8 +28,9 @@ const INSERT = `
     @start_date, @end_date, 'active', @notes, @created_at, @updated_at
   )
 `
-const LIST_SELECT = 'SELECT * FROM positions'
-const LIST_ORDER = 'ORDER BY created_at DESC, rowid DESC'
+const LIST_SELECT =
+  'SELECT p.*, (SELECT a.status FROM applications a WHERE a.position_id = p.id) AS application_status FROM positions p'
+const LIST_ORDER = 'ORDER BY p.created_at DESC, p.rowid DESC'
 
 const MS_PER_DAY = 86_400_000
 
@@ -40,10 +47,10 @@ export function daysUntil(endDate: string, today: Date = new Date()): number {
 const BY_DEDUPE = 'SELECT id FROM positions WHERE dedupe_key = ?'
 const BY_ID = 'SELECT * FROM positions WHERE id = ?'
 
-/** 职位服务错误：code 供渲染层区分「校验失败」与「重复录入」两类提示。 */
+/** 职位服务错误：code 供渲染层区分「校验失败/非法流转/重复录入」提示。 */
 export class PositionError extends Error {
   constructor(
-    readonly code: 'validation' | 'duplicate' | 'not-found',
+    readonly code: 'validation' | 'duplicate' | 'not-found' | 'transition',
     message: string
   ) {
     super(message)
@@ -233,9 +240,12 @@ export class PositionService {
   }
 
   /**
-   * 职位卡列表（F-02/#18：四维筛选 + 倒计时）。
-   * - filters：企业性质/批次/状态/秋招季，缺省维度不过滤，可任意组合（交集）；
-   * - 返回行带 days_left（网申截止剩余日历天；无 end_date → null，UI 显「待核实」）；
+   * 职位卡列表（F-02/#18：四维筛选 + 倒计时；F-05/#21：+ 投递状态维度与行内 application_status）。
+   * - filters：企业性质/批次/状态/秋招季/投递状态，缺省维度不过滤，可任意组合（交集）；
+   * - 投递状态维度：planned 命中 planned 记录或**无投递记录**的职位（未投递），
+   *   其余状态只命中存在该状态记录的职位；
+   * - 返回行带 days_left（网申截止剩余日历天；无 end_date → null，UI 显「待核实」）
+   *   与 application_status（无投递记录 → null）；
    * - 排序保持 F-01 约定：创建时间倒序。
    */
   list(filters: PositionFilters = {}, today: Date = new Date()): PositionListItem[] {
@@ -243,27 +253,148 @@ export class PositionService {
     const params: Record<string, string> = {}
     const season = filters.recruit_season?.trim() ?? ''
     if (filters.company_type !== undefined) {
-      clauses.push('company_type = @company_type')
+      clauses.push('p.company_type = @company_type')
       params.company_type = filters.company_type
     }
     if (filters.batch !== undefined) {
-      clauses.push('batch = @batch')
+      clauses.push('p.batch = @batch')
       params.batch = filters.batch
     }
     if (filters.status !== undefined) {
-      clauses.push('status = @status')
+      clauses.push('p.status = @status')
       params.status = filters.status
     }
     if (season !== '') {
-      clauses.push('recruit_season = @recruit_season')
+      clauses.push('p.recruit_season = @recruit_season')
       params.recruit_season = season
     }
+    if (filters.application_status !== undefined) {
+      // planned：记录为 planned 或尚无投递记录（未投递）；其余状态：存在该状态记录
+      clauses.push(`(
+        EXISTS (SELECT 1 FROM applications a WHERE a.position_id = p.id AND a.status = @application_status)
+        OR (@application_status = 'planned' AND NOT EXISTS (SELECT 1 FROM applications a WHERE a.position_id = p.id))
+      )`)
+      params.application_status = filters.application_status
+    }
     const where = clauses.length === 0 ? '' : ` WHERE ${clauses.join(' AND ')}`
-    const rows = this.db.prepare(`${LIST_SELECT}${where} ${LIST_ORDER}`).all(params) as Position[]
+    const rows = this.db.prepare(`${LIST_SELECT}${where} ${LIST_ORDER}`).all(params) as Array<
+      Position & { application_status: ApplicationStatus | null }
+    >
     return rows.map((row) => ({
       ...row,
       days_left: row.end_date === null ? null : daysUntil(row.end_date, today)
     }))
+  }
+
+  /** 投递记录查询（F-05/#21）：无记录返回 null（详情页据此显示「未开始投递」引导）。 */
+  getApplication(positionId: string): Application | null {
+    const row = this.db.prepare('SELECT * FROM applications WHERE position_id = ?').get(positionId) as
+      | Application
+      | undefined
+    return row ?? null
+  }
+
+  /**
+   * 投递状态操作（F-05/#21）：状态机校验后更新（或创建）投递记录。
+   * - 首次调用创建记录（隐含起点 planned）；每次状态变更按 APPLICATION_TRANSITIONS 校验，
+   *   非法流转抛 PositionError('transition')，状态与时间戳不变；
+   * - 同状态调用 = 编辑渠道/投递日期（不触发流转）；
+   * - 进入 applied 且未指定 appliedDate 时自动填当天日期；
+   * - 各状态 *_at 时间戳记录进入时刻（now 可注入，测试 seam）；updated_at 每次刷新。
+   */
+  setApplicationState(
+    positionId: string,
+    patch: ApplicationPatch,
+    now: () => string = () => new Date().toISOString()
+  ): Application {
+    const position = this.get(positionId) // 职位不存在 → not-found
+
+    const nowIso = now()
+    const nextStatus = patch.status
+    if (!(APPLICATION_STATUSES as readonly string[]).includes(nextStatus)) {
+      throw new PositionError('validation', `投递状态只能是：${APPLICATION_STATUSES.join('/')}`)
+    }
+    if (patch.appliedDate !== undefined && patch.appliedDate !== null && !isIsoDate(patch.appliedDate)) {
+      throw new PositionError('validation', '投递日期必须为 YYYY-MM-DD 格式')
+    }
+
+    const existing = this.getApplication(positionId)
+    const from = existing?.status ?? 'planned'
+    if (from !== nextStatus && !(APPLICATION_TRANSITIONS[from] as readonly string[]).includes(nextStatus)) {
+      throw new PositionError(
+        'transition',
+        `非法流转：${APPLICATION_STATUS_LABELS[from]} → ${APPLICATION_STATUS_LABELS[nextStatus]}`
+      )
+    }
+
+    const channel =
+      patch.channel === undefined
+        ? existing === null
+          ? position.channel // 首次创建：默认复制职位卡渠道
+          : existing.channel // 已有记录：不传保持（含已清空的 null）
+        : patch.channel === ''
+          ? null
+          : patch.channel
+    const appliedDate =
+      patch.appliedDate === undefined
+        ? existing?.applied_date ?? (nextStatus === 'applied' ? nowIso.slice(0, 10) : null)
+        : patch.appliedDate === ''
+          ? null
+          : patch.appliedDate
+
+    if (existing === null) {
+      const row: Application = {
+        id: randomUUID(),
+        position_id: positionId,
+        status: nextStatus,
+        channel,
+        applied_date: appliedDate,
+        planned_at: null,
+        applied_at: null,
+        interviewing_at: null,
+        offer_at: null,
+        rejected_at: null,
+        withdrawn_at: null,
+        created_at: nowIso,
+        updated_at: nowIso
+      }
+      row[STATUS_TS_COLUMN[nextStatus]] = nowIso
+      this.db
+        .prepare(
+          `INSERT INTO applications (
+            id, position_id, status, channel, applied_date,
+            planned_at, applied_at, interviewing_at, offer_at, rejected_at, withdrawn_at,
+            created_at, updated_at
+          ) VALUES (
+            @id, @position_id, @status, @channel, @applied_date,
+            @planned_at, @applied_at, @interviewing_at, @offer_at, @rejected_at, @withdrawn_at,
+            @created_at, @updated_at
+          )`
+        )
+        .run(row)
+    } else {
+      const updated: Application = {
+        ...existing,
+        status: nextStatus,
+        channel,
+        applied_date: appliedDate,
+        updated_at: nowIso
+      }
+      if (from !== nextStatus) {
+        updated[STATUS_TS_COLUMN[nextStatus]] = nowIso
+      }
+      this.db
+        .prepare(
+          `UPDATE applications SET
+            status=@status, channel=@channel, applied_date=@applied_date,
+            planned_at=@planned_at, applied_at=@applied_at, interviewing_at=@interviewing_at,
+            offer_at=@offer_at, rejected_at=@rejected_at, withdrawn_at=@withdrawn_at,
+            updated_at=@updated_at
+           WHERE id=@id`
+        )
+        .run(updated)
+    }
+    return this.getApplication(positionId) as Application
   }
 }
 
@@ -272,6 +403,21 @@ function isIsoDate(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
   const date = new Date(`${value}T00:00:00Z`)
   return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value
+}
+
+/** 投递状态 → 状态进入时刻列名（applications 表；复盘数据来源）。
+ *  类型收窄到时间戳列（值域 string|null），保证按状态索引赋值类型安全。 */
+type StatusTsColumn = keyof Pick<
+  Application,
+  'planned_at' | 'applied_at' | 'interviewing_at' | 'offer_at' | 'rejected_at' | 'withdrawn_at'
+>
+const STATUS_TS_COLUMN: Record<ApplicationStatus, StatusTsColumn> = {
+  planned: 'planned_at',
+  applied: 'applied_at',
+  interviewing: 'interviewing_at',
+  offer: 'offer_at',
+  rejected: 'rejected_at',
+  withdrawn: 'withdrawn_at'
 }
 
 /** patch 可空字段归一：undefined = 保持原值；null/空串 = 清空为 NULL；其余 trim 后使用。 */

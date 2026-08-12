@@ -2,8 +2,11 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
+  APPLICATION_STATUSES,
+  APPLICATION_STATUS_LABELS,
   BATCHES,
   COMPANY_TYPES,
+  type ApplicationStatus,
   type Batch,
   type CompanyType,
   type Position,
@@ -23,6 +26,7 @@ type FilterState = {
   batch: Batch | ''
   status: PositionStatus | ''
   recruit_season: string
+  application_status: ApplicationStatus | ''
 }
 
 /** 录入表单初始态：必填=公司+岗位（F-01 规则）；企业性质默认「其他」兜底 NOT NULL 约束。 */
@@ -44,7 +48,7 @@ function emptyForm(): PositionFormState {
 }
 
 function emptyFilters(): FilterState {
-  return { company_type: '', batch: '', status: '', recruit_season: '' }
+  return { company_type: '', batch: '', status: '', recruit_season: '', application_status: '' }
 }
 
 const form = reactive<PositionFormState>(emptyForm())
@@ -58,7 +62,8 @@ const hasFilters = computed(
     filters.company_type !== '' ||
     filters.batch !== '' ||
     filters.status !== '' ||
-    filters.recruit_season !== ''
+    filters.recruit_season !== '' ||
+    filters.application_status !== ''
 )
 const submitting = ref(false)
 const loading = ref(false)
@@ -75,7 +80,8 @@ async function loadPositions(): Promise<void> {
       company_type: filters.company_type || undefined,
       batch: filters.batch || undefined,
       status: filters.status || undefined,
-      recruit_season: filters.recruit_season || undefined
+      recruit_season: filters.recruit_season || undefined,
+      application_status: filters.application_status || undefined
     })
   } catch (err) {
     errorMessage.value = `加载职位列表失败：${String(err)}`
@@ -104,9 +110,15 @@ function focusEntryForm(): void {
   companyInput.value?.focus()
 }
 
-/** 四维筛选任一变化即重新查询（服务层组合生效）。 */
+/** 四维筛选任一变化即重新查询（服务层组合生效；F-05/#21 增投递状态维度）。 */
 watch(
-  [() => filters.company_type, () => filters.batch, () => filters.status, () => filters.recruit_season],
+  [
+    () => filters.company_type,
+    () => filters.batch,
+    () => filters.status,
+    () => filters.recruit_season,
+    () => filters.application_status
+  ],
   () => void loadPositions()
 )
 
@@ -261,6 +273,13 @@ onMounted(() => void refresh())
             <option v-for="s in seasons" :key="s" :value="s">{{ s }}</option>
           </select>
         </label>
+        <label class="filter">
+          <span class="label">投递状态</span>
+          <select v-model="filters.application_status" class="input">
+            <option value="">全部</option>
+            <option v-for="s in APPLICATION_STATUSES" :key="s" :value="s">{{ APPLICATION_STATUS_LABELS[s] }}</option>
+          </select>
+        </label>
         <button
           v-if="hasFilters"
           class="btn btn-ghost"
@@ -279,7 +298,7 @@ onMounted(() => void refresh())
         </template>
         <template v-else>
           <p class="hint">
-            暂无职位卡——录入第一条后即在此可见，并按企业性质/批次/状态/秋招季筛选；
+            暂无职位卡——录入第一条后即在此可见，并按企业性质/批次/状态/秋招季/投递状态筛选；
             网申截止 ≤14 天会标红提醒，无截止日期显示「待核实」。
           </p>
           <button class="btn btn-primary" type="button" @click="focusEntryForm">录入第一条职位卡</button>
@@ -295,6 +314,9 @@ onMounted(() => void refresh())
           <span v-if="p.city" class="meta">{{ p.city }}</span>
           <span class="pill" :class="p.status === 'active' ? 'pill-active' : 'pill-closed'">
             {{ p.status === 'active' ? '进行中' : '已关闭' }}
+          </span>
+          <span v-if="p.application_status" class="pill" :class="`pill-app-${p.application_status}`">
+            {{ APPLICATION_STATUS_LABELS[p.application_status] }}
           </span>
           <span class="meta">
             网申：{{ p.start_date ?? '—' }} ~ {{ p.end_date ?? '待核实' }}
@@ -455,6 +477,37 @@ onMounted(() => void refresh())
 }
 
 .pill-closed {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+/* 投递状态徽标（F-05/#21：列表筛选联动可见） */
+.pill-app-planned {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+.pill-app-applied {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.pill-app-interviewing {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.pill-app-offer {
+  background: #ecfdf5;
+  color: #059669;
+}
+
+.pill-app-rejected {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.pill-app-withdrawn {
   background: #f3f4f6;
   color: #6b7280;
 }
