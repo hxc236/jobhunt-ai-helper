@@ -2,12 +2,14 @@ import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import {
   IpcChannel,
   IpcEvent,
+  type AgentStatusInfo,
   type IpcChannelName,
   type IpcRequest,
   type IpcResponse,
   type PingResponse
 } from '../../shared/protocol'
 import { ping } from '../services/ping'
+import type { AgentService } from '../services/agent'
 import type { SettingsService } from '../services/settings'
 import { pushEvent } from './events'
 
@@ -21,13 +23,14 @@ function handleRequest<C extends IpcChannelName>(
 
 export interface IpcDeps {
   settings: SettingsService
+  agent: AgentService
 }
 
 /**
  * 注册全部 IPC handler（薄层：仅参数校验 + 转调服务）。
  * 主进程启动时调用一次；后续通道（EF-04 起）在此追加。
  */
-export function registerIpcHandlers({ settings }: IpcDeps): void {
+export function registerIpcHandlers({ settings, agent }: IpcDeps): void {
   handleRequest(IpcChannel.Ping, (): PingResponse => ping())
 
   handleRequest(IpcChannel.SettingsGet, (request) => settings.get(request.key))
@@ -37,4 +40,10 @@ export function registerIpcHandlers({ settings }: IpcDeps): void {
     pushEvent(IpcEvent.SettingsChanged, { key: request.key, value: request.value })
   })
   handleRequest(IpcChannel.SettingsGetAll, () => settings.getAll())
+
+  // EF-04：agent 认证状态与配置（分层降级依据：get-status 未配置时渲染层引导）
+  handleRequest(IpcChannel.SettingsGetStatus, (): AgentStatusInfo => agent.getStatus())
+  handleRequest(IpcChannel.SettingsConfigureProvider, (request) =>
+    agent.configureProvider(request.provider, request.apiKey, request.model)
+  )
 }

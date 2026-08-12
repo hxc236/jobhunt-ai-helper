@@ -22,7 +22,10 @@ export function createRendererApi(bridge: IpcBridge): RendererApi {
     settings: {
       get: (key) => bridge.invoke(IpcChannel.SettingsGet, { key }),
       set: (key, value) => bridge.invoke(IpcChannel.SettingsSet, { key, value }),
-      getAll: () => bridge.invoke(IpcChannel.SettingsGetAll)
+      getAll: () => bridge.invoke(IpcChannel.SettingsGetAll),
+      getStatus: () => bridge.invoke(IpcChannel.SettingsGetStatus),
+      configureProvider: (provider, apiKey, model) =>
+        bridge.invoke(IpcChannel.SettingsConfigureProvider, { provider, apiKey, model })
     },
     on: <E extends IpcEventName>(event: E, listener: (payload: IpcEventMap[E]) => void) =>
       bridge.on(event, (payload) => listener(payload as IpcEventMap[E]))

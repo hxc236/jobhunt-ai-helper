@@ -70,6 +70,22 @@ describe('createRendererApi（渲染侧 api 客户端）', () => {
     expect(fake.invocations).toEqual([{ channel: IpcChannel.SettingsGetAll, args: [] }])
   })
 
+  it('settings.getStatus 映射到 settings:get-status，不带参数', async () => {
+    const fake = makeFakeBridge()
+    const api = createRendererApi(fake.bridge)
+    await api.settings.getStatus()
+    expect(fake.invocations).toEqual([{ channel: IpcChannel.SettingsGetStatus, args: [] }])
+  })
+
+  it('settings.configureProvider 映射到 settings:configure-provider 并传 { provider, apiKey, model }', async () => {
+    const fake = makeFakeBridge()
+    const api = createRendererApi(fake.bridge)
+    await api.settings.configureProvider('deepseek', 'sk-test', 'deepseek-v4-flash')
+    expect(fake.invocations).toEqual([
+      { channel: IpcChannel.SettingsConfigureProvider, args: [{ provider: 'deepseek', apiKey: 'sk-test', model: 'deepseek-v4-flash' }] }
+    ])
+  })
+
   it('on 订阅事件推送：收到载荷；取消订阅后不再送达', () => {
     const fake = makeFakeBridge()
     const api = createRendererApi(fake.bridge)

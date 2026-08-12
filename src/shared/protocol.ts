@@ -50,6 +50,18 @@ export const IpcChannel = {
 export type PingResponse = 'pong'
 
 /**
+ * agent 认证/配置状态（settings:get-status 响应；分层降级依据：
+ * configured=false 时渲染层展示引导卡片，agent 功能不发起会话）。
+ */
+export interface AgentStatusInfo {
+  configured: boolean
+  /** 当前选定的 provider id（如 deepseek / kimi-coding）。 */
+  provider?: string
+  /** 当前选定的模型 id。 */
+  model?: string
+}
+
+/**
  * 已实现通道的类型映射：channel → { request, response }。
  * preload invoke、渲染 api 客户端、主进程 handler 均从此映射推导类型。
  */
@@ -58,6 +70,12 @@ export interface IpcProtocol {
   [IpcChannel.SettingsGet]: { request: { key: string }; response: unknown }
   [IpcChannel.SettingsSet]: { request: { key: string; value: unknown }; response: void }
   [IpcChannel.SettingsGetAll]: { request: void; response: Record<string, unknown> }
+  // EF-04：agent 认证状态与配置（写应用自有 auth.json，经 ModelRuntime）
+  [IpcChannel.SettingsGetStatus]: { request: void; response: AgentStatusInfo }
+  [IpcChannel.SettingsConfigureProvider]: {
+    request: { provider: string; apiKey: string; model?: string }
+    response: void
+  }
 }
 
 export type IpcChannelName = keyof IpcProtocol
@@ -98,6 +116,10 @@ export interface SettingsApi {
   get: (key: string) => Promise<unknown>
   set: (key: string, value: unknown) => Promise<void>
   getAll: () => Promise<Record<string, unknown>>
+  /** agent 认证/配置状态（未配置时渲染层降级引导）。 */
+  getStatus: () => Promise<AgentStatusInfo>
+  /** 配置模型认证（provider + API key 写应用自有 auth.json；model 可选）。 */
+  configureProvider: (provider: string, apiKey: string, model?: string) => Promise<void>
 }
 
 /**
