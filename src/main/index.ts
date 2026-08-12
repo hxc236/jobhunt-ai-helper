@@ -9,6 +9,7 @@ import { PiAgentProvider } from './services/pi-agent-provider'
 import { BrowserWindowFetcher } from './services/browser-window-fetcher'
 import { CrawlService } from './services/crawl'
 import { NowcoderParser } from './services/parsers/nowcoder'
+import { LiepinParser } from './services/parsers/liepin'
 import { PositionService } from './services/position'
 import { ResumeService } from './services/resume'
 import { SettingsService } from './services/settings'
@@ -79,6 +80,8 @@ app.whenReady().then(() => {
   })
   // F-09（#23）：牛客校招日程解析器（列表/翻页/详情 → 字段映射，纯函数）
   crawls.registerParser(new NowcoderParser())
+  // F-10（#24）：猎聘校招项目卡解析器（SSR 列表 → 字段映射；end_date 恒 null → 待核实）
+  crawls.registerParser(new LiepinParser())
 
   // EF-04：AgentService（pi SDK 封装 + fake 可注入）。认证目录为应用自有 userData/pi
   // （auth.json/models.json/sessions），不依赖用户 ~/.pi/agent；teach 技能用仓库内置副本。
