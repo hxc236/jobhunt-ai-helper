@@ -121,6 +121,29 @@ export class TopicService {
     return this.get(id)
   }
 
+  /**
+   * 复盘建议回填（F-27/#41 suggestLearn）：薄弱点 → 学习条目（source=interview，优先级 5），
+   * 同职位同标题已存在 → 跳过（返回 null）。
+   */
+  createInterviewSuggestion(title: string, note: string, jobId: string | null): Topic | null {
+    const trimmed = title.trim()
+    if (trimmed === '') return null
+    const existing =
+      jobId === null
+        ? this.db.prepare('SELECT id FROM topics WHERE title = ? AND job_id IS NULL').get(trimmed)
+        : this.db.prepare('SELECT id FROM topics WHERE title = ? AND job_id = ?').get(trimmed, jobId)
+    if (existing !== undefined) return null
+    const now = this.now()
+    const id = `topic-${randomUUID()}`
+    this.db
+      .prepare(
+        `INSERT INTO topics (id, title, status, priority, source, job_id, note, created_at, updated_at)
+         VALUES (?, ?, 'todo', 5, 'interview', ?, ?, ?, ?)`
+      )
+      .run(id, trimmed, jobId, note.trim(), now, now)
+    return this.get(id)
+  }
+
   /** 编辑条目（title/note/priority）。 */
   update(id: string, patch: { title?: string; note?: string; priority?: number }): Topic {
     const existing = this.get(id) // not-found

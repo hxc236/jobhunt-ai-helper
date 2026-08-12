@@ -67,6 +67,7 @@ export const IpcChannel = {
   TopicsUpdate: 'topics:update',
   TopicsDelete: 'topics:delete',
   TopicsSetStatus: 'topics:set-status',
+  TopicsCreateInterviewSuggestion: 'topics:create-interview-suggestion',
   LearnStart: 'learn:start',
   LearnSend: 'learn:send',
   InterviewStart: 'interview:start',
@@ -169,6 +170,11 @@ export interface IpcProtocol {
   }
   [IpcChannel.TopicsDelete]: { request: { id: string }; response: void }
   [IpcChannel.TopicsSetStatus]: { request: { id: string; status: TopicStatus }; response: Topic }
+  // F-27（#41）：复盘 suggestLearn 回填 —— 薄弱点入清单（source=interview，去重跳过返回 null）
+  [IpcChannel.TopicsCreateInterviewSuggestion]: {
+    request: { title: string; note: string; jobId: string | null }
+    response: Topic | null
+  }
   // F-22（#36）：teach 聊天会话 —— start 按条目开 learn 会话（/skill:teach + continueRecent），
   // send 发送消息（流式增量经 agent:delta 事件推送；返回整轮回复）。
   [IpcChannel.LearnStart]: {
@@ -195,7 +201,15 @@ export interface IpcProtocol {
   }
   [IpcChannel.InterviewHistory]: {
     request: void
-    response: Array<{ id: string; job_id: string | null; style: string; status: string; transcript: Array<{ role: 'user' | 'assistant'; text: string; ts: string }>; created_at: string }>
+    response: Array<{
+      id: string
+      job_id: string | null
+      style: string
+      status: string
+      transcript: Array<{ role: 'user' | 'assistant'; text: string; ts: string }>
+      review: unknown
+      created_at: string
+    }>
   }
   // F-12（issue #19）：简历 CRUD —— 入库前服务层做 resume.schema.json 校验；
   // 删除语义：删除基准简历不影响已存派生稿（独立副本）。
@@ -301,6 +315,7 @@ export interface InterviewApi {
       style: string
       status: string
       transcript: Array<{ role: 'user' | 'assistant'; text: string; ts: string }>
+      review: unknown
       created_at: string
     }>
   >
@@ -320,6 +335,8 @@ export interface TopicsApi {
   update: (id: string, patch: { title?: string; note?: string; priority?: number }) => Promise<Topic>
   delete: (id: string) => Promise<void>
   setStatus: (id: string, status: TopicStatus) => Promise<Topic>
+  /** 复盘建议回填（source=interview；重复跳过返回 null）。 */
+  createInterviewSuggestion: (title: string, note: string, jobId: string | null) => Promise<Topic | null>
 }
 
 /** 渲染进程可见的 optimize api 表面（#32：触发优化流程；进度经 optimize:progress 事件）。 */

@@ -100,6 +100,9 @@ export function registerIpcHandlers({ settings, agent, positions, resumes, crawl
   handleRequest(IpcChannel.TopicsUpdate, (request) => topics.update(request.id, request.patch))
   handleRequest(IpcChannel.TopicsDelete, (request) => topics.delete(request.id))
   handleRequest(IpcChannel.TopicsSetStatus, (request) => topics.setStatus(request.id, request.status))
+  handleRequest(IpcChannel.TopicsCreateInterviewSuggestion, (request) =>
+    topics.createInterviewSuggestion(request.title, request.note, request.jobId)
+  )
   // F-22（#36）：teach 聊天会话（流式增量经全局 agent:delta 推送，UI 打字机消费）
   handleRequest(IpcChannel.LearnStart, (request) => learn.start(request.topicId))
   handleRequest(IpcChannel.LearnSend, (request) => learn.send(request.sessionId, request.text))
