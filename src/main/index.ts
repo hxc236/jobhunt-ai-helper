@@ -8,6 +8,7 @@ import { AgentService, type AgentEvent } from './services/agent'
 import { PiAgentProvider } from './services/pi-agent-provider'
 import { BrowserWindowFetcher } from './services/browser-window-fetcher'
 import { CrawlService } from './services/crawl'
+import { OptimizeService } from './services/optimize'
 import { NowcoderParser } from './services/parsers/nowcoder'
 import { LiepinParser } from './services/parsers/liepin'
 import { PositionService } from './services/position'
@@ -94,7 +95,11 @@ app.whenReady().then(() => {
     { onEvent: forwardAgentEvent }
   )
 
-  registerIpcHandlers({ settings, agent, positions, resumes, crawls })
+  // F-07（#28/#32）：优化流程服务（三轮编排 + jd_analysis 缓存；进度 → optimize:progress）
+  const optimize = new OptimizeService(db, positions, resumes, agent, {
+    onProgress: ({ jobId, round, phase }) => pushEvent(IpcEvent.OptimizeProgress, { jobId, round, phase })
+  })
+  registerIpcHandlers({ settings, agent, positions, resumes, crawls, optimize })
   createWindow()
 
   app.on('activate', () => {

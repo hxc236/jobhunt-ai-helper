@@ -11,6 +11,7 @@ import {
 import { ping } from '../services/ping'
 import type { AgentService } from '../services/agent'
 import type { CrawlService } from '../services/crawl'
+import type { OptimizeService } from '../services/optimize'
 import type { PositionService } from '../services/position'
 import { exportResumePdf } from '../services/resume-export'
 import type { ResumeService } from '../services/resume'
@@ -31,13 +32,14 @@ export interface IpcDeps {
   positions: PositionService
   resumes: ResumeService
   crawls: CrawlService
+  optimize: OptimizeService
 }
 
 /**
  * 注册全部 IPC handler（薄层：仅参数校验 + 转调服务）。
  * 主进程启动时调用一次；后续通道（EF-04 起）在此追加。
  */
-export function registerIpcHandlers({ settings, agent, positions, resumes, crawls }: IpcDeps): void {
+export function registerIpcHandlers({ settings, agent, positions, resumes, crawls, optimize }: IpcDeps): void {
   handleRequest(IpcChannel.Ping, (): PingResponse => ping())
 
   handleRequest(IpcChannel.SettingsGet, (request) => settings.get(request.key))
@@ -77,6 +79,10 @@ export function registerIpcHandlers({ settings, agent, positions, resumes, crawl
   handleRequest(IpcChannel.CrawlGetRun, (request) => crawls.getRun(request.id))
   // F-11（#29）：预览统计 + 确认导入（upsert：source_url 优先 + dedupe_key 兜底）
   handleRequest(IpcChannel.CrawlPreview, (request) => crawls.preview(request.runId))
+  // #32：优化流程触发（三轮进度已由 OptimizeService onProgress → optimize:progress 推送）
+  handleRequest(IpcChannel.OptimizeRun, (request) =>
+    optimize.run(request.jobId, request.resumeId, request.mode)
+  )
   handleRequest(IpcChannel.CrawlConfirmImport, (request) =>
     crawls.confirmImport(request.runId, request.sourceUrls)
   )

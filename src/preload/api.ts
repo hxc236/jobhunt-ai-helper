@@ -54,6 +54,10 @@ export function createRendererApi(bridge: IpcBridge): RendererApi {
       confirmImport: (runId, sourceUrls) =>
         bridge.invoke(IpcChannel.CrawlConfirmImport, { runId, sourceUrls })
     },
+    optimize: {
+      run: (jobId, resumeId, mode) =>
+        bridge.invoke(IpcChannel.OptimizeRun, { jobId, resumeId, mode })
+    },
     on: <E extends IpcEventName>(event: E, listener: (payload: IpcEventMap[E]) => void) =>
       bridge.on(event, (payload) => listener(payload as IpcEventMap[E]))
   }

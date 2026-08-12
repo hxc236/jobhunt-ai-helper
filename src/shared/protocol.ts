@@ -24,6 +24,8 @@ import type {
   PositionInput,
   PositionListItem,
   PositionPatch,
+  OptimizationMode,
+  OptimizeResult,
   PositionSource,
   ResumeDraft
 } from './types'
@@ -134,6 +136,11 @@ export interface IpcProtocol {
   // export-pdf 经隐藏窗口 printToPDF + 保存对话框，返回保存路径（取消 → null）。
   [IpcChannel.ResumesRenderHtml]: { request: { id: string }; response: string }
   [IpcChannel.ResumesExportPdf]: { request: { id: string }; response: string | null }
+  // F-07/#32：优化流程 —— run 三轮编排（进度经 optimize:progress 事件推送；结果含优化稿+changes）
+  [IpcChannel.OptimizeRun]: {
+    request: { jobId: string; resumeId: string; mode: OptimizationMode }
+    response: OptimizeResult
+  }
   // F-12（issue #19）：简历 CRUD —— 入库前服务层做 resume.schema.json 校验；
   // 删除语义：删除基准简历不影响已存派生稿（独立副本）。
   [IpcChannel.ResumesList]: { request: void; response: StoredResume[] }
@@ -157,6 +164,7 @@ export const IpcEvent = {
   SettingsChanged: 'settings:changed', // EF-03 本 ticket 实现
   AgentDelta: 'agent:delta', // EF-04 起：agent 流式文本
   AgentStatus: 'agent:status',
+  OptimizeProgress: 'optimize:progress', // #32：优化三轮进度
   InterviewTurnEnd: 'interview:turn-end',
   CrawlProgress: 'crawl:progress'
 } as const
@@ -169,6 +177,7 @@ export interface IpcEventMap {
   [IpcEvent.SettingsChanged]: { key: string; value: unknown }
   [IpcEvent.AgentDelta]: { sessionId: string; delta: string }
   [IpcEvent.AgentStatus]: { sessionId: string; status: AgentStatusValue; detail?: string }
+  [IpcEvent.OptimizeProgress]: { jobId: string; round: 1 | 2 | 3; phase: string }
   [IpcEvent.InterviewTurnEnd]: { sessionId: string }
   [IpcEvent.CrawlProgress]: { runId: number; done: number; total: number }
 }
@@ -203,6 +212,11 @@ export interface PositionsApi {
   getApplication: (positionId: string) => Promise<Application | null>
   /** 投递状态操作（F-05：状态机校验；同状态调用 = 编辑渠道/投递日期；非法流转 reject transition）。 */
   setApplication: (positionId: string, patch: ApplicationPatch) => Promise<Application>
+}
+
+/** 渲染进程可见的 optimize api 表面（#32：触发优化流程；进度经 optimize:progress 事件）。 */
+export interface OptimizeApi {
+  run: (jobId: string, resumeId: string, mode: OptimizationMode) => Promise<OptimizeResult>
 }
 
 /** 渲染进程可见的 crawls api 表面（F-08/#22：执行框架 + 留痕；F-11/#29：预览 + 确认导入）。 */
@@ -243,6 +257,7 @@ export interface RendererApi {
   positions: PositionsApi
   resumes: ResumeApi
   crawls: CrawlApi
+  optimize: OptimizeApi
   /** 订阅主进程事件推送；返回取消订阅函数。 */
   on: <E extends IpcEventName>(event: E, listener: (payload: IpcEventMap[E]) => void) => () => void
 }
