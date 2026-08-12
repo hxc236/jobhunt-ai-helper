@@ -1,9 +1,7 @@
 # MVP Spec: 求职助手（职位检索 / 简历优化 / 学习 / 模拟面试）
 
-> **权威源**：GitHub issue [#13](https://github.com/hxc236/jobhunt-ai-helper/issues/13)（）——本文档为本地副本，修订以 issue 为准。
+> **权威源**：GitHub issue [#13](https://github.com/hxc236/jobhunt-ai-helper/issues/13)（`ready-for-agent`）——本文档为本地副本，修订以 issue 为准。
 > 配套文档：CONTEXT.md（术语表）、docs/architecture.md（服务接口/IPC）、docs/feature-specs.md（功能规格，tickets 切分输入）、DESIGN.md（UI 设计输入）、docs/adr/（决策记录）、docs/research/（调研）。
-
-# MVP Spec: 求职助手（职位检索 / 简历优化 / 学习 / 模拟面试）
 
 来源：wayfinder map #1 的 11 个决策 ticket（#2-#12）+ ADR-0001~0007 + CONTEXT.md 术语表 + docs/architecture.md + DESIGN.md。
 测试 seam 已确认：**services 层（唯一）**，db 注入。
