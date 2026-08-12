@@ -83,7 +83,10 @@ export const MIGRATIONS: readonly string[] = [
   );
   CREATE INDEX idx_applications_status ON applications(status);
   `,
-  // v5: crawl_runs 表（F-08 / issue #22）—— 采集留痕（spec #13-23）。
+  // v6: positions 增 jd_analysis 列（F-07/#28）—— JD 分析缓存（skills/keywords/requirements/
+  // hardRequirements/parsedAt/jdFingerprint JSON）；JD 变更（指纹不一致）失效重算。
+  `ALTER TABLE positions ADD COLUMN jd_analysis TEXT`,
+  // v7: crawl_runs 表（F-08 / issue #22）—— 采集留痕（spec #13-23）。
   // - candidates_json：候选快照（预览确认入库的数据源，#29 消费）；
   // - errors_json：失败 URL 列表（含原因）；truncated：达上限截断标志；
   // - status：running（执行中）→ success/partial/failed（留痕终态）。
