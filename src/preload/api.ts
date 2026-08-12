@@ -47,7 +47,10 @@ export function createRendererApi(bridge: IpcBridge): RendererApi {
     crawls: {
       run: (source, options) => bridge.invoke(IpcChannel.CrawlRun, { source, options }),
       runs: () => bridge.invoke(IpcChannel.CrawlRuns),
-      getRun: (id) => bridge.invoke(IpcChannel.CrawlGetRun, { id })
+      getRun: (id) => bridge.invoke(IpcChannel.CrawlGetRun, { id }),
+      preview: (runId) => bridge.invoke(IpcChannel.CrawlPreview, { runId }),
+      confirmImport: (runId, sourceUrls) =>
+        bridge.invoke(IpcChannel.CrawlConfirmImport, { runId, sourceUrls })
     },
     on: <E extends IpcEventName>(event: E, listener: (payload: IpcEventMap[E]) => void) =>
       bridge.on(event, (payload) => listener(payload as IpcEventMap[E]))

@@ -1,7 +1,11 @@
+import { randomUUID } from 'node:crypto'
 import type { Db } from '../db/migrations'
 import type {
   CrawlCandidate,
+  CrawlImportResult,
   CrawlMode,
+  CrawlPreview,
+  CrawlPreviewItem,
   CrawlRun,
   CrawlRunOptions,
   CrawlRunResult,
@@ -45,7 +49,7 @@ export interface CrawlFetcher {
 /** 采集服务错误：code 供渲染层区分提示。 */
 export class CrawlError extends Error {
   constructor(
-    readonly code: 'parser-not-found',
+    readonly code: 'parser-not-found' | 'run-not-found',
     message: string
   ) {
     super(message)
@@ -275,5 +279,141 @@ export class CrawlService {
       | undefined
     return row === undefined ? [] : (JSON.parse(row.candidates_json) as CrawlCandidate[])
   }
+
+  /**
+   * 采集预览（F-11/#29）：候选逐条预测入库动作（source_url 命中 → update；
+   * dedupe_key company|title|recruit_season 兜底命中 → update；否则 new）+ 缺字段标记
+   * （title/end_date 为空 = 缺字段，UI 标「待核实/待补全」）。
+   */
+  preview(runId: number): CrawlPreview {
+    const run = this.getRun(runId)
+    if (run === null) throw new CrawlError('run-not-found', `采集记录不存在：${runId}`)
+
+    const items: CrawlPreviewItem[] = this.getCandidates(runId).map((candidate) => {
+      const action = this.findExisting(candidate) === undefined ? 'new' : 'update'
+      return { candidate, action, missingFields: missingFieldsOf(candidate) }
+    })
+    return {
+      run,
+      items,
+      stats: {
+        inserted: items.filter((i) => i.action === 'new').length,
+        updated: items.filter((i) => i.action === 'update').length,
+        missing: items.filter((i) => i.missingFields.length > 0).length
+      }
+    }
+  }
+
+  /**
+   * 确认导入（F-11/#29）：对勾选候选（source_url 列表）做 upsert——
+   * source_url 优先、dedupe_key（company|title|recruit_season）兜底，命中更新而非新建
+   * （spec #13-18/19：重复采集刷新 JD/网申窗口；手动与采集同职位合并更新）；
+   * 不自动关闭消失岗位（spec：upsert 不自动关闭）。
+   */
+  confirmImport(runId: number, selectedSourceUrls: string[]): CrawlImportResult {
+    const run = this.getRun(runId)
+    if (run === null) throw new CrawlError('run-not-found', `采集记录不存在：${runId}`)
+    const selected = new Set(selectedSourceUrls)
+
+    let inserted = 0
+    let updated = 0
+    const upsert = this.db.transaction(() => {
+      for (const candidate of this.getCandidates(runId)) {
+        if (!selected.has(candidate.source_url)) continue
+        const existing = this.findExisting(candidate)
+        if (existing === undefined) {
+          this.insertCandidate(candidate)
+          inserted++
+        } else {
+          this.updateCandidate(existing.id, candidate)
+          updated++
+        }
+      }
+    })
+    upsert()
+    return { inserted, updated }
+  }
+
+  /** 查已有职位：source_url 优先，dedupe_key 兜底。 */
+  private findExisting(candidate: CrawlCandidate): { id: string } | undefined {
+    const byUrl = this.db
+      .prepare('SELECT id FROM positions WHERE source_url = ?')
+      .get(candidate.source_url) as { id: string } | undefined
+    if (byUrl !== undefined) return byUrl
+    const dedupeKey = `${candidate.company}|${candidate.title}|${candidate.recruit_season ?? ''}`
+    return this.db.prepare('SELECT id FROM positions WHERE dedupe_key = ?').get(dedupeKey) as
+      | { id: string }
+      | undefined
+  }
+
+  private insertCandidate(candidate: CrawlCandidate): void {
+    const now = new Date().toISOString()
+    this.db
+      .prepare(
+        `INSERT INTO positions (
+          id, company, company_type, title, jd, city, channel, channel_url,
+          source, source_url, dedupe_key, recruit_season, batch,
+          start_date, end_date, status, notes, created_at, updated_at
+        ) VALUES (
+          @id, @company, '其他', @title, @jd, @city, @channel, @channel_url,
+          @source, @source_url, @dedupe_key, @recruit_season, @batch,
+          @start_date, @end_date, 'active', '', @now, @now
+        )`
+      )
+      .run({
+        id: randomUUID(),
+        company: candidate.company,
+        title: candidate.title,
+        jd: candidate.jd,
+        city: candidate.city,
+        channel: candidate.channel,
+        channel_url: candidate.channel_url,
+        source: 'nowcoder',
+        source_url: candidate.source_url,
+        dedupe_key: `${candidate.company}|${candidate.title}|${candidate.recruit_season ?? ''}`,
+        recruit_season: candidate.recruit_season ?? '未知',
+        batch: candidate.batch,
+        start_date: candidate.start_date,
+        end_date: candidate.end_date,
+        now
+      })
+  }
+
+  private updateCandidate(id: string, candidate: CrawlCandidate): void {
+    this.db
+      .prepare(
+        `UPDATE positions SET
+          company=@company, title=@title, jd=@jd, city=@city, channel=@channel,
+          channel_url=@channel_url, source=@source, source_url=@source_url,
+          dedupe_key=@dedupe_key, recruit_season=@recruit_season, batch=@batch,
+          start_date=@start_date, end_date=@end_date, updated_at=@now
+         WHERE id=@id`
+      )
+      .run({
+        id,
+        company: candidate.company,
+        title: candidate.title,
+        jd: candidate.jd,
+        city: candidate.city,
+        channel: candidate.channel,
+        channel_url: candidate.channel_url,
+        source: 'nowcoder',
+        source_url: candidate.source_url,
+        dedupe_key: `${candidate.company}|${candidate.title}|${candidate.recruit_season ?? ''}`,
+        recruit_season: candidate.recruit_season ?? '未知',
+        batch: candidate.batch,
+        start_date: candidate.start_date,
+        end_date: candidate.end_date,
+        now: new Date().toISOString()
+      })
+  }
 }
 
+
+/** 候选缺字段判定：title/end_date 为空（UI 标「待补全/待核实」）。 */
+function missingFieldsOf(candidate: CrawlCandidate): string[] {
+  const missing: string[] = []
+  if (candidate.title.trim() === '') missing.push('title')
+  if (candidate.end_date === null || candidate.end_date.trim() === '') missing.push('end_date')
+  return missing
+}

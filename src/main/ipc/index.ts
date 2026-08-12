@@ -74,6 +74,11 @@ export function registerIpcHandlers({ settings, agent, positions, resumes, crawl
   )
   handleRequest(IpcChannel.CrawlRuns, () => crawls.runs())
   handleRequest(IpcChannel.CrawlGetRun, (request) => crawls.getRun(request.id))
+  // F-11（#29）：预览统计 + 确认导入（upsert：source_url 优先 + dedupe_key 兜底）
+  handleRequest(IpcChannel.CrawlPreview, (request) => crawls.preview(request.runId))
+  handleRequest(IpcChannel.CrawlConfirmImport, (request) =>
+    crawls.confirmImport(request.runId, request.sourceUrls)
+  )
 
   // F-12（issue #19）：简历 CRUD —— 服务层负责 schema 校验与删除语义（基准删除不影响派生稿）
   handleRequest(IpcChannel.ResumesList, () => resumes.list())
