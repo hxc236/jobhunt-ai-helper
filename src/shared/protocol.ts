@@ -29,6 +29,7 @@ import type {
   OptimizationMode,
   OptimizeResult,
   AsrStatus,
+  BossPageExtractResult,
   PositionSource,
   Topic,
   TopicGenerateInput,
@@ -262,7 +263,8 @@ export const IpcEvent = {
   AgentStatus: 'agent:status',
   OptimizeProgress: 'optimize:progress', // #32：优化三轮进度
   InterviewTurnEnd: 'interview:turn-end',
-  CrawlProgress: 'crawl:progress'
+  CrawlProgress: 'crawl:progress',
+  BossPageExtracted: 'boss:page-extracted' // #62：F8 只读提取详情页 → 预填录入表单
 } as const
 
 /** agent 会话状态（agent:status 载荷）。 */
@@ -276,6 +278,7 @@ export interface IpcEventMap {
   [IpcEvent.OptimizeProgress]: { jobId: string; round: 1 | 2 | 3; phase: string }
   [IpcEvent.InterviewTurnEnd]: { sessionId: string }
   [IpcEvent.CrawlProgress]: { runId: number; done: number; total: number }
+  [IpcEvent.BossPageExtracted]: BossPageExtractResult
 }
 
 export type IpcEventName = keyof IpcEventMap

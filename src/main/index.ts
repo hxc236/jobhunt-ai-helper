@@ -23,6 +23,7 @@ import { NowcoderParser } from './services/parsers/nowcoder'
 import { LiepinParser } from './services/parsers/liepin'
 import { BossParser } from './services/parsers/boss'
 import { BossLoginService } from './services/boss-login'
+import { collectBossPage, toBossPageDraft } from './services/boss-page-extract'
 import { PositionService } from './services/position'
 import { ResumeService } from './services/resume'
 import { SettingsService } from './services/settings'
@@ -129,7 +130,22 @@ app.whenReady().then(() => {
       agentChannel
     }
   )
-  const bossLogin = new BossLoginService()
+  // issue #62：BOSS 窗口 F8 → 只读提取详情页文本 → 事件推送给渲染层预填录入表单
+  const bossLogin = new BossLoginService({
+    onExtractShortcut: (win) => {
+      void (async () => {
+        try {
+          const raw = await collectBossPage(win)
+          pushEvent(IpcEvent.BossPageExtracted, toBossPageDraft(raw))
+        } catch (err) {
+          pushEvent(IpcEvent.BossPageExtracted, {
+            draft: null,
+            error: err instanceof Error ? err.message : 'BOSS 页面读取失败'
+          })
+        }
+      })()
+    }
+  })
   // issue #57：常用采集（crawl_presets 表 CRUD）
   const crawlPresets = new CrawlPresetService(db)
   // F-09（#23）：牛客校招日程解析器（列表/翻页/详情 → 字段映射，纯函数）

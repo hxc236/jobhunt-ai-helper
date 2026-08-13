@@ -447,6 +447,29 @@ export interface PositionInput {
 }
 
 /**
+ * BOSS 页面提取草稿（issue #62）：用户在内置 BOSS 窗口人工浏览详情页，
+ * F8 只读提取页面文本 → 预填录入表单（确认后保存，不自动入库）。
+ */
+export interface BossPageDraft {
+  company: string
+  title: string
+  jd: string
+  city?: string
+  channel: string
+  channel_url: string
+  hire_type: HireType
+  salary_min?: number | null
+  salary_max?: number | null
+  salary_text?: string
+}
+
+/** BOSS 页面提取结果：成功带 draft；失败（非详情页/读取失败）带 error。 */
+export interface BossPageExtractResult {
+  draft: BossPageDraft | null
+  error?: string
+}
+
+/**
  * 职位卡编辑补丁（F-03/#20）：全部可选，未传字段保持不变；
  * 可空字段传 null 或空串 → 清空为 NULL（与录入时空串归一 null 的语义一致）；
  * 公司/岗位/秋招季变化时服务重算 dedupe_key 并查重（排除自身）。

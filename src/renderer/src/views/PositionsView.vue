@@ -11,6 +11,7 @@ import {
   HIRE_TYPES,
   type ApplicationStatus,
   type Batch,
+  type BossPageDraft,
   type CompanyType,
   type CrawlConditions,
   type CrawlMode,
@@ -490,6 +491,28 @@ function endLabel(p: Pick<PositionListItem, 'end_date' | 'hire_type'>): string {
 const addOpen = ref(false)
 const crawlOpen = ref(false)
 
+/**
+ * issue #62：BOSS 窗口 F8 提取草稿 → 预填录入表单（用户核对后保存；不自动入库）。
+ * 先重置为空表单再覆盖草稿字段（避免残留上次录入的批次/日期等）。
+ */
+function applyBossDraft(draft: BossPageDraft): void {
+  Object.assign(form, emptyForm(), {
+    company: draft.company,
+    title: draft.title,
+    jd: draft.jd,
+    city: draft.city ?? '',
+    channel: draft.channel,
+    channel_url: draft.channel_url,
+    hire_type: draft.hire_type,
+    salary_min: draft.salary_min?.toString() ?? '',
+    salary_max: draft.salary_max?.toString() ?? '',
+    salary_text: draft.salary_text ?? ''
+  })
+  formError.value = ''
+  formSuccess.value = `已从 BOSS 页面提取「${draft.company} · ${draft.title}」，请核对后保存`
+  addOpen.value = true
+}
+
 function openAdd(): void {
   formError.value = ''
   formSuccess.value = ''
@@ -511,7 +534,19 @@ onMounted(() => {
   const unsubscribe = window.api.on(IpcEvent.CrawlProgress, (payload) => {
     crawlProgress.value = { done: payload.done, total: payload.total }
   })
-  onUnmounted(unsubscribe)
+  // issue #62：BOSS 窗口 F8 提取结果 → 预填录入表单（失败则弹窗提示错误）
+  const unsubscribeExtract = window.api.on(IpcEvent.BossPageExtracted, (payload) => {
+    if (payload.draft !== null) {
+      applyBossDraft(payload.draft)
+    } else {
+      formError.value = payload.error ?? 'BOSS 页面提取失败'
+      addOpen.value = true
+    }
+  })
+  onUnmounted(() => {
+    unsubscribe()
+    unsubscribeExtract()
+  })
 })
 </script>
 
@@ -789,6 +824,7 @@ onMounted(() => {
     <div v-if="crawlSource === 'boss'" class="crawl-boss-login">
       <span class="hint">
         BOSS 采集需登录后薪资才可见（匿名会话薪资为空）。登录态持久化，重启不丢。
+        反爬建议人工浏览：在内置 BOSS 窗口打开岗位详情页，按 F8 提取职位卡（只读页面，无风控风险）。
       </span>
       <div style="display: flex; gap: 8px; align-items: center">
         <button

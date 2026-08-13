@@ -7,7 +7,9 @@ import { BrowserWindow } from 'electron'
  *   （重启应用登录态不丢；T6 抓取窗口复用同一分区继承登录态）；
  * - 登录方式：打开可见窗口加载 BOSS 主站，用户点击登录/扫码后自行关闭窗口；
  * - 状态检测：分区内隐藏窗口加载搜索页，页面内 fetch getUserInfo（SPA 自身
- *   登录态探测接口），code===0 = 已登录；失败/异常一律视为未登录（不抛）。
+ *   登录态探测接口），code===0 = 已登录；失败/异常一律视为未登录（不抛）；
+ * - issue #62：窗口内 F8 快捷键 → onExtractShortcut 回调（人工浏览详情页时
+ *   只读提取页面文本；before-input-event 拦截，不向页面注入任何内容）。
  */
 export const BOSS_PARTITION = 'persist:boss'
 
@@ -19,8 +21,15 @@ const BOSS_WINDOW_PREFERENCES = {
   partition: BOSS_PARTITION
 } as const
 
+export interface BossLoginServiceOptions {
+  /** issue #62：BOSS 窗口内 F8 提取快捷键回调（携窗口引用；由调用方执行只读采集）。 */
+  onExtractShortcut?: (win: BrowserWindow) => void
+}
+
 export class BossLoginService {
   private loginWindow: BrowserWindow | null = null
+
+  constructor(private readonly options: BossLoginServiceOptions = {}) {}
 
   /** 打开可见登录窗口（已开则聚焦）。用户扫码登录后自行关闭。 */
   openLoginWindow(): void {
@@ -38,6 +47,13 @@ export class BossLoginService {
     this.loginWindow = win
     win.on('closed', () => {
       this.loginWindow = null
+    })
+    // issue #62：F8 提取（keyDown 拦截；页面不可见该按键）
+    win.webContents.on('before-input-event', (event, input) => {
+      if (input.type === 'keyDown' && input.key === 'F8') {
+        event.preventDefault()
+        this.options.onExtractShortcut?.(win)
+      }
     })
     void win.loadURL('https://www.zhipin.com/web/geek/job')
   }
