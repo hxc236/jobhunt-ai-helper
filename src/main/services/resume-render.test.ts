@@ -48,24 +48,26 @@ describe('resume-render A4 模板（F-15/#30）', () => {
     expect(html).toContain('class="sheet"')
     expect(html).toContain('@media print')
     expect(html).toContain('width: 794px') // A4 宽度
+    // 基本信息纯值排列：分隔符由 CSS 伪元素提供（flex 换行时行首无前导分隔符）
+    expect(html).toContain(".fact + .fact::before { content: ' | '")
   })
 
   it('分节渲染：基本信息/意向/链接/教育/技能/项目/经历/证书/自评齐全', () => {
     const sheet = renderSheet(sample)
     expect(sheet).toContain('<h1>张伟</h1>')
-    // 事实带标签行内排布（不再无标签 | 连排）
-    expect(sheet).toContain('<span class="k">性别</span>男')
-    expect(sheet).toContain('<span class="k">政治面貌</span>共青团员')
-    expect(sheet).toContain('<span class="k">生源地</span>河北石家庄')
-    // 基本信息分两行：联系方式（电话/邮箱）在前，个人信息在后（避免挤成一行）
-    const factsBlocks = [...sheet.matchAll(/<div class="facts">([\s\S]*?)<\/div>/g)].map((m) => m[1])
-    expect(factsBlocks).toHaveLength(2)
-    expect(factsBlocks[0]).toContain('<span class="k">电话</span>13800001234')
-    expect(factsBlocks[0]).toContain('<span class="k">邮箱</span>z@example.com')
-    expect(factsBlocks[0]).not.toContain('性别')
-    expect(factsBlocks[1]).toContain('<span class="k">性别</span>男')
-    expect(factsBlocks[1]).toContain('<span class="k">政治面貌</span>共青团员')
-    expect(factsBlocks[1]).not.toContain('电话')
+    // 基本信息：纯值无字段名（电话/邮箱/性别/生日/政治面貌/生源地…），flex 自适应排列
+    expect(sheet).not.toContain('class="k"')
+    const factsBlock = sheet.match(/<div class="facts">([\s\S]*?)<\/div>/)?.[1]
+    expect(factsBlock).toContain('<span class="fact">13800001234</span>')
+    expect(factsBlock).toContain('<span class="fact">z@example.com</span>')
+    expect(factsBlock).toContain('<span class="fact">男</span>')
+    // 顺序：电话 → 邮箱 → 性别 → 生日 → 政治面貌 → 生源地
+    let last = -1
+    for (const v of ['13800001234', 'z@example.com', '男', '2004-06', '共青团员', '河北石家庄']) {
+      const i = factsBlock?.indexOf(`>${v}<`) ?? -1
+      expect(i).toBeGreaterThan(last)
+      last = i
+    }
     expect(sheet).toContain('求职意向：后端开发工程师（校招）')
     expect(sheet).toContain('https://github.com/z')
     for (const heading of ['教育背景', '竞赛与荣誉', '项目经历', '实习经历', '自我评价']) {

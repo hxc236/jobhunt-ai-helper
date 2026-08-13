@@ -20,10 +20,10 @@ export function renderResumeHtml(resume: Resume, photoDataUri?: string): string 
     box-shadow: 0 2px 8px rgba(0,0,0,.12); font-size: 14px; line-height: 1.65; color: #222; }
   .sheet h1 { font-size: 24px; letter-spacing: 4px; }
   .sheet .head { display: flex; justify-content: space-between; gap: 24px; align-items: flex-start; }
-  .sheet .facts { margin-top: 8px; max-width: 580px; }
-  .sheet .facts + .facts { margin-top: 3px; }
-  .sheet .fact { display: inline-block; margin: 2px 16px 2px 0; font-size: 13px; }
-  .sheet .fact .k { color: #888; margin-right: 4px; }
+  .sheet .facts { margin-top: 8px; max-width: 580px; display: flex; flex-wrap: wrap; }
+  /* 纯值排列，项间 | 分隔（换行后首项无前导分隔符） */
+  .sheet .fact { font-size: 13px; line-height: 1.9; }
+  .sheet .fact + .fact::before { content: ' | '; color: #aaa; margin: 0 10px; }
   .sheet .photo { width: 76px; height: 100px; flex-shrink: 0; border: 1px solid #d8d8d8; background: #f5f5f5; }
   .sheet .photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .sheet .links a { color: #2b5ca8; text-decoration: none; margin-right: 12px; font-size: 13px; }
@@ -63,24 +63,19 @@ export function renderSheet(resume: Resume, photoDataUri?: string): string {
       ? `<div class="photo"><img src="${esc(photoDataUri)}" alt="照片" /></div>`
       : ''
   const facts = [
+    ['电话', b.phone],
+    ['邮箱', b.email],
     ['性别', b.gender],
     ['生日', b.birthday],
     ['政治面貌', b.politicalStatus],
     ['生源地', b.hometown],
     ['现居城市', b.location]
   ].filter((entry): entry is [string, string] => typeof entry[1] === 'string' && entry[1] !== '')
-  // 联系方式与个人信息分两行展示，避免全部挤在一行（如 电话 | 邮箱 | 生日 | 政治面貌）
-  const contactFacts = [
-    ['电话', b.phone],
-    ['邮箱', b.email]
-  ].filter((entry): entry is [string, string] => typeof entry[1] === 'string' && entry[1] !== '')
-  const factLine = (list: [string, string][]): string =>
-    list.length > 0
-      ? `<div class="facts">${list.map(([k, v]) => `<span class="fact"><span class="k">${esc(k)}</span>${esc(v)}</span>`).join('')}</div>`
-      : ''
   parts.push(`<div class="head"><div><h1>${esc(b.name)}</h1>`)
-  parts.push(factLine(contactFacts))
-  parts.push(factLine(facts))
+  if (facts.length > 0) {
+    // 纯值无字段名，flex 自适应排列（放不下自动换行）
+    parts.push(`<div class="facts">${facts.map(([, v]) => `<span class="fact">${esc(v)}</span>`).join('')}</div>`)
+  }
   if ((b.links ?? []).length > 0) {
     parts.push(
       `<div class="links">${(b.links ?? [])
