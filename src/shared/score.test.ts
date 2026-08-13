@@ -17,16 +17,14 @@ const fullResume: Resume = {
     }
   ],
   skills: [
-    { category: '编程语言', items: ['Java', 'Python', 'TypeScript'], proficiency: '熟练' },
-    { category: '框架', items: ['Spring Boot', 'MyBatis'], proficiency: '熟悉' },
-    { category: '工具', items: ['Docker', 'Kafka'], proficiency: '熟悉' }
+    { category: '工程能力', text: 'Java、Python、TypeScript 服务端开发，Spring Boot、MyBatis、Redis、Kafka 中间件；Docker、Git、Linux 部署工具链。' },
+    { category: '科研能力', text: '蓝桥杯省二等奖，算法与竞赛编程基础。' },
+    { category: '其他能力', text: 'CET-6，可阅读英文技术文档。' }
   ],
   projects: [
     {
       name: '校园二手交易平台',
-      role: '后端开发',
       description: 'C2C 交易平台',
-      highlights: ['使用 Redis 缓存', '对接微信支付'],
       techStack: ['Java', 'Spring Boot', 'Redis', 'MySQL', 'Docker']
     }
   ],

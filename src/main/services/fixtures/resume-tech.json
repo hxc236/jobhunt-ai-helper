@@ -39,38 +39,33 @@
     }
   ],
   "skills": [
-    { "category": "编程语言", "items": ["Java", "Python", "TypeScript"], "proficiency": "熟练" },
-    { "category": "框架与中间件", "items": ["Spring Boot", "MyBatis", "Redis", "Kafka"], "proficiency": "熟悉" },
-    { "category": "工具", "items": ["Git", "Docker", "Linux"], "proficiency": "熟悉" }
+    {
+      "category": "工程能力",
+      "text": "熟悉 Java / Python / TypeScript，Spring Boot + MyBatis + Redis + Kafka 服务端与中间件开发；掌握 Git / Docker / Linux 开发与部署工具链。"
+    },
+    {
+      "category": "科研能力",
+      "text": "蓝桥杯省二等奖，具备算法设计与竞赛编程基础。"
+    },
+    {
+      "category": "其他能力",
+      "text": "通过大学英语六级（CET-6），可阅读英文技术文档。"
+    }
   ],
   "projects": [
     {
       "name": "校园二手交易平台",
-      "role": "后端开发",
       "startDate": "2025-03",
       "endDate": "2025-08",
-      "description": "面向校内学生的 C2C 二手交易 Web 平台，日均 500+ 访问",
-      "highlights": [
-        "基于 Spring Boot + MyBatis 实现商品、订单、支付模块，接口响应 p95 < 200ms",
-        "使用 Redis 缓存热门商品列表与登录态，缓存命中率 85%+，QPS 峰值 1200",
-        "对接微信支付沙箱，完成下单-支付-回调全流程；编写 40+ 单元测试，覆盖率 70%"
-      ],
-      "techStack": ["Java", "Spring Boot", "MyBatis", "Redis", "MySQL", "Docker"],
-      "link": null
+      "description": "面向校内学生的 C2C 二手交易 Web 平台，日均 500+ 访问：基于 Spring Boot + MyBatis 实现商品、订单、支付模块，接口响应 p95 < 200ms；使用 Redis 缓存热门商品与登录态，缓存命中率 85%+，QPS 峰值 1200；对接微信支付沙箱，完成下单-支付-回调全流程，编写 40+ 单元测试。",
+      "techStack": ["Java", "Spring Boot", "MyBatis", "Redis", "MySQL", "Docker"]
     },
     {
       "name": "个人博客系统",
-      "role": "全栈开发",
       "startDate": "2024-09",
       "endDate": "2025-01",
-      "description": "Markdown 驱动的个人博客，支持标签检索与全文搜索",
-      "highlights": [
-        "前端 Vue 3 + TypeScript，后端 Express，Markdown 渲染 + 关键词高亮",
-        "使用 Elasticsearch 实现全文检索，中文分词检索响应 < 50ms",
-        "部署于云服务器（Nginx + Docker），接入 HTTPS 与自动备份"
-      ],
-      "techStack": ["TypeScript", "Vue 3", "Express", "Elasticsearch", "Docker"],
-      "link": "https://github.com/zhangwei/blog"
+      "description": "Markdown 驱动的个人博客，支持标签检索与全文搜索：前端 Vue 3 + TypeScript，后端 Express，Markdown 渲染与关键词高亮；Elasticsearch 全文检索响应 < 50ms；部署于云服务器（Nginx + Docker），接入 HTTPS 与自动备份。",
+      "techStack": ["TypeScript", "Vue 3", "Express", "Elasticsearch", "Docker"]
     }
   ],
   "experience": [

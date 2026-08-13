@@ -27,15 +27,13 @@ const sample: Resume = {
       honors: ['一等奖学金']
     }
   ],
-  skills: [{ category: '编程语言', items: ['Java', 'Python'], proficiency: '熟练' }],
+  skills: [{ category: '工程能力', text: 'Java、Python 服务端开发' }],
   projects: [
     {
       name: '二手交易平台',
-      role: '后端',
       startDate: '2025-03',
       endDate: '2025-08',
       description: 'C2C 平台',
-      highlights: ['接口 p95 < 200ms'],
       techStack: ['Java', 'Spring Boot']
     }
   ],
@@ -64,7 +62,8 @@ describe('resume-render A4 模板（F-15/#30）', () => {
     }
     expect(sheet).toContain('北京理工大学　本科 · 计算机科学与技术')
     expect(sheet).toContain('GPA 3.7/4.0')
-    expect(sheet).toContain('编程语言')
+    expect(sheet).toContain('工程能力')
+    expect(sheet).toContain('Java、Python 服务端开发')
     expect(sheet).toContain('<span class="tag">Java</span>')
     expect(sheet).toContain('某公司　<em>实习生</em>')
     expect(sheet).toContain('基础扎实')
@@ -88,7 +87,7 @@ describe('resume-render A4 模板（F-15/#30）', () => {
       meta: {},
       basics: { name: '<script>alert(1)</script>' },
       education: [],
-      projects: [{ name: '"><img src=x onerror=alert(1)>', highlights: ['<b>加粗</b>'] }]
+      projects: [{ name: '"><img src=x onerror=alert(1)>', description: '<b>加粗</b>' }]
     }
     const sheet = renderSheet(evil)
     expect(sheet).not.toContain('<script>')

@@ -36,7 +36,7 @@ export function draftToResume(draft: ResumeDraft, title: string): Resume {
         : [],
     skills:
       draft.fields.skills.length > 0
-        ? [{ category: '专业技能', items: draft.fields.skills }]
+        ? [{ category: '工程能力', text: draft.fields.skills.join('；') }]
         : []
   }
   return resume

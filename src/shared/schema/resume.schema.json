@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "resume.schema.json",
   "title": "Resume",
-  "description": "校招简历数据模型 v1 定稿（#7 验收，源自 prototype/resume-model 分支）：基准简历与按 JD 优化的派生稿共用此 schema，派生关系记录在 meta 中",
+  "description": "校招简历数据模型 v2（ADR-0009：技能固定三分类各一段话、项目精简、basics.photo）：基准简历与按 JD 优化的派生稿共用此 schema，派生关系记录在 meta 中，源自 prototype/resume-model 分支",
   "type": "object",
   "required": ["meta", "basics", "education"],
   "properties": {
@@ -21,6 +21,7 @@
       "required": ["name"],
       "properties": {
         "name": { "type": "string" },
+        "photo": { "type": "string", "description": "照片文件名（存于应用照片目录，ADR-0009）" },
         "phone": { "type": "string" },
         "email": { "type": "string" },
         "location": { "type": "string", "description": "现居城市" },
@@ -65,11 +66,12 @@
       "type": "array",
       "items": {
         "type": "object",
+        "required": ["category", "text"],
         "properties": {
-          "category": { "type": "string", "description": "分类：编程语言/框架/工具/其他" },
-          "items": { "type": "array", "items": { "type": "string" } },
-          "proficiency": { "type": "string", "enum": ["熟练", "熟悉", "了解"], "description": "熟练度（HR 视角需要）" }
-        }
+          "category": { "type": "string", "enum": ["工程能力", "科研能力", "其他能力"], "description": "固定三分类（ADR-0009）" },
+          "text": { "type": "string", "description": "该分类的一段话描述" }
+        },
+        "additionalProperties": false
       }
     },
     "projects": {
@@ -78,14 +80,12 @@
         "type": "object",
         "properties": {
           "name": { "type": "string" },
-          "role": { "type": "string" },
           "startDate": { "type": "string" },
           "endDate": { "type": "string" },
-          "description": { "type": "string" },
-          "highlights": { "type": "array", "items": { "type": "string" }, "description": "要点，动词开头、量化优先" },
-          "techStack": { "type": "array", "items": { "type": "string" }, "description": "技术栈（匹配度计算依据）" },
-          "link": { "type": ["string", "null"] }
-        }
+          "description": { "type": "string", "description": "一段话描述（ADR-0009：删除 角色/要点/链接）" },
+          "techStack": { "type": "array", "items": { "type": "string" }, "description": "技术栈（匹配度计算依据）" }
+        },
+        "additionalProperties": false
       }
     },
     "experience": {

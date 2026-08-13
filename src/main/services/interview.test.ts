@@ -7,6 +7,7 @@ import { PositionService } from './position'
 import { ResumeService } from './resume'
 import { TopicService } from './topic'
 import type { InterviewReview, JdAnalysis } from '../../shared/types'
+import type { Resume } from '../../shared/types/resume'
 
 const JD = '要求：Java、Spring Boot、MySQL、分布式；本科及以上'
 
@@ -19,12 +20,12 @@ const analysis: JdAnalysis = {
   jdFingerprint: 'fp'
 }
 
-const baseResume = {
+const baseResume: Resume = {
   meta: { title: '基准简历' },
   basics: { name: '张伟' },
   education: [{ school: '北京理工大学', degree: '本科', major: '计算机' }],
-  skills: [{ category: '语言', items: ['Java'] }],
-  projects: [{ name: '二手平台', techStack: ['Java', 'Spring Boot'], highlights: ['订单接口'] }]
+  skills: [{ category: '工程能力', text: 'Java 服务端开发' }],
+  projects: [{ name: '二手平台', techStack: ['Java', 'Spring Boot'] }]
 }
 
 /** 面试 fake：按阶段标记返回 JSON（{difficulty, question}），首轮开场返回文本。 */

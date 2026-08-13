@@ -30,6 +30,8 @@ export interface ResumeLink {
 
 export interface ResumeBasics {
   name: string
+  /** 照片文件名（存于应用照片目录，ADR-0009；A4 头部右侧显示） */
+  photo?: string
   phone?: string
   email?: string
   /** 现居城市 */
@@ -63,24 +65,23 @@ export interface ResumeEducation {
   honors?: string[]
 }
 
+/** 能力分类（ADR-0009：固定三分类，每类一段话描述）。 */
+export type SkillCategory = '工程能力' | '科研能力' | '其他能力'
+
 export interface ResumeSkillGroup {
-  /** 分类：编程语言/框架/工具/其他 */
-  category?: string
-  items?: string[]
-  proficiency?: '熟练' | '熟悉' | '了解'
+  category: SkillCategory
+  /** 该分类的一段话描述 */
+  text: string
 }
 
 export interface ResumeProject {
   name?: string
-  role?: string
   startDate?: string
   endDate?: string
+  /** 一段话描述（ADR-0009：删除 角色/要点/链接） */
   description?: string
-  /** 要点，动词开头、量化优先 */
-  highlights?: string[]
   /** 技术栈（匹配度计算依据） */
   techStack?: string[]
-  link?: string | null
 }
 
 export interface ResumeExperience {

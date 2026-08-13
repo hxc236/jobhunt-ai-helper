@@ -18,7 +18,7 @@ const baseResume: Resume = {
   meta: { title: '基准简历' },
   basics: { name: '张伟', phone: '13800001234', email: 'z@example.com' },
   education: [{ school: '北京理工大学', degree: '本科', major: '计算机科学与技术' }],
-  skills: [{ category: '编程语言', items: ['Java', 'Python'] }],
+  skills: [{ category: '工程能力', text: 'Java、Python 服务端开发' }],
   projects: [{ name: '二手交易平台', techStack: ['Java', 'Spring Boot'] }]
 }
 
@@ -37,10 +37,10 @@ const OPTIMIZED_JSON = {
     basics: { name: '张伟', phone: '13800001234', email: 'z@example.com' },
     education: [{ school: '北京理工大学', degree: '本科', major: '计算机科学与技术' }],
     skills: [
-      { category: '编程语言', items: ['Java', 'Python'] },
-      { category: '框架', items: ['Spring Boot'] }
+      { category: '工程能力', text: 'Java、Python 服务端开发' },
+      { category: '科研能力', text: 'Spring Boot 框架应用' }
     ],
-    projects: [{ name: '二手交易平台', techStack: ['Java', 'Spring Boot'], highlights: ['高并发订单接口优化'] }]
+    projects: [{ name: '二手交易平台', techStack: ['Java', 'Spring Boot'] }]
   },
   changes: [{ section: 'projects', before: '…', after: '…', reason: '突出与 JD 相关的技术栈' }]
 }

@@ -32,7 +32,7 @@ describe('draftToResume（F-16/#31）', () => {
     expect(resume.education).toEqual([
       { school: '北京理工大学', degree: '本科', major: '计算机科学与技术', startDate: '2022.09', endDate: '2026.06' }
     ])
-    expect(resume.skills).toEqual([{ category: '专业技能', items: ['Java', 'Python'] }])
+    expect(resume.skills).toEqual([{ category: '工程能力', text: 'Java；Python' }])
     expect(resume.meta?.title).toBe('上传的简历')
     expect(resume.meta?.baseResumeId).toBeNull()
   })

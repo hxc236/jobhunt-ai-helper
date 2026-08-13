@@ -90,9 +90,7 @@ export function renderSheet(resume: Resume): string {
   if ((resume.skills ?? []).length > 0) {
     parts.push('<h2>专业技能</h2>')
     for (const s of resume.skills ?? []) {
-      parts.push(
-        `<div class="skills-row"><span class="skills-cat">${esc(s.category ?? '')}</span>：${esc((s.items ?? []).join('、'))}${s.proficiency !== undefined ? ` <span class="muted">（${esc(s.proficiency)}）</span>` : ''}</div>`
-      )
+      parts.push(`<p class="skill-p"><span class="skills-cat">${esc(s.category)}</span>：${esc(s.text)}</p>`)
     }
   }
 
@@ -100,10 +98,9 @@ export function renderSheet(resume: Resume): string {
     parts.push('<h2>项目经历</h2>')
     for (const p of resume.projects ?? []) {
       parts.push(
-        `<div class="entry"><div class="entry-head"><span>${esc(p.name ?? '')}${p.role !== undefined && p.role !== '' ? `　<em>${esc(p.role)}</em>` : ''}</span><span>${esc(dateRange(p.startDate, p.endDate))}</span></div>`
+        `<div class="entry"><div class="entry-head"><span>${esc(p.name ?? '')}</span><span>${esc(dateRange(p.startDate, p.endDate))}</span></div>`
       )
       if (p.description !== undefined && p.description !== '') parts.push(`<div class="desc">${esc(p.description)}</div>`)
-      if ((p.highlights ?? []).length > 0) parts.push(`<ul>${(p.highlights ?? []).map((h) => `<li>${esc(h)}</li>`).join('')}</ul>`)
       if ((p.techStack ?? []).length > 0) parts.push(`<div class="tags">${(p.techStack ?? []).map((t) => `<span class="tag">${esc(t)}</span>`).join('')}</div>`)
       parts.push('</div>')
     }

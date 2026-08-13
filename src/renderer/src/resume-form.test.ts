@@ -29,17 +29,14 @@ const sample: Resume = {
       honors: ['校级一等奖学金（2024）']
     }
   ],
-  skills: [{ category: '编程语言', items: ['Java', 'Python'], proficiency: '熟练' }],
+  skills: [{ category: '工程能力', text: 'Java、Python 服务端开发' }],
   projects: [
     {
       name: '校园二手交易平台',
-      role: '后端开发',
       startDate: '2025-03',
       endDate: '2025-08',
       description: 'C2C 交易平台',
-      highlights: ['接口响应 p95 < 200ms'],
-      techStack: ['Java', 'Spring Boot'],
-      link: null
+      techStack: ['Java', 'Spring Boot']
     }
   ],
   experience: [
@@ -73,7 +70,7 @@ describe('resumeToForm / formToResume 往返', () => {
     expect(resume.basics?.jobIntention?.city).toEqual(['北京', '上海'])
     expect(resume.education?.[0]?.courses).toEqual(['数据结构', '操作系统', '数据库原理'])
     expect(resume.projects?.[0]?.techStack).toEqual(['Java', 'Spring Boot', 'Redis'])
-    expect(resume.skills?.[0]?.items).toEqual(['Java', 'Python', 'TypeScript'])
+    expect(resume.skills?.[0]?.text).toEqual('Java\nPython\nTypeScript')
   })
 })
 
@@ -101,8 +98,8 @@ describe('formToResume 归一化', () => {
     expect(resume.education).toHaveLength(1)
     expect(resume.education?.[0]).toMatchObject({ school: '清华大学', degree: '硕士' })
     expect(resume.education?.[0]?.courses).toEqual([])
-    // 全空技能组丢弃
-    expect(resume.skills).toEqual([{ category: '框架', items: ['Spring'], proficiency: '熟悉' }])
+    // 全空技能组丢弃；有效组映射为 分类+一段话（熟练度字段已废弃）
+    expect(resume.skills).toEqual([{ category: '框架', text: 'Spring' }])
   })
 
   it('国企字段映射：政治面貌/生源地/生日/性别/排名', () => {

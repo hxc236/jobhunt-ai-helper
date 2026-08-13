@@ -1,4 +1,4 @@
-import type { Resume, ResumeEducation, ResumeProject, ResumeSkillGroup } from '@shared/types/resume'
+import type { Resume, ResumeEducation, ResumeProject, ResumeSkillGroup, SkillCategory } from '@shared/types/resume'
 
 /**
  * 简历编辑器表单态（F-13/#25）：与 Resume 同构，但文本类字段用空串表示未填、
@@ -122,19 +122,19 @@ export function resumeToForm(resume: Resume): ResumeForm {
     honorsText: (e.honors ?? []).join('\n')
   }))
   form.skills = (resume.skills ?? []).map((s) => ({
-    category: s.category ?? '',
-    itemsText: (s.items ?? []).join('\n'),
-    proficiency: s.proficiency ?? ''
+    category: s.category,
+    itemsText: s.text,
+    proficiency: ''
   }))
   form.projects = (resume.projects ?? []).map((p) => ({
     name: p.name ?? '',
-    role: p.role ?? '',
+    role: '',
     startDate: p.startDate ?? '',
     endDate: p.endDate ?? '',
     description: p.description ?? '',
-    highlightsText: (p.highlights ?? []).join('\n'),
+    highlightsText: '',
     techStackText: (p.techStack ?? []).join('\n'),
-    link: p.link ?? ''
+    link: ''
   }))
   form.experience = (resume.experience ?? []).map((x) => ({
     company: x.company ?? '',
@@ -176,23 +176,16 @@ export function formToResume(form: ResumeForm): Resume {
     .filter(isNonEmptyEntry)
 
   const skills: ResumeSkillGroup[] = form.skills
-    .map((s) => ({
-      category: clean(s.category),
-      items: splitLines(s.itemsText),
-      proficiency: s.proficiency === '' ? undefined : s.proficiency
-    }))
-    .filter((s) => s.category !== undefined || s.items.length > 0)
+    .filter((s) => s.category.trim() !== '' && s.itemsText.trim() !== '')
+    .map((s) => ({ category: s.category.trim() as SkillCategory, text: s.itemsText.trim() }))
 
   const projects: ResumeProject[] = form.projects
     .map((p) => ({
       name: clean(p.name),
-      role: clean(p.role),
       startDate: clean(p.startDate),
       endDate: clean(p.endDate),
       description: clean(p.description),
-      highlights: splitLines(p.highlightsText),
-      techStack: splitLines(p.techStackText),
-      link: p.link.trim() === '' ? null : p.link.trim()
+      techStack: splitLines(p.techStackText)
     }))
     .filter(isNonEmptyEntry)
 

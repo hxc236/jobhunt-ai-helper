@@ -13,6 +13,7 @@ import { CrawlAgentChannelImpl } from './services/crawl-agent-channel'
 import { PlaywrightCdpDriver } from './services/crawl-driver'
 import { CrawlPresetService } from './services/crawl-presets'
 import { OptimizeService } from './services/optimize'
+import { migrateLegacyResumes } from './services/resume-migrate'
 import { TopicService } from './services/topic'
 import { LearnService } from './services/learn'
 import { InterviewService } from './services/interview'
@@ -83,6 +84,9 @@ app.commandLine.appendSwitch('remote-debugging-port', '0')
 app.whenReady().then(() => {
   // 单文件本地库：userData/jobhunt.db（EF-02；测试注入 :memory: 见 db/database.ts）
   const db = openDatabase(join(app.getPath('userData'), 'jobhunt.db'))
+  // ADR-0009：旧简历模型（技能条目/项目冗余字段）一次性幂等迁移 → v2
+  const migratedResumes = migrateLegacyResumes(db)
+  if (migratedResumes > 0) console.log(`[resume-migrate] ${migratedResumes} 份简历已迁移到 v2 模型`)
   const settings = new SettingsService(db)
   // F-01（#17）：职位卡（手动录入 + 去重，见 services/position.ts）
   const positions = new PositionService(db)

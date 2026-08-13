@@ -36,24 +36,26 @@
     }
   ],
   "skills": [
-    { "category": "编程语言", "items": ["Java", "Python"], "proficiency": "熟悉" },
-    { "category": "框架", "items": ["Spring Boot", "MyBatis"], "proficiency": "熟悉" },
-    { "category": "数据库", "items": ["MySQL", "Oracle", "SQLite"], "proficiency": "熟悉" }
+    {
+      "category": "工程能力",
+      "text": "熟悉 Java / Python，Spring Boot + MyBatis 服务端开发，MySQL / Oracle / SQLite 数据库设计与调优；有 Vue 2 前端开发与接口联调经验，可独立完成前后端协作开发。"
+    },
+    {
+      "category": "科研能力",
+      "text": "参与全国大学生数学建模竞赛，具备文献调研、数据分析与论文写作基础；课程设计全流程经验（需求分析→设计→实现→测试）。"
+    },
+    {
+      "category": "其他能力",
+      "text": "通过大学英语六级（CET-6），可阅读英文技术文档；有社团与班级干部经历，组织协调与沟通表达能力较好。"
+    }
   ],
   "projects": [
     {
       "name": "智慧校园一卡通管理系统",
-      "role": "项目负责人",
       "startDate": "2025-02",
       "endDate": "2025-07",
-      "description": "与校信息中心合作开发的一卡通数据管理系统（课程设计）",
-      "highlights": [
-        "负责需求分析、数据库设计与核心模块开发，使用 Spring Boot + MyBatis + Oracle",
-        "实现充值/消费流水查询与报表导出，支持 2 万+ 用户数据",
-        "编写系统设计文档与测试用例，项目获学院优秀课程设计"
-      ],
-      "techStack": ["Java", "Spring Boot", "Oracle", "Vue 2"],
-      "link": null
+      "description": "与校信息中心合作开发的一卡通数据管理系统：负责需求分析、数据库设计与核心模块开发，实现充值/消费流水查询与报表导出，支持 2 万+ 用户数据；编写系统设计文档与测试用例，获学院优秀课程设计。",
+      "techStack": ["Java", "Spring Boot", "Oracle", "Vue 2"]
     }
   ],
   "experience": [],
