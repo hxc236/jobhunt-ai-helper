@@ -20,7 +20,8 @@ export function renderResumeHtml(resume: Resume, photoDataUri?: string): string 
     box-shadow: 0 2px 8px rgba(0,0,0,.12); font-size: 14px; line-height: 1.65; color: #222; }
   .sheet h1 { font-size: 24px; letter-spacing: 4px; }
   .sheet .head { display: flex; justify-content: space-between; gap: 24px; align-items: flex-start; }
-  .sheet .facts { margin-top: 10px; max-width: 580px; }
+  .sheet .facts { margin-top: 8px; max-width: 580px; }
+  .sheet .facts + .facts { margin-top: 3px; }
   .sheet .fact { display: inline-block; margin: 2px 16px 2px 0; font-size: 13px; }
   .sheet .fact .k { color: #888; margin-right: 4px; }
   .sheet .photo { width: 76px; height: 100px; flex-shrink: 0; border: 1px solid #d8d8d8; background: #f5f5f5; }
@@ -66,14 +67,20 @@ export function renderSheet(resume: Resume, photoDataUri?: string): string {
     ['生日', b.birthday],
     ['政治面貌', b.politicalStatus],
     ['生源地', b.hometown],
-    ['现居城市', b.location],
+    ['现居城市', b.location]
+  ].filter((entry): entry is [string, string] => typeof entry[1] === 'string' && entry[1] !== '')
+  // 联系方式与个人信息分两行展示，避免全部挤在一行（如 电话 | 邮箱 | 生日 | 政治面貌）
+  const contactFacts = [
     ['电话', b.phone],
     ['邮箱', b.email]
   ].filter((entry): entry is [string, string] => typeof entry[1] === 'string' && entry[1] !== '')
+  const factLine = (list: [string, string][]): string =>
+    list.length > 0
+      ? `<div class="facts">${list.map(([k, v]) => `<span class="fact"><span class="k">${esc(k)}</span>${esc(v)}</span>`).join('')}</div>`
+      : ''
   parts.push(`<div class="head"><div><h1>${esc(b.name)}</h1>`)
-  if (facts.length > 0) {
-    parts.push(`<div class="facts">${facts.map(([k, v]) => `<span class="fact"><span class="k">${esc(k)}</span>${esc(v)}</span>`).join('')}</div>`)
-  }
+  parts.push(factLine(contactFacts))
+  parts.push(factLine(facts))
   if ((b.links ?? []).length > 0) {
     parts.push(
       `<div class="links">${(b.links ?? [])

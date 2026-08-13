@@ -57,6 +57,15 @@ describe('resume-render A4 模板（F-15/#30）', () => {
     expect(sheet).toContain('<span class="k">性别</span>男')
     expect(sheet).toContain('<span class="k">政治面貌</span>共青团员')
     expect(sheet).toContain('<span class="k">生源地</span>河北石家庄')
+    // 基本信息分两行：联系方式（电话/邮箱）在前，个人信息在后（避免挤成一行）
+    const factsBlocks = [...sheet.matchAll(/<div class="facts">([\s\S]*?)<\/div>/g)].map((m) => m[1])
+    expect(factsBlocks).toHaveLength(2)
+    expect(factsBlocks[0]).toContain('<span class="k">电话</span>13800001234')
+    expect(factsBlocks[0]).toContain('<span class="k">邮箱</span>z@example.com')
+    expect(factsBlocks[0]).not.toContain('性别')
+    expect(factsBlocks[1]).toContain('<span class="k">性别</span>男')
+    expect(factsBlocks[1]).toContain('<span class="k">政治面貌</span>共青团员')
+    expect(factsBlocks[1]).not.toContain('电话')
     expect(sheet).toContain('求职意向：后端开发工程师（校招）')
     expect(sheet).toContain('https://github.com/z')
     for (const heading of ['教育背景', '竞赛与荣誉', '项目经历', '实习经历', '自我评价']) {
