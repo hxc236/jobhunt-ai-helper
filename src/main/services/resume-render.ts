@@ -108,13 +108,6 @@ export function renderSheet(resume: Resume, photoDataUri?: string): string {
     }
   }
 
-  if ((resume.skills ?? []).length > 0) {
-    parts.push('<h2>专业技能</h2>')
-    for (const s of resume.skills ?? []) {
-      parts.push(`<p class="skill-p"><span class="skills-cat">${esc(s.category)}</span>：${esc(s.text)}</p>`)
-    }
-  }
-
   if ((resume.projects ?? []).length > 0) {
     parts.push('<h2>项目经历</h2>')
     for (const p of resume.projects ?? []) {
@@ -142,6 +135,14 @@ export function renderSheet(resume: Resume, photoDataUri?: string): string {
   if (resume.selfAssessment !== undefined && resume.selfAssessment !== '') {
     parts.push('<h2>自我评价</h2>')
     parts.push(`<div class="desc">${esc(resume.selfAssessment)}</div>`)
+  }
+
+  // 技能节置于简历最后（用户定稿：技能和其他放末尾）
+  if ((resume.skills ?? []).length > 0) {
+    parts.push('<h2>技能和其他</h2>')
+    for (const s of resume.skills ?? []) {
+      parts.push(`<p class="skill-p"><span class="skills-cat">${esc(s.category)}</span>：${esc(s.text)}</p>`)
+    }
   }
 
   parts.push('</div>')

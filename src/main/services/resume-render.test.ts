@@ -59,9 +59,12 @@ describe('resume-render A4 模板（F-15/#30）', () => {
     expect(sheet).toContain('<span class="k">生源地</span>河北石家庄')
     expect(sheet).toContain('求职意向：后端开发工程师（校招）')
     expect(sheet).toContain('https://github.com/z')
-    for (const heading of ['教育背景', '专业技能', '项目经历', '实习经历', '自我评价']) {
+    for (const heading of ['教育背景', '项目经历', '实习经历', '自我评价']) {
       expect(sheet).toContain(`<h2>${heading}</h2>`)
     }
+    // 技能节：标题为「技能和其他」，且置于简历最后（自我评价之后）
+    expect(sheet).toContain('<h2>技能和其他</h2>')
+    expect(sheet.indexOf('<h2>技能和其他</h2>')).toBeGreaterThan(sheet.indexOf('<h2>自我评价</h2>'))
     expect(sheet).toContain('北京理工大学　本科 · 计算机科学与技术')
     expect(sheet).toContain('GPA 3.7/4.0')
     // 课程标签行内 + 荣誉行内
