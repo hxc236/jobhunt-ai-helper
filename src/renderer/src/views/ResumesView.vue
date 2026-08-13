@@ -57,18 +57,18 @@ const a4ContentHeight = ref(1123)
 function fitFrameHeight(): void {
   const frame = a4FrameRef.value
   const doc = frame?.contentDocument
-  if (frame !== null && doc?.body !== undefined && doc.body.scrollHeight > 0) {
-    a4ContentHeight.value = doc.body.scrollHeight
-    frame.style.height = `${a4ContentHeight.value}px`
+  if (doc?.body !== undefined && doc.body.scrollHeight > 0) {
+    // +2 缓冲：抵消 iframe 1px 边框对视口的占用，确保内层 0 滚动
+    a4ContentHeight.value = doc.body.scrollHeight + 2
   }
   // 每次打开预览默认适配整页（用户手动缩放不触发 load，不会被覆盖）
   previewZoom.value = fitPreviewZoom()
 }
 
-/** 适配：让整页 A4（794×内容高）在弹窗可视区内完整可见（预留弹窗头/内边距缓冲）。 */
+/** 适配：让整页 A4（834×内容高）在弹窗可视区内完整可见（预留弹窗头/内边距缓冲）。 */
 function fitPreviewZoom(): number {
-  const widthFit = (960 - 60) / 794
-  const heightFit = (window.innerHeight * 0.86 - 110) / a4ContentHeight.value
+  const widthFit = (960 - 60) / 834
+  const heightFit = (window.innerHeight * 0.86 - 140) / a4ContentHeight.value
   return Math.max(PREVIEW_ZOOM_MIN, Math.min(1, widthFit, heightFit))
 }
 
@@ -724,8 +724,20 @@ onMounted(() => {
     </p>
     <p v-if="previewError" class="hint" style="color: #dc2626">{{ previewError }}</p>
     <div ref="a4BodyRef" class="a4-body">
-      <div class="a4-zoom" :style="{ zoom: previewZoom }">
-        <iframe ref="a4FrameRef" class="a4-frame" :srcdoc="previewHtml" title="A4 预览" @load="fitFrameHeight" />
+      <!-- transform 缩放（不改 iframe 内部视口，内层永不产生滚动条）；外层容器用缩放后尺寸占位。
+           iframe 宽 834 = body padding(20+20) + sheet 794：内容精确适配，无水平溢出 → 无任何内层滚动条 -->
+      <div
+        class="a4-zoom"
+        :style="{ width: `${Math.round(834 * previewZoom)}px`, height: `${Math.round(a4ContentHeight * previewZoom)}px` }"
+      >
+        <iframe
+          ref="a4FrameRef"
+          class="a4-frame"
+          :style="{ height: `${a4ContentHeight}px`, transform: `scale(${previewZoom})` }"
+          :srcdoc="previewHtml"
+          title="A4 预览"
+          @load="fitFrameHeight"
+        />
       </div>
     </div>
   </Modal>
@@ -1056,14 +1068,18 @@ onMounted(() => {
 .a4-zoom {
   line-height: 0;
   flex-shrink: 0;
+  /* 裁剪未变换 iframe 的溢出：滚动范围 = 缩放后的真实占位尺寸 */
+  overflow: hidden;
 }
 
 .a4-frame {
-  width: 794px;
+  /* 834 = body padding(20+20) + sheet 794：内容精确适配，无水平溢出 → 内层无滚动条 */
+  width: 834px;
   height: 1123px;
   border: 1px solid var(--border);
   background: #ffffff;
   box-shadow: 0 4px 24px color-mix(in srgb, #000000 12%, transparent);
+  transform-origin: top left;
 }
 
 .zoom-hint {
