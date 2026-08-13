@@ -283,6 +283,47 @@ function isNonEmptyEntry(entry: Record<string, unknown>): boolean {
   })
 }
 
+/** 整行全空（与 isNonEmptyEntry 互为否定；字符串需 trim 后判断）。 */
+function isAllEmpty(entry: Record<string, unknown>): boolean {
+  return Object.values(entry).every((value) => {
+    if (typeof value === 'string') return value.trim() === ''
+    if (Array.isArray(value)) return value.length === 0
+    return value === undefined || value === null
+  })
+}
+
+/** 可含空行的表单数组节（与空行保留逻辑同域）。 */
+const ROW_ARRAY_KEYS = ['education', 'projects', 'experience', 'research'] as const
+
+/**
+ * 保存回填合并：服务端回读（filled，空行已被 formToResume 过滤）与表单当前行合并，
+ * 把表单中未填的空行保留回原位——避免自动保存把用户刚添加的空表单清掉。
+ */
+export function keepEmptyRows(form: ResumeForm, filled: ResumeForm): ResumeForm {
+  const out: ResumeForm = {
+    ...filled,
+    basics: { ...filled.basics, links: [...filled.basics.links] }
+  }
+  for (const key of ROW_ARRAY_KEYS) {
+    const formRows = form[key] as unknown[]
+    const filledRows = filled[key] as unknown[]
+    if (formRows.some((r) => isAllEmpty(r as Record<string, unknown>))) {
+      // 保序合并：非空行按序取 filled 行，空行保留原位
+      let fi = 0
+      const merged = formRows.map((row) => {
+        if (isAllEmpty(row as Record<string, unknown>)) return row
+        const match = (filledRows[fi] as unknown) ?? row
+        fi += 1
+        return match
+      })
+      ;(out as unknown as Record<string, unknown>)[key] = merged
+    }
+  }
+  const emptyLinks = form.basics.links.filter((l) => l.label.trim() === '' && l.url.trim() === '')
+  if (emptyLinks.length > 0) out.basics.links.push(...emptyLinks)
+  return out
+}
+
 /** 校验错误定位：JSON Pointer → 分节中文提示（渲染层展示「保存时校验错误定位」）。 */
 const SECTION_LABELS: Record<string, string> = {
   basics: '基本信息',

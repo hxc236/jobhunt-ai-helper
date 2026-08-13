@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { defaultBaseTitle, emptyResumeForm, formToResume, issueSection, resumeToForm } from './resume-form'
+import { defaultBaseTitle, emptyResumeForm, formToResume, issueSection, keepEmptyRows, resumeToForm, type ResumeForm } from './resume-form'
 import type { Resume } from '@shared/types/resume'
 
 const sample: Resume = {
@@ -185,5 +185,43 @@ describe('issueSection 校验错误定位（F-13/#25 验收：保存时校验错
 
   it('未知分节/字段回退原路径', () => {
     expect(issueSection('/unknownField/x')).toBe('unknownField · x')
+  })
+})
+
+describe('keepEmptyRows（保存回填保留空行：自动保存不清掉刚添加的空表单）', () => {
+  const formWithEmpty: ResumeForm = (() => {
+    const f = resumeToForm(sample)
+    f.projects.push({ name: '', startDate: '', endDate: '', description: '', techStackText: '' }) // 末尾空行
+    f.experience.unshift({ company: '', title: '', startDate: '', endDate: '', highlightsText: '', techStackText: '' }) // 中间空行
+    f.basics.links.push({ label: '', url: '' })
+    return f
+  })()
+
+  it('空行保留在原位（末尾/中间），非空行被已保存内容替换', () => {
+    const filled = resumeToForm(formToResume(formWithEmpty)) // 服务端回读（空行已被过滤）
+    expect(filled.projects).toHaveLength(1)
+    expect(filled.experience).toHaveLength(1)
+    const merged = keepEmptyRows(formWithEmpty, filled)
+    // 项目：非空行 + 末尾空行
+    expect(merged.projects).toHaveLength(2)
+    expect(merged.projects[1]).toEqual({ name: '', startDate: '', endDate: '', description: '', techStackText: '' })
+    // 实习：中间空行保留在第 1 位，已填行在第 2 位（保序）
+    expect(merged.experience).toHaveLength(2)
+    expect(merged.experience[0].company).toBe('')
+    expect(merged.experience[1].company).toBe('某互联网公司')
+    // 空链接保留
+    expect(merged.basics.links).toHaveLength(2)
+    expect(merged.basics.links[1]).toEqual({ label: '', url: '' })
+    // 非空行内容来自 filled（服务端归一结果）
+    expect(merged.education).toEqual(filled.education)
+  })
+
+  it('全部空行时：filled 为空数组，空行全部保留', () => {
+    const f = emptyResumeForm()
+    f.projects.push({ name: '', startDate: '', endDate: '', description: '', techStackText: '' })
+    const filled = resumeToForm(formToResume(f))
+    expect(filled.projects).toHaveLength(0)
+    const merged = keepEmptyRows(f, filled)
+    expect(merged.projects).toHaveLength(1)
   })
 })

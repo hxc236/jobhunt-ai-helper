@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import type { Resume, StoredResume } from '@shared/types/resume'
-import { defaultBaseTitle, emptyResumeForm, formToResume, issueSection, resumeToForm, SKILL_CATEGORIES, type ResumeForm } from '../resume-form'
+import { defaultBaseTitle, emptyResumeForm, formToResume, issueSection, keepEmptyRows, resumeToForm, SKILL_CATEGORIES, type ResumeForm } from '../resume-form'
 import Modal from '../components/Modal.vue'
 import Resizer from '../components/Resizer.vue'
 import Icon from '../components/Icon.vue'
@@ -335,7 +335,8 @@ async function save(): Promise<void> {
     if (closed) return // 已关闭：不回填表单、不重新打开编辑器
     successMessage.value = `已保存「${stored.meta.title ?? stored.meta.id}」`
     loadingForm = true
-    Object.assign(form, resumeToForm(stored))
+    // 回填保留空行：自动保存/手动保存不会清掉用户刚添加的空表单（keepEmptyRows）
+    Object.assign(form, keepEmptyRows(form, resumeToForm(stored)))
     loadingForm = false
     formDirty = false
     if (jsonMode.value) jsonText.value = JSON.stringify(stored, null, 2)
@@ -367,6 +368,73 @@ async function confirmDelete(): Promise<void> {
   } catch (err) {
     errorMessage.value = `删除失败：${String(err)}`
   }
+}
+
+/** 编辑器分节收起（问题反馈：表单太长时折叠已填内容）。localStorage 持久化。 */
+const FOLD_KEYS = ['basics', 'education', 'honors', 'skills', 'projects', 'experience', 'research', 'selfAssessment'] as const
+type FoldKey = (typeof FOLD_KEYS)[number]
+const FOLD_STORAGE_KEY = 'resume-editor.fold.v1'
+
+function loadFold(): Record<FoldKey, boolean> {
+  const init = Object.fromEntries(FOLD_KEYS.map((k) => [k, false])) as Record<FoldKey, boolean>
+  try {
+    const raw = localStorage.getItem(FOLD_STORAGE_KEY)
+    if (raw !== null) {
+      const parsed = JSON.parse(raw) as Record<string, boolean>
+      for (const k of FOLD_KEYS) if (typeof parsed[k] === 'boolean') init[k] = parsed[k]
+    }
+  } catch {
+    // 忽略损坏数据，用默认展开
+  }
+  return init
+}
+
+const fold = reactive<Record<FoldKey, boolean>>(loadFold())
+watch(fold, () => {
+  try {
+    localStorage.setItem(FOLD_STORAGE_KEY, JSON.stringify(fold))
+  } catch {
+    // 存储不可用（隐私模式等）时忽略
+  }
+})
+
+function toggleFold(key: FoldKey): void {
+  fold[key] = !fold[key]
+}
+
+/** 收起时标题旁徽标：列表节显示条数；单块节显示「已填写」。空时返回 ''。 */
+function foldBadge(key: FoldKey): string {
+  switch (key) {
+    case 'education':
+    case 'projects':
+    case 'experience':
+    case 'research':
+      return form[key].length > 0 ? `${form[key].length}条` : ''
+    case 'honors':
+      return form.honorsText.trim() !== '' ? '已填写' : ''
+    case 'skills':
+      return SKILL_CATEGORIES.some((c) => form.skills[c].trim() !== '') ? '已填写' : ''
+    case 'selfAssessment':
+      return form.selfAssessment.trim() !== '' ? '已填写' : ''
+    case 'basics': {
+      const b = form.basics
+      const values = [
+        b.name, b.phone, b.email, b.location, b.birthday, b.gender, b.politicalStatus, b.hometown,
+        b.jobIntention.position, b.jobIntention.cityText, b.jobIntention.salary, b.photo,
+        ...b.links.flatMap((l) => [l.label, l.url])
+      ]
+      return values.some((v) => v.trim() !== '') ? '已填写' : ''
+    }
+  }
+}
+
+/** 收起状态下点「+ 添加」：先展开该节再添加（避免新行不可见）。 */
+function addRowAndExpand<K extends keyof ResumeForm>(
+  key: K,
+  template: ResumeForm[K] extends Array<infer T> ? T : never
+): void {
+  if (FOLD_KEYS.includes(key as FoldKey)) fold[key as FoldKey] = false
+  addRow(key, template)
 }
 
 function addRow<K extends keyof ResumeForm>(key: K, template: ResumeForm[K] extends Array<infer T> ? T : never): void {
@@ -563,8 +631,13 @@ onMounted(() => {
 
         <form v-else @submit.prevent="save" @focusout="scheduleAutosave">
           <div class="editor-sec">
-            <h3>基本信息 <em class="soe">国企字段：政治面貌 / 生源地</em></h3>
-            <div class="form-grid">
+            <div class="fold-head" role="button" tabindex="0" @click="toggleFold('basics')" @keydown.enter.prevent="toggleFold('basics')">
+              <span class="fold-caret" :class="{ open: !fold.basics }">▸</span>
+              <h3>基本信息 <em class="soe">国企字段：政治面貌 / 生源地</em></h3>
+              <span v-if="fold.basics && foldBadge('basics') !== ''" class="fold-badge">{{ foldBadge('basics') }}</span>
+            </div>
+            <div v-show="!fold.basics">
+              <div class="form-grid">
               <label class="field span2"><span class="label">简历名称</span><input v-model="form.meta.title" :placeholder="defaultBaseTitle(form.basics.name) || '如：技术向基准简历'" /></label>
               <label class="field"><span class="label">姓名 <em class="required">*</em></span><input v-model="form.basics.name" /></label>
               <div class="field">
@@ -605,11 +678,18 @@ onMounted(() => {
               <button class="btn ghost" type="button" @click="form.basics.links.splice(i, 1)">删除</button>
             </div>
             <button class="btn ghost" type="button" @click="form.basics.links.push({ label: '', url: '' })">+ 添加链接</button>
+            </div>
           </div>
 
           <div class="editor-sec">
-            <h3>教育经历 <button class="btn" type="button" @click="addRow('education', EMPTY_EDU)">+ 添加</button></h3>
-            <div v-for="(e, i) in form.education" :key="i" class="entry">
+            <div class="fold-head" role="button" tabindex="0" @click="toggleFold('education')" @keydown.enter.prevent="toggleFold('education')">
+              <span class="fold-caret" :class="{ open: !fold.education }">▸</span>
+              <h3>教育经历</h3>
+              <span v-if="fold.education && foldBadge('education') !== ''" class="fold-badge">{{ foldBadge('education') }}</span>
+              <button class="btn" type="button" @click.stop="addRowAndExpand('education', EMPTY_EDU)">+ 添加</button>
+            </div>
+            <div v-show="!fold.education">
+              <div v-for="(e, i) in form.education" :key="i" class="entry">
               <div class="entry-head">
                 <span class="entry-label">第 {{ i + 1 }} 条</span>
                 <button class="btn ghost" type="button" @click="removeRow('education', i)">删除</button>
@@ -625,28 +705,47 @@ onMounted(() => {
                 <label class="field"><span class="label">相关课程（每行一个）</span><textarea v-model="e.coursesText" rows="2" /></label>
               </div>
             </div>
-          </div>
-
-          <div class="editor-sec">
-            <h3>竞赛和荣誉</h3>
-            <div class="form-grid">
-              <label class="field span2"><span class="label">荣誉/奖项（每行一个，A4 单行·连接）</span><textarea v-model="form.honorsText" rows="3" placeholder="国家奖学金（2025）&#10;蓝桥杯省一等奖" /></label>
             </div>
           </div>
 
           <div class="editor-sec">
-            <h3>技能</h3>
-            <div class="form-grid">
-              <label v-for="c in SKILL_CATEGORIES" :key="c" class="field span2">
-                <span class="label">{{ c }}</span>
-                <textarea v-model="form.skills[c]" rows="2" placeholder="一段话描述……（空分类不会出现在简历中）" />
-              </label>
+            <div class="fold-head" role="button" tabindex="0" @click="toggleFold('honors')" @keydown.enter.prevent="toggleFold('honors')">
+              <span class="fold-caret" :class="{ open: !fold.honors }">▸</span>
+              <h3>竞赛和荣誉</h3>
+              <span v-if="fold.honors && foldBadge('honors') !== ''" class="fold-badge">{{ foldBadge('honors') }}</span>
+            </div>
+            <div v-show="!fold.honors">
+              <div class="form-grid">
+                <label class="field span2"><span class="label">荣誉/奖项（每行一个，A4 单行·连接）</span><textarea v-model="form.honorsText" rows="3" placeholder="国家奖学金（2025）&#10;蓝桥杯省一等奖" /></label>
+              </div>
             </div>
           </div>
 
           <div class="editor-sec">
-            <h3>项目经历 <button class="btn" type="button" @click="addRow('projects', EMPTY_PROJECT)">+ 添加</button></h3>
-            <div v-for="(p, i) in form.projects" :key="i" class="entry">
+            <div class="fold-head" role="button" tabindex="0" @click="toggleFold('skills')" @keydown.enter.prevent="toggleFold('skills')">
+              <span class="fold-caret" :class="{ open: !fold.skills }">▸</span>
+              <h3>技能</h3>
+              <span v-if="fold.skills && foldBadge('skills') !== ''" class="fold-badge">{{ foldBadge('skills') }}</span>
+            </div>
+            <div v-show="!fold.skills">
+              <div class="form-grid">
+                <label v-for="c in SKILL_CATEGORIES" :key="c" class="field span2">
+                  <span class="label">{{ c }}</span>
+                  <textarea v-model="form.skills[c]" rows="2" placeholder="一段话描述……（空分类不会出现在简历中）" />
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div class="editor-sec">
+            <div class="fold-head" role="button" tabindex="0" @click="toggleFold('projects')" @keydown.enter.prevent="toggleFold('projects')">
+              <span class="fold-caret" :class="{ open: !fold.projects }">▸</span>
+              <h3>项目经历</h3>
+              <span v-if="fold.projects && foldBadge('projects') !== ''" class="fold-badge">{{ foldBadge('projects') }}</span>
+              <button class="btn" type="button" @click.stop="addRowAndExpand('projects', EMPTY_PROJECT)">+ 添加</button>
+            </div>
+            <div v-show="!fold.projects">
+              <div v-for="(p, i) in form.projects" :key="i" class="entry">
               <div class="entry-head">
                 <span class="entry-label">第 {{ i + 1 }} 条</span>
                 <button class="btn ghost" type="button" @click="removeRow('projects', i)">删除</button>
@@ -659,11 +758,18 @@ onMounted(() => {
                 <label class="field span2"><span class="label">技术栈（每行一个）</span><textarea v-model="p.techStackText" rows="2" /></label>
               </div>
             </div>
+            </div>
           </div>
 
           <div class="editor-sec">
-            <h3>实习经历 <button class="btn" type="button" @click="addRow('experience', EMPTY_EXP)">+ 添加</button></h3>
-            <div v-for="(x, i) in form.experience" :key="i" class="entry">
+            <div class="fold-head" role="button" tabindex="0" @click="toggleFold('experience')" @keydown.enter.prevent="toggleFold('experience')">
+              <span class="fold-caret" :class="{ open: !fold.experience }">▸</span>
+              <h3>实习经历</h3>
+              <span v-if="fold.experience && foldBadge('experience') !== ''" class="fold-badge">{{ foldBadge('experience') }}</span>
+              <button class="btn" type="button" @click.stop="addRowAndExpand('experience', EMPTY_EXP)">+ 添加</button>
+            </div>
+            <div v-show="!fold.experience">
+              <div v-for="(x, i) in form.experience" :key="i" class="entry">
               <div class="entry-head">
                 <span class="entry-label">第 {{ i + 1 }} 条</span>
                 <button class="btn ghost" type="button" @click="removeRow('experience', i)">删除</button>
@@ -677,11 +783,18 @@ onMounted(() => {
                 <label class="field"><span class="label">技术栈（每行一个）</span><textarea v-model="x.techStackText" rows="3" /></label>
               </div>
             </div>
+            </div>
           </div>
 
           <div class="editor-sec">
-            <h3>科研经历 <button class="btn" type="button" @click="addRow('research', EMPTY_RESEARCH)">+ 添加</button></h3>
-            <div v-for="(r, i) in form.research" :key="i" class="entry">
+            <div class="fold-head" role="button" tabindex="0" @click="toggleFold('research')" @keydown.enter.prevent="toggleFold('research')">
+              <span class="fold-caret" :class="{ open: !fold.research }">▸</span>
+              <h3>科研经历</h3>
+              <span v-if="fold.research && foldBadge('research') !== ''" class="fold-badge">{{ foldBadge('research') }}</span>
+              <button class="btn" type="button" @click.stop="addRowAndExpand('research', EMPTY_RESEARCH)">+ 添加</button>
+            </div>
+            <div v-show="!fold.research">
+              <div v-for="(r, i) in form.research" :key="i" class="entry">
               <div class="entry-head">
                 <span class="entry-label">第 {{ i + 1 }} 条</span>
                 <button class="btn ghost" type="button" @click="removeRow('research', i)">删除</button>
@@ -694,11 +807,18 @@ onMounted(() => {
                 <label class="field span2"><span class="label">成果（单条）</span><input v-model="r.achievement" placeholder="如：以第一作者发表 EI 论文一篇" /></label>
               </div>
             </div>
+            </div>
           </div>
 
           <div class="editor-sec">
-            <h3>自我评价</h3>
-            <textarea v-model="form.selfAssessment" rows="3" placeholder="可留空（优化稿可生成）" />
+            <div class="fold-head" role="button" tabindex="0" @click="toggleFold('selfAssessment')" @keydown.enter.prevent="toggleFold('selfAssessment')">
+              <span class="fold-caret" :class="{ open: !fold.selfAssessment }">▸</span>
+              <h3>自我评价</h3>
+              <span v-if="fold.selfAssessment && foldBadge('selfAssessment') !== ''" class="fold-badge">{{ foldBadge('selfAssessment') }}</span>
+            </div>
+            <div v-show="!fold.selfAssessment">
+              <textarea v-model="form.selfAssessment" rows="3" placeholder="可留空（优化稿可生成）" />
+            </div>
           </div>
         </form>
       </template>
@@ -982,11 +1102,47 @@ onMounted(() => {
   font-size: 12.5px;
   font-weight: 600;
   letter-spacing: -0.01em;
-  margin-bottom: 10px;
+  margin: 0;
+}
+
+/* 分节折叠头：整行可点切换收起/展开 */
+.fold-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
+  cursor: pointer;
+  user-select: none;
+  padding: 2px 0;
+  margin-bottom: 10px;
+}
+
+.fold-head:hover .fold-caret {
+  color: var(--fg);
+}
+
+.fold-caret {
+  font-size: 11px;
+  color: #999;
+  transition: transform 0.15s;
+  flex-shrink: 0;
+}
+
+.fold-caret.open {
+  transform: rotate(90deg);
+}
+
+.fold-badge {
+  font-size: 11.5px;
+  color: #047857;
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  border-radius: 999px;
+  padding: 0 8px;
+  line-height: 1.7;
+}
+
+.fold-head .btn {
+  margin-left: auto;
 }
 
 .sub-title {
