@@ -1,9 +1,10 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { openDatabase } from '../db/database'
 import { ResumeValidationError } from './resume-schema'
+import { PhotoStore } from './photo-store'
 import { ResumeNotFoundError, ResumeService } from './resume'
 import type { Resume } from '../../shared/types/resume'
 import soeResume from './fixtures/resume-soe.json'
@@ -242,5 +243,51 @@ describe('ResumeService', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+
+  describe('照片（ADR-0009）', () => {
+    it('删除简历时照片文件随删；无照片不报错', () => {
+      const dir = mkdtempSync(join(tmpdir(), 'resume-photo-'))
+      try {
+        const photos = new PhotoStore(dir)
+        writeFileSync(join(dir, 'p.png'), 'png-bytes')
+        const svc = new ResumeService(openDatabase(':memory:'), photos)
+        const created = svc.create({
+          ...baseResume(),
+          basics: { ...baseResume().basics, photo: 'p.png' }
+        })
+        svc.delete(created.meta.id)
+        expect(existsSync(join(dir, 'p.png'))).toBe(false)
+        expect(svc.list()).toEqual([])
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    })
+
+    it('renderFromResume / renderHtml：照片以 data URI 内嵌；缺照片/文件缺失不渲染照片位', () => {
+      const dir = mkdtempSync(join(tmpdir(), 'resume-photo-'))
+      try {
+        const photos = new PhotoStore(dir)
+        writeFileSync(join(dir, 'p.png'), 'png-bytes')
+        const svc = new ResumeService(openDatabase(':memory:'), photos)
+        const created = svc.create({
+          ...baseResume(),
+          basics: { ...baseResume().basics, photo: 'p.png' }
+        })
+        const html = svc.renderHtml(created.meta.id)
+        expect(html).toContain('class="photo"')
+        expect(html).toContain('data:image/png;base64,')
+
+        expect(svc.renderFromResume(baseResume())).not.toContain('class="photo"')
+        const missing = svc.renderFromResume({
+          ...baseResume(),
+          basics: { ...baseResume().basics, photo: 'missing.png' }
+        })
+        expect(missing).not.toContain('class="photo"')
+        expect(missing).toContain('<h1>张伟</h1>')
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    })
   })
 })

@@ -38,7 +38,6 @@ const sample: Resume = {
     }
   ],
   experience: [{ company: '某公司', title: '实习生', highlights: ['完成订单模块'] }],
-  certificates: [{ name: 'CET-6', issuer: '教育部', date: '2024-06' }],
   selfAssessment: '基础扎实'
 }
 
@@ -54,19 +53,38 @@ describe('resume-render A4 模板（F-15/#30）', () => {
   it('分节渲染：基本信息/意向/链接/教育/技能/项目/经历/证书/自评齐全', () => {
     const sheet = renderSheet(sample)
     expect(sheet).toContain('<h1>张伟</h1>')
-    expect(sheet).toContain('男　|　2004-06　|　共青团员　|　河北石家庄') // headline
+    // 事实带标签行内排布（不再无标签 | 连排）
+    expect(sheet).toContain('<span class="k">性别</span>男')
+    expect(sheet).toContain('<span class="k">政治面貌</span>共青团员')
+    expect(sheet).toContain('<span class="k">生源地</span>河北石家庄')
     expect(sheet).toContain('求职意向：后端开发工程师（校招）')
     expect(sheet).toContain('https://github.com/z')
-    for (const heading of ['教育背景', '专业技能', '项目经历', '实习经历', '证书', '自我评价']) {
+    for (const heading of ['教育背景', '专业技能', '项目经历', '实习经历', '自我评价']) {
       expect(sheet).toContain(`<h2>${heading}</h2>`)
     }
     expect(sheet).toContain('北京理工大学　本科 · 计算机科学与技术')
     expect(sheet).toContain('GPA 3.7/4.0')
+    // 课程标签行内 + 荣誉行内
+    expect(sheet).toContain('相关课程：<span class="tag">数据结构</span>')
+    expect(sheet).toContain('荣誉：一等奖学金')
     expect(sheet).toContain('工程能力')
     expect(sheet).toContain('Java、Python 服务端开发')
     expect(sheet).toContain('<span class="tag">Java</span>')
     expect(sheet).toContain('某公司　<em>实习生</em>')
+    // 证书栏不再渲染（用户定稿：A4 不展示证书）
+    expect(sheet).not.toContain('<h2>证书</h2>')
+    expect(sheet).not.toContain('CET-6')
     expect(sheet).toContain('基础扎实')
+  })
+
+  it('照片：提供 data URI → 头部右侧照片位；缺省不渲染照片位（布局不塌）', () => {
+    const withPhoto = renderSheet(sample, 'data:image/png;base64,AAAA')
+    expect(withPhoto).toContain('<div class="photo"><img src="data:image/png;base64,AAAA" alt="照片" /></div>')
+    expect(withPhoto).toContain('<div class="head">')
+
+    const without = renderSheet(sample)
+    expect(without).not.toContain('class="photo"')
+    expect(without).toContain('<h1>张伟</h1>')
   })
 
   it('空节省略：无经历/证书/自评 → 不输出对应分节', () => {

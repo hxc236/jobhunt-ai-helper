@@ -27,6 +27,7 @@ const legacyResume = {
     }
   ],
   experience: [{ company: '某公司', title: '实习生', highlights: ['完成订单模块'] }],
+  certificates: [{ name: 'CET-6', issuer: '教育部', date: '2024-06' }],
   selfAssessment: '基础扎实'
 }
 
@@ -62,10 +63,11 @@ describe('transformLegacyResume', () => {
         techStack: ['Java', 'Spring Boot']
       }
     ])
-    // 其余分节原样保留
+    // 其余分节原样保留；证书字段剥离（已从模型移除）
     expect(next.experience).toEqual(legacyResume.experience)
     expect(next.basics).toEqual(legacyResume.basics)
     expect(next.meta).toEqual(legacyResume.meta)
+    expect(next).not.toHaveProperty('certificates')
   })
 
   it('技能空条目 → skills 省略；项目字段缺失保持 undefined', () => {

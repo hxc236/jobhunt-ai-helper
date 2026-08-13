@@ -56,7 +56,6 @@ export interface ResumeForm {
     highlightsText: string
     techStackText: string
   }>
-  certificates: Array<{ name: string; issuer: string; date: string }>
   selfAssessment: string
 }
 
@@ -80,7 +79,6 @@ export function emptyResumeForm(): ResumeForm {
     skills: [],
     projects: [],
     experience: [],
-    certificates: [],
     selfAssessment: ''
   }
 }
@@ -144,11 +142,6 @@ export function resumeToForm(resume: Resume): ResumeForm {
     highlightsText: (x.highlights ?? []).join('\n'),
     techStackText: (x.techStack ?? []).join('\n')
   }))
-  form.certificates = (resume.certificates ?? []).map((c) => ({
-    name: c.name ?? '',
-    issuer: c.issuer ?? '',
-    date: c.date ?? ''
-  }))
   form.selfAssessment = resume.selfAssessment ?? ''
   return form
 }
@@ -200,10 +193,6 @@ export function formToResume(form: ResumeForm): Resume {
     }))
     .filter(isNonEmptyEntry)
 
-  const certificates = form.certificates
-    .map((c) => ({ name: clean(c.name), issuer: clean(c.issuer), date: clean(c.date) }))
-    .filter(isNonEmptyEntry)
-
   const resume: Resume = {
     meta: {
       title: clean(form.meta.title),
@@ -230,7 +219,6 @@ export function formToResume(form: ResumeForm): Resume {
     skills,
     projects,
     experience,
-    certificates,
     selfAssessment: clean(form.selfAssessment)
   }
   return resume
@@ -265,7 +253,6 @@ const SECTION_LABELS: Record<string, string> = {
   skills: '技能',
   projects: '项目经历',
   experience: '实习经历',
-  certificates: '证书',
   selfAssessment: '自我评价'
 }
 
@@ -303,9 +290,7 @@ const FIELD_LABELS: Record<string, string> = {
   techStack: '技术栈',
   link: '链接',
   company: '公司',
-  title: '名称',
-  issuer: '颁发机构',
-  date: '日期'
+  title: '名称'
 }
 
 /**

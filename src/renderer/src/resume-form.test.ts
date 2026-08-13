@@ -49,7 +49,6 @@ const sample: Resume = {
       techStack: ['Java']
     }
   ],
-  certificates: [{ name: 'CET-6', issuer: '教育部', date: '2024-12' }],
   selfAssessment: '基础扎实'
 }
 

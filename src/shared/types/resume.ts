@@ -93,12 +93,6 @@ export interface ResumeExperience {
   techStack?: string[]
 }
 
-export interface ResumeCertificate {
-  name?: string
-  issuer?: string
-  date?: string
-}
-
 /** 简历 JSON（与 resume.schema.json 对齐；meta.id / meta.updatedAt 由服务端管理，输入可缺省）。 */
 export interface Resume {
   meta: ResumeMeta
@@ -107,7 +101,6 @@ export interface Resume {
   skills?: ResumeSkillGroup[]
   projects?: ResumeProject[]
   experience?: ResumeExperience[]
-  certificates?: ResumeCertificate[]
   /** 自我评价（可留空，优化稿生成） */
   selfAssessment?: string
 }

@@ -286,7 +286,6 @@ const EMPTY_PROJECT: ResumeForm['projects'][number] = {
 const EMPTY_EXP: ResumeForm['experience'][number] = {
   company: '', title: '', startDate: '', endDate: '', highlightsText: '', techStackText: ''
 }
-const EMPTY_CERT: ResumeForm['certificates'][number] = { name: '', issuer: '', date: '' }
 
 function fmtDate(iso: string | undefined): string {
   return iso === undefined ? '' : iso.slice(0, 10)
@@ -574,21 +573,6 @@ onMounted(() => void load())
                 <label class="field"><span class="label">结束时间</span><input v-model="x.endDate" placeholder="2026-06" /></label>
                 <label class="field"><span class="label">要点（每行一个）</span><textarea v-model="x.highlightsText" rows="3" /></label>
                 <label class="field"><span class="label">技术栈（每行一个）</span><textarea v-model="x.techStackText" rows="3" /></label>
-              </div>
-            </div>
-          </div>
-
-          <div class="editor-sec">
-            <h3>证书 <button class="btn" type="button" @click="addRow('certificates', EMPTY_CERT)">+ 添加</button></h3>
-            <div v-for="(c, i) in form.certificates" :key="i" class="entry">
-              <div class="entry-head">
-                <span class="entry-label">第 {{ i + 1 }} 条</span>
-                <button class="btn ghost" type="button" @click="removeRow('certificates', i)">删除</button>
-              </div>
-              <div class="form-grid">
-                <label class="field"><span class="label">证书名</span><input v-model="c.name" placeholder="CET-6" /></label>
-                <label class="field"><span class="label">颁发机构</span><input v-model="c.issuer" /></label>
-                <label class="field"><span class="label">日期（YYYY-MM）</span><input v-model="c.date" placeholder="2024-12" /></label>
               </div>
             </div>
           </div>

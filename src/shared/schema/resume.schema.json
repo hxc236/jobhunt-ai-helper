@@ -102,17 +102,6 @@
         }
       }
     },
-    "certificates": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "name": { "type": "string" },
-          "issuer": { "type": "string" },
-          "date": { "type": "string" }
-        }
-      }
-    },
     "selfAssessment": { "type": "string", "description": "自我评价（可留空，优化稿生成）" }
   }
 }

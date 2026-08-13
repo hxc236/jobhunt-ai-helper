@@ -28,9 +28,10 @@ interface LegacyProject {
 type LegacyResume = Omit<Resume, 'skills' | 'projects'> & {
   skills?: LegacySkillGroup[]
   projects?: LegacyProject[]
+  certificates?: Array<{ name?: string; issuer?: string; date?: string }>
 }
 
-/** 形状检测：任一技能组带 items/proficiency，或任一项目带 role/highlights/link → 旧结构。 */
+/** 形状检测：任一技能组带 items/proficiency，任一项目带 role/highlights/link，或带 certificates → 旧结构。 */
 export function isLegacyResume(value: unknown): value is LegacyResume {
   if (typeof value !== 'object' || value === null) return false
   const resume = value as Partial<LegacyResume>
@@ -40,7 +41,7 @@ export function isLegacyResume(value: unknown): value is LegacyResume {
   const legacyProject = (resume.projects ?? []).some(
     (p) => p.role !== undefined || Array.isArray(p.highlights) || p.link !== undefined
   )
-  return legacySkill || legacyProject
+  return legacySkill || legacyProject || Array.isArray(resume.certificates)
 }
 
 /** 旧结构 → v2：技能条目合并为「工程能力」一段话（格式：分类：条目、条目；…）；项目裁剪。 */
@@ -66,7 +67,9 @@ export function transformLegacyResume(legacy: LegacyResume): Resume {
     techStack: p.techStack
   }))
 
-  return { ...legacy, skills, projects }
+  // 证书字段已从模型移除（用户定稿）——旧数据一并剥离
+  const { certificates: _dropped, ...rest } = legacy
+  return { ...rest, skills, projects }
 }
 
 /** 扫描 resumes 表并转换旧结构行；返回转换行数（幂等：重复调用返回 0）。 */

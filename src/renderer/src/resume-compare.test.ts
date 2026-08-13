@@ -10,7 +10,6 @@ const base: Resume = {
   skills: [{ category: '工程能力', text: 'Java 开发' }],
   projects: [{ name: '平台', techStack: ['Java'] }],
   experience: [],
-  certificates: [],
   selfAssessment: '基础扎实'
 }
 
@@ -40,7 +39,6 @@ describe('diffResumeSections（F-20/#34 验收：对比视图高亮正确）', (
     expect(bySection.skills?.reason).toBe('补充 JD 关键词 Python')
     expect(bySection.projects?.changed).toBe(true) // techStack 增 Spring Boot
     expect(bySection.experience?.changed).toBe(false)
-    expect(bySection.certificates?.changed).toBe(false)
     expect(bySection.selfAssessment?.changed).toBe(true)
     expect(bySection.selfAssessment?.reason).toBe('突出学习能力')
   })
@@ -58,7 +56,7 @@ describe('diffResumeSections（F-20/#34 验收：对比视图高亮正确）', (
     }
     const diffs = diffResumeSections(empty, withExp, [])
     expect(diffs.find((d) => d.section === 'experience')?.changed).toBe(true)
-    expect(diffs.find((d) => d.section === 'certificates')?.changed).toBe(false)
+    expect(diffs.find((d) => d.section === 'skills')?.changed).toBe(false) // 双方均无 → 未改
   })
 })
 

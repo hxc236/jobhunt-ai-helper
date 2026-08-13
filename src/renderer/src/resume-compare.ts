@@ -21,7 +21,6 @@ const SECTIONS = [
   'skills',
   'projects',
   'experience',
-  'certificates',
   'selfAssessment'
 ] as const
 
