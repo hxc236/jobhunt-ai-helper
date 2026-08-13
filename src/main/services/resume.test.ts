@@ -1,9 +1,10 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { openDatabase } from '../db/database'
 import { ResumeValidationError } from './resume-schema'
+import { PhotoStore } from './photo-store'
 import { ResumeNotFoundError, ResumeService } from './resume'
 import type { Resume } from '../../shared/types/resume'
 import soeResume from './fixtures/resume-soe.json'
@@ -83,6 +84,49 @@ describe('ResumeService', () => {
       svc.create(soeResume as Resume)
       expect(svc.list()).toHaveLength(2)
     })
+
+    it('v2 拒绝旧字段：技能 items/proficiency、项目 role/highlights/link（ADR-0009）', () => {
+      const svc = makeService()
+      const legacy = {
+        meta: {},
+        basics: { name: '张伟' },
+        education: [{ school: 'X大学', degree: '本科', major: '计算机' }],
+        skills: [{ category: '编程语言', items: ['Java'], proficiency: '熟练' }],
+        projects: [{ name: '平台', role: '后端', highlights: ['要点'], link: 'https://x' }]
+      }
+      try {
+        svc.create(legacy as unknown as Resume)
+        expect.unreachable('应当抛出 ResumeValidationError')
+      } catch (error) {
+        expect(error).toBeInstanceOf(ResumeValidationError)
+        const issues = (error as ResumeValidationError).issues
+        // additionalProperties:false 在对象级报错（/skills/0 而非 /skills/0/items）
+        expect(issues.some((i) => i.instancePath === '/skills/0' && i.keyword === 'additionalProperties')).toBe(true)
+        expect(issues.some((i) => i.instancePath === '/projects/0' && i.keyword === 'additionalProperties')).toBe(true)
+        // 非三分类枚举同时被拒
+        expect(issues.some((i) => i.instancePath === '/skills/0/category' && i.keyword === 'enum')).toBe(true)
+      }
+      expect(svc.list()).toEqual([])
+    })
+
+    it('v2 技能分类枚举约束：非三分类拒绝；photo 可选字符串接受', () => {
+      const svc = makeService()
+      expect(() =>
+        svc.create({
+          meta: {},
+          basics: { name: '张伟' },
+          education: [],
+          skills: [{ category: '语言', text: 'Java' }]
+        } as unknown as Resume)
+      ).toThrow(ResumeValidationError)
+      const created = svc.create({
+        meta: {},
+        basics: { name: '张伟', photo: 'res-x.jpg' },
+        education: [],
+        skills: [{ category: '工程能力', text: 'Java 服务端开发' }]
+      })
+      expect(created.basics.photo).toBe('res-x.jpg')
+    })
   })
 
   describe('create（多份基准简历）', () => {
@@ -116,11 +160,11 @@ describe('ResumeService', () => {
       const updated = svc.update(created.meta.id, {
         ...created,
         basics: { ...created.basics, name: '李四' },
-        skills: [{ category: '编程语言', items: ['Java'], proficiency: '熟悉' }]
+        skills: [{ category: '工程能力', text: 'Java 服务端开发' }]
       })
       expect(updated.meta.id).toBe(created.meta.id)
       expect(updated.basics.name).toBe('李四')
-      expect(updated.skills?.[0]?.items).toEqual(['Java'])
+      expect(updated.skills?.[0]?.text).toEqual('Java 服务端开发')
       expect(Date.parse(updated.meta.updatedAt)).toBeGreaterThanOrEqual(Date.parse(created.meta.updatedAt))
       expect(svc.get(created.meta.id)).toEqual(updated)
     })
@@ -199,5 +243,51 @@ describe('ResumeService', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+
+  describe('照片（ADR-0009）', () => {
+    it('删除简历时照片文件随删；无照片不报错', () => {
+      const dir = mkdtempSync(join(tmpdir(), 'resume-photo-'))
+      try {
+        const photos = new PhotoStore(dir)
+        writeFileSync(join(dir, 'p.png'), 'png-bytes')
+        const svc = new ResumeService(openDatabase(':memory:'), photos)
+        const created = svc.create({
+          ...baseResume(),
+          basics: { ...baseResume().basics, photo: 'p.png' }
+        })
+        svc.delete(created.meta.id)
+        expect(existsSync(join(dir, 'p.png'))).toBe(false)
+        expect(svc.list()).toEqual([])
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    })
+
+    it('renderFromResume / renderHtml：照片以 data URI 内嵌；缺照片/文件缺失不渲染照片位', () => {
+      const dir = mkdtempSync(join(tmpdir(), 'resume-photo-'))
+      try {
+        const photos = new PhotoStore(dir)
+        writeFileSync(join(dir, 'p.png'), 'png-bytes')
+        const svc = new ResumeService(openDatabase(':memory:'), photos)
+        const created = svc.create({
+          ...baseResume(),
+          basics: { ...baseResume().basics, photo: 'p.png' }
+        })
+        const html = svc.renderHtml(created.meta.id)
+        expect(html).toContain('class="photo"')
+        expect(html).toContain('data:image/png;base64,')
+
+        expect(svc.renderFromResume(baseResume())).not.toContain('class="photo"')
+        const missing = svc.renderFromResume({
+          ...baseResume(),
+          basics: { ...baseResume().basics, photo: 'missing.png' }
+        })
+        expect(missing).not.toContain('class="photo"')
+        expect(missing).toContain('<h1>张伟</h1>')
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    })
   })
 })

@@ -3,6 +3,7 @@ import type { AgentService } from './agent'
 import type { PositionService } from './position'
 import type { ResumeService } from './resume'
 import { assertValidResume, ResumeValidationError } from './resume-schema'
+import type { PhotoStore } from './photo-store'
 import type { Resume } from '../../shared/types/resume'
 import type {
   JdAnalysis,
@@ -69,10 +70,13 @@ export function extractJson(reply: string): unknown {
 export interface OptimizeServiceOptions {
   /** 轮次进度回调（IPC 层接事件推送 optimize:progress，UI 流式展示三轮进度）。 */
   onProgress?: (info: { jobId: string; round: 1 | 2 | 3; phase: string }) => void
+  /** 照片存储（ADR-0009：优化稿生成时继承基准照片副本；不注入则无继承）。 */
+  photos?: PhotoStore
 }
 
 export class OptimizeService {
   private readonly onProgress: OptimizeServiceOptions['onProgress']
+  private readonly photos: PhotoStore | undefined
 
   constructor(
     private readonly db: Db,
@@ -82,6 +86,7 @@ export class OptimizeService {
     options: OptimizeServiceOptions = {}
   ) {
     this.onProgress = options.onProgress
+    this.photos = options.photos
   }
 
   async run(jobId: string, resumeId: string, mode: OptimizationMode = 'strict'): Promise<OptimizeResult> {
@@ -100,6 +105,7 @@ export class OptimizeService {
       const gaps = await this.assessGaps(session, jdAnalysis, resume)
       this.onProgress?.({ jobId, round: 3, phase: '生成优化稿' })
       const { optimizedResume, changes } = await this.generate(session, jdAnalysis, gaps, resume, mode)
+      this.inheritPhoto(resume, optimizedResume)
       return { jobId, resumeId, mode, jdAnalysis, gaps, optimizedResume, changes }
     } finally {
       session.dispose()
@@ -179,6 +185,8 @@ export class OptimizeService {
       '',
       constraint,
       '',
+      '输出结构要求（v2）：skills 为固定三分类（工程能力/科研能力/其他能力）每类一段话（{category, text}）；projects 仅含 name/startDate/endDate/description/techStack；不得输出已删除字段（items/proficiency/highlights/role/link/certificates）。',
+      '',
       `JD 分析：\n${JSON.stringify(jdAnalysis)}`,
       '',
       `缺口：\n${gaps.join('\n')}`,
@@ -215,6 +223,17 @@ export class OptimizeService {
       ? (parsed.changes as OptimizeChange[]).filter((c) => isRecord(c))
       : []
     return { optimizedResume: parsed.resume as unknown as Resume, changes }
+  }
+
+  /** 照片继承（ADR-0009）：基准简历有照片 → 复制为优化稿自己的副本；源文件缺失则不带。 */
+  private inheritPhoto(base: Resume, optimized: Resume): void {
+    const photo = base.basics?.photo
+    if (this.photos === undefined || photo === undefined) return
+    try {
+      optimized.basics = { ...optimized.basics, photo: this.photos.inherit(photo) }
+    } catch {
+      // 基准照片文件缺失：优化稿不携带照片，不阻塞生成
+    }
   }
 
   private readJdCache(jobId: string): JdAnalysis | null {

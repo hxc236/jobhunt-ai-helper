@@ -13,6 +13,8 @@ import { CrawlAgentChannelImpl } from './services/crawl-agent-channel'
 import { PlaywrightCdpDriver } from './services/crawl-driver'
 import { CrawlPresetService } from './services/crawl-presets'
 import { OptimizeService } from './services/optimize'
+import { migrateLegacyResumes } from './services/resume-migrate'
+import { PhotoStore } from './services/photo-store'
 import { TopicService } from './services/topic'
 import { LearnService } from './services/learn'
 import { InterviewService } from './services/interview'
@@ -83,11 +85,16 @@ app.commandLine.appendSwitch('remote-debugging-port', '0')
 app.whenReady().then(() => {
   // 单文件本地库：userData/jobhunt.db（EF-02；测试注入 :memory: 见 db/database.ts）
   const db = openDatabase(join(app.getPath('userData'), 'jobhunt.db'))
+  // ADR-0009：旧简历模型（技能条目/项目冗余字段）一次性幂等迁移 → v2
+  const migratedResumes = migrateLegacyResumes(db)
+  if (migratedResumes > 0) console.log(`[resume-migrate] ${migratedResumes} 份简历已迁移到 v2 模型`)
   const settings = new SettingsService(db)
   // F-01（#17）：职位卡（手动录入 + 去重，见 services/position.ts）
   const positions = new PositionService(db)
   // F-12（issue #19）：简历 CRUD（schema 校验 + 删除语义，见 services/resume.ts）
-  const resumes = new ResumeService(db)
+  // ADR-0009：照片存储目录（userData/resume-photos），删除简历随删照片
+  const resumePhotos = new PhotoStore(join(app.getPath('userData'), 'resume-photos'))
+  const resumes = new ResumeService(db, resumePhotos)
   // EF-04：AgentService（pi SDK 封装 + fake 可注入）。认证目录为应用自有 userData/pi
   // （auth.json/models.json/sessions），不依赖用户 ~/.pi/agent；teach 技能用仓库内置副本。
   const agent = new AgentService(
@@ -134,7 +141,8 @@ app.whenReady().then(() => {
 
   // F-07（#28/#32）：优化流程服务（三轮编排 + jd_analysis 缓存；进度 → optimize:progress）
   const optimize = new OptimizeService(db, positions, resumes, agent, {
-    onProgress: ({ jobId, round, phase }) => pushEvent(IpcEvent.OptimizeProgress, { jobId, round, phase })
+    onProgress: ({ jobId, round, phase }) => pushEvent(IpcEvent.OptimizeProgress, { jobId, round, phase }),
+    photos: resumePhotos
   })
   // F-19（#33）：学习清单服务（jd_analysis → 优先级 1-5 清单 + 人工 CRUD + 三态）
   const topics = new TopicService(db, positions)

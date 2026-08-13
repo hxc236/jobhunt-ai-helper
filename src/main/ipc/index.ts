@@ -138,6 +138,10 @@ export function registerIpcHandlers({ settings, agent, positions, resumes, crawl
   handleRequest(IpcChannel.ResumesUploadParse, (request) => resumes.parseUpload(request.filePath))
   // F-15（#30）：A4 渲染（纯函数）与 PDF 导出（printToPDF + 保存对话框）
   handleRequest(IpcChannel.ResumesRenderHtml, (request) => resumes.renderHtml(request.id))
+  handleRequest(IpcChannel.ResumesRenderFromResume, (request) => resumes.renderFromResume(request.resume))
+  handleRequest(IpcChannel.ResumesImportPhoto, (request) => resumes.importPhoto(request.filePath))
+  handleRequest(IpcChannel.ResumesRemovePhoto, (request) => resumes.removePhoto(request.fileName))
+  handleRequest(IpcChannel.ResumesPhotoDataUri, (request) => resumes.photoDataUri(request.fileName) ?? null)
   handleRequest(IpcChannel.ResumesExportPdf, (request) => {
     const html = resumes.renderHtml(request.id)
     const title = resumes.get(request.id)?.meta.title ?? '简历'

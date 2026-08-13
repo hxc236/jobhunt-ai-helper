@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { IpcChannel, IpcEvent, type IpcEventMap, type IpcEventName, type IpcInvoker } from '../shared/protocol'
+import type { Resume } from '../shared/types/resume'
 import { createRendererApi, type IpcBridge } from './api'
 
 interface FakeBridge {
@@ -179,6 +180,29 @@ describe('createRendererApi（渲染侧 api 客户端）', () => {
     await api.resumes.uploadParse('C:/tmp/resume.docx')
     expect(fake.invocations).toEqual([
       { channel: IpcChannel.ResumesUploadParse, args: [{ filePath: 'C:/tmp/resume.docx' }] }
+    ])
+  })
+
+  it('resumes.renderFromResume 映射到 resumes:render-from-resume 并传 { resume }', async () => {
+    const fake = makeFakeBridge()
+    const api = createRendererApi(fake.bridge)
+    const resume = { meta: {}, basics: { name: '张伟' }, education: [] } as Resume
+    await api.resumes.renderFromResume(resume)
+    expect(fake.invocations).toEqual([
+      { channel: IpcChannel.ResumesRenderFromResume, args: [{ resume }] }
+    ])
+  })
+
+  it('resumes.importPhoto / removePhoto / photoDataUri 映射对应通道', async () => {
+    const fake = makeFakeBridge()
+    const api = createRendererApi(fake.bridge)
+    await api.resumes.importPhoto('C:/tmp/me.png')
+    await api.resumes.removePhoto('old.png')
+    await api.resumes.photoDataUri('old.png')
+    expect(fake.invocations).toEqual([
+      { channel: IpcChannel.ResumesImportPhoto, args: [{ filePath: 'C:/tmp/me.png' }] },
+      { channel: IpcChannel.ResumesRemovePhoto, args: [{ fileName: 'old.png' }] },
+      { channel: IpcChannel.ResumesPhotoDataUri, args: [{ fileName: 'old.png' }] }
     ])
   })
 

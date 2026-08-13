@@ -6,8 +6,8 @@ import type { Resume } from '../../shared/types/resume'
  * 主进程 printToPDF 导出共用。用户字段一律 HTML 转义（防注入/样式破坏）。
  */
 
-export function renderResumeHtml(resume: Resume): string {
-  const body = renderSheet(resume)
+export function renderResumeHtml(resume: Resume, photoDataUri?: string): string {
+  const body = renderSheet(resume, photoDataUri)
   return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -19,22 +19,26 @@ export function renderResumeHtml(resume: Resume): string {
   .sheet { width: 794px; min-height: 1123px; background: #fff; margin: 0 auto; padding: 48px 52px;
     box-shadow: 0 2px 8px rgba(0,0,0,.12); font-size: 14px; line-height: 1.65; color: #222; }
   .sheet h1 { font-size: 24px; letter-spacing: 4px; }
-  .sheet .headline { color: #555; font-size: 13px; margin-top: 6px; }
+  .sheet .head { display: flex; justify-content: space-between; gap: 24px; align-items: flex-start; }
+  .sheet .facts { margin-top: 10px; max-width: 580px; }
+  .sheet .fact { display: inline-block; margin: 2px 16px 2px 0; font-size: 13px; }
+  .sheet .fact .k { color: #888; margin-right: 4px; }
+  .sheet .photo { width: 76px; height: 100px; flex-shrink: 0; border: 1px solid #d8d8d8; background: #f5f5f5; }
+  .sheet .photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .sheet .links a { color: #2b5ca8; text-decoration: none; margin-right: 12px; font-size: 13px; }
-  .sheet .intent { margin-top: 10px; padding: 6px 12px; background: #f4f7fc; border-left: 3px solid #2b5ca8; font-size: 13px; color: #333; }
-  .sheet h2 { font-size: 15px; margin: 22px 0 10px; padding-bottom: 5px; border-bottom: 2px solid #2b5ca8; color: #2b5ca8; }
+  .sheet .intent { margin-top: 14px; padding: 6px 12px; background: #f4f7fc; border-left: 3px solid #2b5ca8; font-size: 13px; color: #333; }
+  .sheet h2 { font-size: 15px; margin: 20px 0 8px; padding-bottom: 5px; border-bottom: 2px solid #2b5ca8; color: #2b5ca8; }
   .sheet .entry { margin-bottom: 12px; }
   .sheet .entry-head { display: flex; justify-content: space-between; font-weight: 600; }
   .sheet .entry-head em { font-style: normal; font-weight: 400; color: #555; }
   .sheet .entry-sub { display: flex; justify-content: space-between; color: #555; font-size: 13px; margin-top: 2px; }
-  .sheet ul { padding-left: 20px; margin-top: 4px; }
-  .sheet li { margin-bottom: 3px; }
+  .sheet .inline { margin-top: 3px; font-size: 13px; }
+  .sheet .inline .dot { margin: 0 8px 0 2px; color: #bbb; }
   .sheet .desc { color: #444; margin-top: 4px; }
   .sheet .tags { margin-top: 4px; }
   .sheet .tag { display: inline-block; background: #eef3fb; color: #2b5ca8; border-radius: 3px; font-size: 12px; padding: 1px 8px; margin-right: 6px; }
-  .sheet .skills-row { margin-bottom: 6px; }
-  .sheet .skills-cat { font-weight: 600; }
-  .muted { color: #888; }
+  .sheet .skill-p { margin-bottom: 6px; }
+  .sheet .skill-p .skills-cat { font-weight: 600; }
   @media print {
     body { background: #fff; padding: 0; }
     .sheet { box-shadow: none; width: auto; min-height: 0; }
@@ -47,17 +51,29 @@ ${body}
 </html>`
 }
 
-/** A4 纸张内容（分节渲染；空节省略）。 */
-export function renderSheet(resume: Resume): string {
+/** A4 纸张内容（分节渲染；空节省略）。photoDataUri：照片 data URI（服务层注入，缺省不显示照片位）。 */
+export function renderSheet(resume: Resume, photoDataUri?: string): string {
   const b = resume.basics ?? {}
   const intent = b.jobIntention ?? {}
   const parts: string[] = ['<div class="sheet">']
 
-  parts.push(`<h1>${esc(b.name)}</h1>`)
-  const metaBits = [b.gender, b.birthday, b.politicalStatus, b.hometown, b.location, b.phone, b.email].filter(
-    (v): v is string => typeof v === 'string' && v !== ''
-  )
-  if (metaBits.length > 0) parts.push(`<div class="headline">${esc(metaBits.join('　|　'))}</div>`)
+  const photoTag =
+    photoDataUri !== undefined
+      ? `<div class="photo"><img src="${esc(photoDataUri)}" alt="照片" /></div>`
+      : ''
+  const facts = [
+    ['性别', b.gender],
+    ['生日', b.birthday],
+    ['政治面貌', b.politicalStatus],
+    ['生源地', b.hometown],
+    ['现居城市', b.location],
+    ['电话', b.phone],
+    ['邮箱', b.email]
+  ].filter((entry): entry is [string, string] => typeof entry[1] === 'string' && entry[1] !== '')
+  parts.push(`<div class="head"><div><h1>${esc(b.name)}</h1>`)
+  if (facts.length > 0) {
+    parts.push(`<div class="facts">${facts.map(([k, v]) => `<span class="fact"><span class="k">${esc(k)}</span>${esc(v)}</span>`).join('')}</div>`)
+  }
   if ((b.links ?? []).length > 0) {
     parts.push(
       `<div class="links">${(b.links ?? [])
@@ -66,6 +82,9 @@ export function renderSheet(resume: Resume): string {
         .join('')}</div>`
     )
   }
+  parts.push('</div>')
+  parts.push(photoTag)
+  parts.push('</div>')
   if (intent.position !== undefined || (intent.city ?? []).length > 0) {
     const cityText = (intent.city ?? []).join(' / ')
     parts.push(
@@ -81,8 +100,10 @@ export function renderSheet(resume: Resume): string {
       )
       const bits = [e.gpa !== undefined && e.gpa !== '' ? `GPA ${e.gpa}` : null, e.rank !== undefined && e.rank !== '' ? `排名 ${e.rank}` : null].filter((v): v is string => v !== null)
       if (bits.length > 0) parts.push(`<div class="entry-sub"><span>${esc(bits.join('　·　'))}</span></div>`)
-      if ((e.courses ?? []).length > 0) parts.push(`<div class="desc">相关课程：${esc((e.courses ?? []).join('、'))}</div>`)
-      if ((e.honors ?? []).length > 0) parts.push(`<ul>${(e.honors ?? []).map((h) => `<li>${esc(h)}</li>`).join('')}</ul>`)
+      if ((e.courses ?? []).length > 0) parts.push(`<div class="inline">相关课程：${(e.courses ?? []).map((c) => `<span class="tag">${esc(c)}</span>`).join('')}</div>`)
+      if ((e.honors ?? []).length > 0) {
+        parts.push(`<div class="inline">荣誉：${(e.honors ?? []).map((h, i) => `${esc(h)}${i < (e.honors ?? []).length - 1 ? '<span class="dot">·</span>' : ''}`).join('')}</div>`)
+      }
       parts.push('</div>')
     }
   }
@@ -90,9 +111,7 @@ export function renderSheet(resume: Resume): string {
   if ((resume.skills ?? []).length > 0) {
     parts.push('<h2>专业技能</h2>')
     for (const s of resume.skills ?? []) {
-      parts.push(
-        `<div class="skills-row"><span class="skills-cat">${esc(s.category ?? '')}</span>：${esc((s.items ?? []).join('、'))}${s.proficiency !== undefined ? ` <span class="muted">（${esc(s.proficiency)}）</span>` : ''}</div>`
-      )
+      parts.push(`<p class="skill-p"><span class="skills-cat">${esc(s.category)}</span>：${esc(s.text)}</p>`)
     }
   }
 
@@ -100,10 +119,9 @@ export function renderSheet(resume: Resume): string {
     parts.push('<h2>项目经历</h2>')
     for (const p of resume.projects ?? []) {
       parts.push(
-        `<div class="entry"><div class="entry-head"><span>${esc(p.name ?? '')}${p.role !== undefined && p.role !== '' ? `　<em>${esc(p.role)}</em>` : ''}</span><span>${esc(dateRange(p.startDate, p.endDate))}</span></div>`
+        `<div class="entry"><div class="entry-head"><span>${esc(p.name ?? '')}</span><span>${esc(dateRange(p.startDate, p.endDate))}</span></div>`
       )
       if (p.description !== undefined && p.description !== '') parts.push(`<div class="desc">${esc(p.description)}</div>`)
-      if ((p.highlights ?? []).length > 0) parts.push(`<ul>${(p.highlights ?? []).map((h) => `<li>${esc(h)}</li>`).join('')}</ul>`)
       if ((p.techStack ?? []).length > 0) parts.push(`<div class="tags">${(p.techStack ?? []).map((t) => `<span class="tag">${esc(t)}</span>`).join('')}</div>`)
       parts.push('</div>')
     }
@@ -118,13 +136,6 @@ export function renderSheet(resume: Resume): string {
       if ((x.highlights ?? []).length > 0) parts.push(`<ul>${(x.highlights ?? []).map((h) => `<li>${esc(h)}</li>`).join('')}</ul>`)
       if ((x.techStack ?? []).length > 0) parts.push(`<div class="tags">${(x.techStack ?? []).map((t) => `<span class="tag">${esc(t)}</span>`).join('')}</div>`)
       parts.push('</div>')
-    }
-  }
-
-  if ((resume.certificates ?? []).length > 0) {
-    parts.push('<h2>证书</h2>')
-    for (const c of resume.certificates ?? []) {
-      parts.push(`<div class="entry-head"><span>${esc(c.name ?? '')}${c.issuer !== undefined && c.issuer !== '' ? `　<em>${esc(c.issuer)}</em>` : ''}</span><span>${esc(c.date ?? '')}</span></div>`)
     }
   }
 

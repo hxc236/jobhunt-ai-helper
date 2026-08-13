@@ -7,10 +7,9 @@ const base: Resume = {
   meta: { title: '基准简历' },
   basics: { name: '张伟', phone: '13800001234' },
   education: [{ school: '北京理工大学', degree: '本科', major: '计算机' }],
-  skills: [{ category: '语言', items: ['Java'] }],
+  skills: [{ category: '工程能力', text: 'Java 开发' }],
   projects: [{ name: '平台', techStack: ['Java'] }],
   experience: [],
-  certificates: [],
   selfAssessment: '基础扎实'
 }
 
@@ -18,7 +17,7 @@ const optimized: Resume = {
   ...base,
   meta: { title: '优化稿' },
   basics: { ...base.basics!, name: '张伟', phone: '13800001234', email: 'z@example.com' },
-  skills: [{ category: '语言', items: ['Java', 'Python'] }],
+  skills: [{ category: '工程能力', text: 'Java、Python 开发' }],
   projects: [{ name: '平台', techStack: ['Java', 'Spring Boot'] }],
   selfAssessment: '基础扎实，热爱后端'
 }
@@ -40,7 +39,6 @@ describe('diffResumeSections（F-20/#34 验收：对比视图高亮正确）', (
     expect(bySection.skills?.reason).toBe('补充 JD 关键词 Python')
     expect(bySection.projects?.changed).toBe(true) // techStack 增 Spring Boot
     expect(bySection.experience?.changed).toBe(false)
-    expect(bySection.certificates?.changed).toBe(false)
     expect(bySection.selfAssessment?.changed).toBe(true)
     expect(bySection.selfAssessment?.reason).toBe('突出学习能力')
   })
@@ -58,7 +56,7 @@ describe('diffResumeSections（F-20/#34 验收：对比视图高亮正确）', (
     }
     const diffs = diffResumeSections(empty, withExp, [])
     expect(diffs.find((d) => d.section === 'experience')?.changed).toBe(true)
-    expect(diffs.find((d) => d.section === 'certificates')?.changed).toBe(false)
+    expect(diffs.find((d) => d.section === 'skills')?.changed).toBe(false) // 双方均无 → 未改
   })
 })
 

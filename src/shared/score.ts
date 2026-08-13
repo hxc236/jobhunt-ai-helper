@@ -144,13 +144,12 @@ function resumeSections(resume: Resume): Record<string, string> {
 
   const basics = resume.basics ?? {}
   const skills = (resume.skills ?? [])
-    .map((s) => [s.category ?? '', ...(s.items ?? []), s.proficiency ?? ''].join(' '))
+    .map((s) => [s.category, s.text].join(' '))
     .join(' ')
   const projects = (resume.projects ?? [])
     .map((p) =>
       [
-        p.name, p.role, p.description, p.link,
-        ...(p.highlights ?? []),
+        p.name, p.description,
         ...(p.techStack ?? [])
       ]
         .filter((v): v is string => typeof v === 'string')

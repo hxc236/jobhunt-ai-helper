@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest'
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { openDatabase } from '../db/database'
 import { FakeAgentProvider } from './fake-agent-provider'
 import { AgentService } from './agent'
 import { OptimizeError, OptimizeService } from './optimize'
+import { PhotoStore } from './photo-store'
 import type { JdAnalysis } from '../../shared/types'
 import { PositionService } from './position'
 import { ResumeService } from './resume'
@@ -18,7 +22,7 @@ const baseResume: Resume = {
   meta: { title: '基准简历' },
   basics: { name: '张伟', phone: '13800001234', email: 'z@example.com' },
   education: [{ school: '北京理工大学', degree: '本科', major: '计算机科学与技术' }],
-  skills: [{ category: '编程语言', items: ['Java', 'Python'] }],
+  skills: [{ category: '工程能力', text: 'Java、Python 服务端开发' }],
   projects: [{ name: '二手交易平台', techStack: ['Java', 'Spring Boot'] }]
 }
 
@@ -37,10 +41,10 @@ const OPTIMIZED_JSON = {
     basics: { name: '张伟', phone: '13800001234', email: 'z@example.com' },
     education: [{ school: '北京理工大学', degree: '本科', major: '计算机科学与技术' }],
     skills: [
-      { category: '编程语言', items: ['Java', 'Python'] },
-      { category: '框架', items: ['Spring Boot'] }
+      { category: '工程能力', text: 'Java、Python 服务端开发' },
+      { category: '科研能力', text: 'Spring Boot 框架应用' }
     ],
-    projects: [{ name: '二手交易平台', techStack: ['Java', 'Spring Boot'], highlights: ['高并发订单接口优化'] }]
+    projects: [{ name: '二手交易平台', techStack: ['Java', 'Spring Boot'] }]
   },
   changes: [{ section: 'projects', before: '…', after: '…', reason: '突出与 JD 相关的技术栈' }]
 }
@@ -237,5 +241,43 @@ describe('OptimizeService 边界', () => {
 
     await expect(optimize.run(job.id, 'no-such-resume')).rejects.toThrowError(/简历不存在/)
     await expect(optimize.run('no-such-job', 'x')).rejects.toThrowError(/职位不存在/)
+  })
+
+  it('照片继承（ADR-0009）：基准照片复制为优化稿副本；源缺失则不携带', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'optimize-photo-'))
+    try {
+      writeFileSync(join(dir, 'base.png'), 'png-bytes')
+      const photos = new PhotoStore(dir)
+      const db = openDatabase(':memory:')
+      const positions = new PositionService(db)
+      const resumes = new ResumeService(db, photos)
+      const provider = new FakeAgentProvider({
+        onPrompt: (prompt) => {
+          if (prompt.includes('[优化流程 1/3')) return JSON.stringify(JD_ANALYSIS_JSON)
+          if (prompt.includes('[优化流程 2/3')) return JSON.stringify(GAPS_JSON)
+          if (prompt.includes('[优化流程 3/3')) return JSON.stringify(OPTIMIZED_JSON)
+          return 'echo'
+        }
+      })
+      const optimize = new OptimizeService(db, positions, resumes, new AgentService(provider), { photos })
+      const job = positions.create({
+        company: '腾讯', company_type: '大厂', title: '后端', jd: JD, recruit_season: '2026秋招'
+      })
+      const resume = resumes.create({ ...baseResume, basics: { ...baseResume.basics, photo: 'base.png' } })
+
+      const result = await optimize.run(job.id, resume.meta.id as string)
+      const inherited = result.optimizedResume.basics?.photo
+      expect(inherited).toBeDefined()
+      expect(inherited).not.toBe('base.png') // 独立副本，不引用基准文件名
+      expect(existsSync(join(dir, inherited as string))).toBe(true)
+      expect(existsSync(join(dir, 'base.png'))).toBe(true) // 基准照片保留
+
+      // 基准照片文件缺失 → 优化稿不携带照片，不阻塞生成
+      const resume2 = resumes.create({ ...baseResume, basics: { ...baseResume.basics, photo: 'missing.png' } })
+      const result2 = await optimize.run(job.id, resume2.meta.id as string)
+      expect(result2.optimizedResume.basics?.photo).toBeUndefined()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
