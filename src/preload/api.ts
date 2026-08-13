@@ -44,6 +44,10 @@ export function createRendererApi(bridge: IpcBridge): RendererApi {
       delete: (id) => bridge.invoke(IpcChannel.ResumesDelete, { id }),
       uploadParse: (filePath) => bridge.invoke(IpcChannel.ResumesUploadParse, { filePath }),
       renderHtml: (id) => bridge.invoke(IpcChannel.ResumesRenderHtml, { id }),
+      renderFromResume: (resume) => bridge.invoke(IpcChannel.ResumesRenderFromResume, { resume }),
+      importPhoto: (filePath) => bridge.invoke(IpcChannel.ResumesImportPhoto, { filePath }),
+      removePhoto: (fileName) => bridge.invoke(IpcChannel.ResumesRemovePhoto, { fileName }),
+      photoDataUri: (fileName) => bridge.invoke(IpcChannel.ResumesPhotoDataUri, { fileName }),
       exportPdf: (id) => bridge.invoke(IpcChannel.ResumesExportPdf, { id })
     },
     crawls: {

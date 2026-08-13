@@ -61,6 +61,10 @@ export const IpcChannel = {
   ResumesDelete: 'resumes:delete',
   ResumesUploadParse: 'resumes:upload-parse',
   ResumesRenderHtml: 'resumes:render-html',
+  ResumesRenderFromResume: 'resumes:render-from-resume',
+  ResumesImportPhoto: 'resumes:import-photo',
+  ResumesRemovePhoto: 'resumes:remove-photo',
+  ResumesPhotoDataUri: 'resumes:photo-data-uri',
   ResumesExportPdf: 'resumes:export-pdf',
   OptimizeRun: 'optimize:run',
   TopicsList: 'topics:list',
@@ -168,6 +172,10 @@ export interface IpcProtocol {
   // F-15（#30）：A4 渲染与 PDF 导出 —— render-html 纯函数（iframe 预览）；
   // export-pdf 经隐藏窗口 printToPDF + 保存对话框，返回保存路径（取消 → null）。
   [IpcChannel.ResumesRenderHtml]: { request: { id: string }; response: string }
+  [IpcChannel.ResumesRenderFromResume]: { request: { resume: Resume }; response: string }
+  [IpcChannel.ResumesImportPhoto]: { request: { filePath: string }; response: string }
+  [IpcChannel.ResumesRemovePhoto]: { request: { fileName: string }; response: void }
+  [IpcChannel.ResumesPhotoDataUri]: { request: { fileName: string }; response: string | null }
   [IpcChannel.ResumesExportPdf]: { request: { id: string }; response: string | null }
   // F-07/#32：优化流程 —— run 三轮编排（进度经 optimize:progress 事件推送；结果含优化稿+changes）
   [IpcChannel.OptimizeRun]: {
@@ -399,6 +407,14 @@ export interface ResumeApi {
   uploadParse: (filePath: string) => Promise<ResumeDraft>
   /** A4 渲染（F-15/#30）：完整 HTML 文档（含打印样式），iframe 预览。 */
   renderHtml: (id: string) => Promise<string>
+  /** A4 渲染任意简历对象（未保存表单预览用；照片 data URI 内嵌）。 */
+  renderFromResume: (resume: Resume) => Promise<string>
+  /** 照片导入（ADR-0009）：复制到照片目录，返回文件名。 */
+  importPhoto: (filePath: string) => Promise<string>
+  /** 照片移除（替换/删除简历时清理旧文件）。 */
+  removePhoto: (fileName: string) => Promise<void>
+  /** 照片 data URI（表单缩略图展示；文件缺失返回 null）。 */
+  photoDataUri: (fileName: string) => Promise<string | null>
   /** 导出 PDF（F-15/#30：保存对话框；取消返回 null）。 */
   exportPdf: (id: string) => Promise<string | null>
 }

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { Db } from '../db/migrations'
 import type { Resume, StoredResume } from '../../shared/types/resume'
 import type { ResumeDraft } from '../../shared/types'
-import type { PhotoStore } from './photo-store'
+import { PhotoStoreError, type PhotoStore } from './photo-store'
 import { assertValidResume } from './resume-schema'
 import { parseUploadFile } from './resume-parse'
 import { renderResumeHtml } from './resume-render'
@@ -122,6 +122,22 @@ export class ResumeService {
    */
   parseUpload(filePath: string): Promise<ResumeDraft> {
     return parseUploadFile(filePath)
+  }
+
+  /** 照片导入（IPC）：复制到照片目录，返回文件名。 */
+  importPhoto(srcPath: string): string {
+    if (this.photos === undefined) throw new PhotoStoreError('照片存储未配置')
+    return this.photos.import(srcPath)
+  }
+
+  /** 照片移除（IPC）：best effort 清理旧文件。 */
+  removePhoto(fileName: string): void {
+    this.photos?.remove(fileName)
+  }
+
+  /** 照片 data URI（表单缩略图）：文件缺失返回 undefined。 */
+  photoDataUri(fileName: string): string | undefined {
+    return this.photos?.dataUri(fileName)
   }
 
   /**

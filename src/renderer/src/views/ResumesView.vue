@@ -1,9 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import type { Resume, StoredResume } from '@shared/types/resume'
-import { emptyResumeForm, formToResume, issueSection, resumeToForm, type ResumeForm } from '../resume-form'
-import { draftToResume, draftWarnings } from '../draft-form'
-import type { ResumeDraft } from '@shared/types'
+import { defaultBaseTitle, emptyResumeForm, formToResume, issueSection, resumeToForm, SKILL_CATEGORIES, type ResumeForm } from '../resume-form'
 import Modal from '../components/Modal.vue'
 import Resizer from '../components/Resizer.vue'
 import Icon from '../components/Icon.vue'
@@ -48,6 +46,18 @@ async function openPreview(resume: StoredResume): Promise<void> {
   }
 }
 
+async function previewCurrent(): Promise<void> {
+  previewError.value = ''
+  exportMessage.value = ''
+  try {
+    const resume: Resume = jsonMode.value ? (JSON.parse(jsonText.value) as Resume) : formToResume(form)
+    previewHtml.value = await window.api.resumes.renderFromResume(resume)
+    previewTitle.value = resume.meta.title ?? '简历'
+  } catch (err) {
+    previewError.value = String(err)
+  }
+}
+
 async function exportPdf(): Promise<void> {
   exporting.value = true
   exportMessage.value = ''
@@ -69,101 +79,66 @@ async function exportPdfFromRow(resume: StoredResume): Promise<void> {
 
 const form = reactive<ResumeForm>(emptyResumeForm())
 
-/** 上传草稿确认（F-16/#31）。 */
-const uploading = ref(false)
-const uploadError = ref('')
-const draft = ref<ResumeDraft | null>(null)
-const draftTitle = ref('')
-const draftForm = reactive({
-  name: '', phone: '', email: '', gender: '' as '' | '男' | '女', birthday: '',
-  school: '', degree: '', major: '', period: '', skillsText: ''
-})
-const confirmingDraft = ref(false)
-const fileInput = ref<HTMLInputElement | null>(null)
+/** 照片（ADR-0009）：导入即复制到照片目录，表单只存文件名；缩略图经 IPC 取 data URI。 */
+const photoInput = ref<HTMLInputElement | null>(null)
+const photoPreviewUrl = ref('')
+watch(
+  () => form.basics.photo,
+  async (photo) => {
+    photoPreviewUrl.value = photo === '' ? '' : ((await window.api.resumes.photoDataUri(photo)) ?? '')
+  }
+)
 
-function pickFile(): void {
-  fileInput.value?.click()
+async function pickPhoto(): Promise<void> {
+  photoInput.value?.click()
 }
 
-function onFilePicked(event: Event): void {
+async function onPhotoPicked(event: Event): Promise<void> {
   const input = event.target as HTMLInputElement
   const file = input.files?.[0]
   input.value = ''
   if (file === undefined) return
   const filePath = (file as unknown as { path?: string }).path
   if (filePath === undefined) {
-    uploadError.value = '无法获取文件路径'
+    errorMessage.value = '无法获取文件路径'
     return
   }
-  void parseFile(filePath)
-}
-
-async function parseFile(filePath: string): Promise<void> {
-  uploadError.value = ''
-  uploading.value = true
   try {
-    const d = await window.api.resumes.uploadParse(filePath)
-    draft.value = d
-    draftTitle.value = d.fileName.replace(/\.(docx|pdf)$/i, '')
-    Object.assign(draftForm, {
-      name: d.fields.name ?? '',
-      phone: d.fields.phone ?? '',
-      email: d.fields.email ?? '',
-      gender: d.fields.gender ?? '',
-      birthday: d.fields.birthday ?? '',
-      school: d.fields.education[0]?.school ?? '',
-      degree: d.fields.education[0]?.degree ?? '',
-      major: d.fields.education[0]?.major ?? '',
-      period: d.fields.education[0]?.period ?? '',
-      skillsText: d.fields.skills.join('\n')
-    })
+    const photo = await window.api.resumes.importPhoto(filePath)
+    if (form.basics.photo !== '') await window.api.resumes.removePhoto(form.basics.photo) // 替换时清旧文件
+    form.basics.photo = photo
   } catch (err) {
-    uploadError.value = String(err)
-  } finally {
-    uploading.value = false
+    errorMessage.value = `照片导入失败：${String(err)}`
   }
 }
 
-async function confirmDraft(): Promise<void> {
-  if (draft.value === null) return
-  confirmingDraft.value = true
-  uploadError.value = ''
+async function removePhoto(): Promise<void> {
+  if (form.basics.photo === '') return
+  await window.api.resumes.removePhoto(form.basics.photo)
+  form.basics.photo = ''
+}
+
+/** 列表行内改名（双击名称）。 */
+const renameTarget = ref<StoredResume | null>(null)
+const renameTitle = ref('')
+
+function startRename(resume: StoredResume): void {
+  renameTarget.value = resume
+  renameTitle.value = resume.meta.title ?? ''
+}
+
+async function commitRename(): Promise<void> {
+  const target = renameTarget.value
+  renameTarget.value = null
+  if (target === null) return
+  const title = renameTitle.value.trim()
+  if (title === '' || title === (target.meta.title ?? '')) return
   try {
-    const resume = draftToResume(
-      {
-        ...draft.value,
-        fields: {
-          name: draftForm.name,
-          phone: draftForm.phone,
-          email: draftForm.email,
-          gender: draftForm.gender,
-          birthday: draftForm.birthday,
-          education:
-            draftForm.school === '' && draftForm.degree === '' && draftForm.major === ''
-              ? []
-              : [{ school: draftForm.school, degree: draftForm.degree, major: draftForm.major, period: draftForm.period }],
-          skills: draftForm.skillsText
-            .split(/[\n,，、]+/)
-            .map((t) => t.trim())
-            .filter((t) => t !== '')
-        }
-      },
-      draftTitle.value
-    )
-    const stored = await window.api.resumes.create(resume)
-    successMessage.value = `已保存「${stored.meta.title ?? stored.meta.id}」`
-    draft.value = null
+    await window.api.resumes.update(target.meta.id as string, { ...target, meta: { ...target.meta, title } })
     await load()
   } catch (err) {
-    uploadError.value = String(err)
-  } finally {
-    confirmingDraft.value = false
+    errorMessage.value = `改名失败：${String(err)}`
   }
-}
-
-function cancelDraft(): void {
-  draft.value = null
-  uploadError.value = ''
 }
 
 const bases = computed(() => resumes.value.filter((r) => r.meta.baseResumeId == null))
@@ -189,6 +164,8 @@ function openEditor(resume?: StoredResume): void {
   Object.assign(form, resume === undefined ? emptyResumeForm() : resumeToForm(resume))
   editingId.value = resume?.meta.id ?? ''
   jsonMode.value = false
+  renameTarget.value = null
+  // 照片缩略图由 watch(form.basics.photo) 统一刷新
 }
 
 function closeEditor(): void {
@@ -225,6 +202,8 @@ async function save(): Promise<void> {
       return
     }
   } else {
+    // 新建基准简历默认名：姓名-基准简历（ADR-0009）
+    if (form.meta.title.trim() === '') form.meta.title = defaultBaseTitle(form.basics.name)
     resume = formToResume(form)
   }
 
@@ -279,9 +258,8 @@ function removeRow<K extends keyof ResumeForm>(key: K, index: number): void {
 const EMPTY_EDU: ResumeForm['education'][number] = {
   school: '', degree: '', major: '', startDate: '', endDate: '', gpa: '', rank: '', coursesText: '', honorsText: ''
 }
-const EMPTY_SKILL: ResumeForm['skills'][number] = { category: '', itemsText: '', proficiency: '' }
 const EMPTY_PROJECT: ResumeForm['projects'][number] = {
-  name: '', role: '', startDate: '', endDate: '', description: '', highlightsText: '', techStackText: '', link: ''
+  name: '', startDate: '', endDate: '', description: '', techStackText: ''
 }
 const EMPTY_EXP: ResumeForm['experience'][number] = {
   company: '', title: '', startDate: '', endDate: '', highlightsText: '', techStackText: ''
@@ -311,22 +289,21 @@ onMounted(() => void load())
           <div class="col-count">基准 {{ bases.length }} · 优化稿 {{ derived.length }}</div>
         </div>
         <div class="head-actions">
-          <button class="btn" type="button" :disabled="uploading" @click="pickFile">
-            <Icon name="upload" />{{ uploading ? '解析中…' : '上传解析' }}
+          <button class="btn" type="button" disabled title="后续版本支持（当前版本解析不可用）">
+            <Icon name="upload" />上传解析
           </button>
           <button class="btn primary" type="button" @click="openEditor()">
             <Icon name="plus" />新建
           </button>
         </div>
       </div>
-      <input ref="fileInput" type="file" accept=".docx,.pdf" hidden @change="onFilePicked" />
 
       <p v-if="errorMessage" class="empty">{{ errorMessage }}</p>
       <p v-if="loading" class="empty">加载中…</p>
 
       <div class="rgroup-title"><span>基准简历</span><span>{{ bases.length }} 份</span></div>
       <div v-if="bases.length === 0 && !loading" class="empty">
-        暂无基准简历——点「新建」或「上传解析」创建。
+        暂无基准简历——点「新建」创建。
       </div>
       <div
         v-for="r in bases"
@@ -337,7 +314,19 @@ onMounted(() => void load())
         @click="openEditor(r)"
         @keydown="onRowKeydown($event, r)"
       >
-        <div class="res-name">{{ r.meta.title ?? '未命名简历' }}</div>
+        <template v-if="renameTarget === r">
+          <input
+            v-model="renameTitle"
+            class="rename-input"
+            @click.stop
+            @keyup.enter="commitRename"
+            @keyup.esc="renameTarget = null"
+            @blur="commitRename"
+          />
+        </template>
+        <template v-else>
+          <div class="res-name" title="双击改名" @dblclick.stop="startRename(r)">{{ r.meta.title ?? '未命名简历' }}</div>
+        </template>
         <div class="res-meta">更新于 {{ fmtDate(r.meta.updatedAt) }} · 基准</div>
         <div class="res-actions">
           <button class="icon-btn" type="button" title="编辑" @click.stop="openEditor(r)"><Icon name="edit" /></button>
@@ -360,7 +349,19 @@ onMounted(() => void load())
         @click="openEditor(r)"
         @keydown="onRowKeydown($event, r)"
       >
-        <div class="res-name">{{ r.meta.title ?? '未命名优化稿' }}</div>
+        <template v-if="renameTarget === r">
+          <input
+            v-model="renameTitle"
+            class="rename-input"
+            @click.stop
+            @keyup.enter="commitRename"
+            @keyup.esc="renameTarget = null"
+            @blur="commitRename"
+          />
+        </template>
+        <template v-else>
+          <div class="res-name" title="双击改名" @dblclick.stop="startRename(r)">{{ r.meta.title ?? '未命名优化稿' }}</div>
+        </template>
         <div class="res-meta">
           更新于 {{ fmtDate(r.meta.updatedAt) }} · 派生
           <template v-if="r.meta.targetJobId"> · 关联职位 {{ r.meta.targetJobId }}</template>
@@ -381,48 +382,8 @@ onMounted(() => void load())
       <p v-if="successMessage" class="ws-msg ok">{{ successMessage }}</p>
       <p v-if="errorMessage" class="ws-msg err">{{ errorMessage }}</p>
 
-      <!-- 上传草稿确认 -->
-      <div v-if="draft" class="ws-card">
-        <div class="ws-head">
-          <div>
-            <div class="ws-title">上传解析草稿</div>
-            <div class="ws-sub">{{ draft.fileName }} · 置信度 {{ Math.round(draft.confidence * 100) }}%</div>
-          </div>
-          <Pill :tone="draft.scanned ? '' : 'tint'">{{ draft.scanned ? '需人工核对' : '字段完整' }}</Pill>
-        </div>
-        <ul v-if="draftWarnings(draft).length > 0" class="warnings">
-          <li v-for="w in draftWarnings(draft)" :key="w">{{ w }}</li>
-        </ul>
-        <div class="form-grid">
-          <label class="field"><span class="label">简历名</span><input v-model="draftTitle" /></label>
-          <label class="field"><span class="label">姓名 <em class="required">*</em></span><input v-model="draftForm.name" /></label>
-          <label class="field"><span class="label">电话</span><input v-model="draftForm.phone" /></label>
-          <label class="field"><span class="label">邮箱</span><input v-model="draftForm.email" /></label>
-          <label class="field">
-            <span class="label">性别</span>
-            <select v-model="draftForm.gender">
-              <option value="">未填</option>
-              <option value="男">男</option>
-              <option value="女">女</option>
-            </select>
-          </label>
-          <label class="field"><span class="label">生日（YYYY-MM）</span><input v-model="draftForm.birthday" placeholder="2004-06" /></label>
-          <label class="field"><span class="label">学校</span><input v-model="draftForm.school" /></label>
-          <label class="field"><span class="label">学历</span><input v-model="draftForm.degree" placeholder="本科 / 硕士 / 博士" /></label>
-          <label class="field"><span class="label">专业</span><input v-model="draftForm.major" /></label>
-          <label class="field"><span class="label">起止时间</span><input v-model="draftForm.period" placeholder="2022.09 ~ 2026.06" /></label>
-          <label class="field span2"><span class="label">技能（每行一个）</span><textarea v-model="draftForm.skillsText" rows="3" /></label>
-        </div>
-        <div class="ws-actions">
-          <button class="btn primary" type="button" :disabled="confirmingDraft" @click="confirmDraft">
-            {{ confirmingDraft ? '保存中…' : '确认存为基准简历' }}
-          </button>
-          <button class="btn" type="button" :disabled="confirmingDraft" @click="cancelDraft">放弃</button>
-        </div>
-      </div>
-
       <!-- 编辑器 -->
-      <template v-else-if="editingId !== null">
+      <template v-if="editingId !== null">
         <div class="ws-head">
           <div>
             <div class="ws-title">{{ editingExisting ? '编辑简历' : '新建基准简历' }}</div>
@@ -433,6 +394,7 @@ onMounted(() => void load())
             </div>
           </div>
           <div class="head-actions">
+            <button class="btn" type="button" :disabled="saving" @click="previewCurrent">生成 A4 预览</button>
             <button class="btn" type="button" :disabled="saving" @click="jsonMode ? switchToForm() : switchToJson()">
               {{ jsonMode ? '⇄ 表单模式' : '⇄ JSON 模式' }}
             </button>
@@ -464,7 +426,17 @@ onMounted(() => void load())
           <div class="editor-sec">
             <h3>基本信息 <em class="soe">国企字段：政治面貌 / 生源地</em></h3>
             <div class="form-grid">
+              <label class="field span2"><span class="label">简历名称</span><input v-model="form.meta.title" :placeholder="defaultBaseTitle(form.basics.name) || '如：技术向基准简历'" /></label>
               <label class="field"><span class="label">姓名 <em class="required">*</em></span><input v-model="form.basics.name" /></label>
+              <div class="field">
+                <span class="label">照片</span>
+                <div class="photo-field">
+                  <img v-if="photoPreviewUrl" :src="photoPreviewUrl" class="photo-thumb" alt="照片预览" />
+                  <button class="btn ghost" type="button" @click="pickPhoto">上传照片</button>
+                  <button v-if="form.basics.photo !== ''" class="btn ghost" type="button" @click="removePhoto">移除</button>
+                </div>
+                <input ref="photoInput" type="file" accept="image/jpeg,image/png,image/webp" hidden @change="onPhotoPicked" />
+              </div>
               <label class="field">
                 <span class="label">性别</span>
                 <select v-model="form.basics.gender">
@@ -517,25 +489,12 @@ onMounted(() => void load())
           </div>
 
           <div class="editor-sec">
-            <h3>技能 <button class="btn" type="button" @click="addRow('skills', EMPTY_SKILL)">+ 添加</button></h3>
-            <div v-for="(s, i) in form.skills" :key="i" class="entry">
-              <div class="entry-head">
-                <span class="entry-label">第 {{ i + 1 }} 组</span>
-                <button class="btn ghost" type="button" @click="removeRow('skills', i)">删除</button>
-              </div>
-              <div class="form-grid">
-                <label class="field"><span class="label">分类</span><input v-model="s.category" placeholder="编程语言 / 框架 / 工具" /></label>
-                <label class="field">
-                  <span class="label">熟练度</span>
-                  <select v-model="s.proficiency">
-                    <option value="">未填</option>
-                    <option value="熟练">熟练</option>
-                    <option value="熟悉">熟悉</option>
-                    <option value="了解">了解</option>
-                  </select>
-                </label>
-                <label class="field span2"><span class="label">技能项（每行一个）</span><textarea v-model="s.itemsText" rows="2" placeholder="Java&#10;Spring Boot" /></label>
-              </div>
+            <h3>技能 <em class="soe">固定三分类，每类一段话</em></h3>
+            <div class="form-grid">
+              <label v-for="c in SKILL_CATEGORIES" :key="c" class="field span2">
+                <span class="label">{{ c }}</span>
+                <textarea v-model="form.skills[c]" rows="2" placeholder="一段话描述……（空分类不会出现在简历中）" />
+              </label>
             </div>
           </div>
 
@@ -548,13 +507,10 @@ onMounted(() => void load())
               </div>
               <div class="form-grid">
                 <label class="field"><span class="label">项目名</span><input v-model="p.name" /></label>
-                <label class="field"><span class="label">角色</span><input v-model="p.role" placeholder="后端开发 / 全栈" /></label>
                 <label class="field"><span class="label">开始时间（YYYY-MM）</span><input v-model="p.startDate" placeholder="2025-03" /></label>
                 <label class="field"><span class="label">结束时间</span><input v-model="p.endDate" placeholder="2025-08" /></label>
-                <label class="field span2"><span class="label">描述</span><textarea v-model="p.description" rows="2" /></label>
-                <label class="field"><span class="label">要点（每行一个，量化优先）</span><textarea v-model="p.highlightsText" rows="3" /></label>
-                <label class="field"><span class="label">技术栈（每行一个）</span><textarea v-model="p.techStackText" rows="3" /></label>
-                <label class="field span2"><span class="label">链接</span><input v-model="p.link" placeholder="https://…（可留空）" /></label>
+                <label class="field span2"><span class="label">描述（一段话）</span><textarea v-model="p.description" rows="3" placeholder="做了什么、结果如何——一段话写清" /></label>
+                <label class="field span2"><span class="label">技术栈（每行一个）</span><textarea v-model="p.techStackText" rows="2" /></label>
               </div>
             </div>
           </div>
@@ -594,10 +550,9 @@ onMounted(() => void load())
       <!-- 空工作区 -->
       <template v-else>
         <div class="ws-empty">
-          <p class="hint">从左侧选择一份简历开始编辑，或新建基准简历 / 上传解析。</p>
+          <p class="hint">从左侧选择一份简历开始编辑，或新建基准简历。</p>
           <div class="ws-actions">
             <button class="btn primary" type="button" @click="openEditor()">新建基准简历</button>
-            <button class="btn" type="button" @click="pickFile">上传 docx / PDF 解析</button>
           </div>
         </div>
       </template>
@@ -747,6 +702,29 @@ onMounted(() => void load())
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.rename-input {
+  width: 100%;
+  font-size: 13px;
+  padding: 4px 6px;
+  border: 1px solid #2b5ca8;
+  border-radius: 4px;
+  outline: none;
+}
+
+.photo-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.photo-thumb {
+  width: 48px;
+  height: 64px;
+  object-fit: cover;
+  border: 1px solid #d8d8d8;
+  border-radius: 4px;
 }
 
 .res-meta {

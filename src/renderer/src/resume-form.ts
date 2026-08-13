@@ -1,5 +1,14 @@
 import type { Resume, ResumeEducation, ResumeProject, ResumeSkillGroup, SkillCategory } from '@shared/types/resume'
 
+/** 能力固定三分类（ADR-0009），表单按此渲染三个固定文本框。 */
+export const SKILL_CATEGORIES: readonly SkillCategory[] = ['工程能力', '科研能力', '其他能力']
+
+/** 新建基准简历默认名：姓名-基准简历（ADR-0009 体验简化）。 */
+export function defaultBaseTitle(name: string): string {
+  const trimmed = name.trim()
+  return trimmed === '' ? '' : `${trimmed}-基准简历`
+}
+
 /**
  * 简历编辑器表单态（F-13/#25）：与 Resume 同构，但文本类字段用空串表示未填、
  * 多值数组（城市/课程/荣誉/要点/技术栈等）在表单里以「每行一条」的文本承载（xxxText），
@@ -11,6 +20,8 @@ export interface ResumeForm {
   meta: { title: string; baseResumeId: string | null; targetJobId: string | null }
   basics: {
     name: string
+    /** 照片文件名（导入后由服务端复制到照片目录） */
+    photo: string
     phone: string
     email: string
     /** 现居城市 */
@@ -37,16 +48,13 @@ export interface ResumeForm {
     coursesText: string
     honorsText: string
   }>
-  skills: Array<{ category: string; itemsText: string; proficiency: '' | '熟练' | '熟悉' | '了解' }>
+  skills: Record<SkillCategory, string>
   projects: Array<{
     name: string
-    role: string
     startDate: string
     endDate: string
     description: string
-    highlightsText: string
     techStackText: string
-    link: string
   }>
   experience: Array<{
     company: string
@@ -65,6 +73,7 @@ export function emptyResumeForm(): ResumeForm {
     meta: { title: '', baseResumeId: null, targetJobId: null },
     basics: {
       name: '',
+      photo: '',
       phone: '',
       email: '',
       location: '',
@@ -76,7 +85,7 @@ export function emptyResumeForm(): ResumeForm {
       links: []
     },
     education: [],
-    skills: [],
+    skills: { 工程能力: '', 科研能力: '', 其他能力: '' },
     projects: [],
     experience: [],
     selfAssessment: ''
@@ -94,6 +103,7 @@ export function resumeToForm(resume: Resume): ResumeForm {
   const b = resume.basics ?? {}
   form.basics = {
     name: b.name ?? '',
+    photo: b.photo ?? '',
     phone: b.phone ?? '',
     email: b.email ?? '',
     location: b.location ?? '',
@@ -119,20 +129,16 @@ export function resumeToForm(resume: Resume): ResumeForm {
     coursesText: (e.courses ?? []).join('\n'),
     honorsText: (e.honors ?? []).join('\n')
   }))
-  form.skills = (resume.skills ?? []).map((s) => ({
-    category: s.category,
-    itemsText: s.text,
-    proficiency: ''
-  }))
+  form.skills = { 工程能力: '', 科研能力: '', 其他能力: '' }
+  for (const s of resume.skills ?? []) {
+    if (SKILL_CATEGORIES.includes(s.category)) form.skills[s.category] = s.text
+  }
   form.projects = (resume.projects ?? []).map((p) => ({
     name: p.name ?? '',
-    role: '',
     startDate: p.startDate ?? '',
     endDate: p.endDate ?? '',
     description: p.description ?? '',
-    highlightsText: '',
-    techStackText: (p.techStack ?? []).join('\n'),
-    link: ''
+    techStackText: (p.techStack ?? []).join('\n')
   }))
   form.experience = (resume.experience ?? []).map((x) => ({
     company: x.company ?? '',
@@ -168,9 +174,10 @@ export function formToResume(form: ResumeForm): Resume {
     }))
     .filter(isNonEmptyEntry)
 
-  const skills: ResumeSkillGroup[] = form.skills
-    .filter((s) => s.category.trim() !== '' && s.itemsText.trim() !== '')
-    .map((s) => ({ category: s.category.trim() as SkillCategory, text: s.itemsText.trim() }))
+  const skills: ResumeSkillGroup[] = SKILL_CATEGORIES.filter((c) => form.skills[c].trim() !== '').map((c) => ({
+    category: c,
+    text: form.skills[c].trim()
+  }))
 
   const projects: ResumeProject[] = form.projects
     .map((p) => ({
@@ -201,6 +208,7 @@ export function formToResume(form: ResumeForm): Resume {
     },
     basics: {
       name: b.name.trim(),
+      photo: clean(b.photo),
       phone: clean(b.phone),
       email: clean(b.email),
       location: clean(b.location),
@@ -230,10 +238,10 @@ function clean(value: string): string | undefined {
   return trimmed === '' ? undefined : trimmed
 }
 
-/** 多值文本「每行一条」→ 数组（trim + 过滤空行；城市类字段同时兼容逗号分隔）。 */
+/** 多值文本「每行一条」→ 数组（trim + 过滤空行；不拆分逗号/顿号——ADR-0009 取消自动分割）。 */
 function splitLines(text: string): string[] {
   return text
-    .split(/[\n,，、]+/)
+    .split(/\n+/)
     .map((line) => line.trim())
     .filter((line) => line !== '')
 }
