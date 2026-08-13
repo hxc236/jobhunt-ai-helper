@@ -61,12 +61,14 @@ function fitFrameHeight(): void {
     a4ContentHeight.value = doc.body.scrollHeight
     frame.style.height = `${a4ContentHeight.value}px`
   }
+  // 每次打开预览默认适配整页（用户手动缩放不触发 load，不会被覆盖）
+  previewZoom.value = fitPreviewZoom()
 }
 
-/** 适配：让整页 A4（794×内容高）在弹窗可视区内完整可见。 */
+/** 适配：让整页 A4（794×内容高）在弹窗可视区内完整可见（预留弹窗头/内边距缓冲）。 */
 function fitPreviewZoom(): number {
-  const widthFit = (960 - 48) / 794
-  const heightFit = (window.innerHeight * 0.86 - 80) / a4ContentHeight.value
+  const widthFit = (960 - 60) / 794
+  const heightFit = (window.innerHeight * 0.86 - 110) / a4ContentHeight.value
   return Math.max(PREVIEW_ZOOM_MIN, Math.min(1, widthFit, heightFit))
 }
 
@@ -82,16 +84,21 @@ function onPreviewWheel(event: WheelEvent): void {
 }
 
 let previewWheelBound: ((e: WheelEvent) => void) | undefined
-watch(previewHtml, (open) => {
-  if (previewWheelBound !== undefined) {
-    a4BodyRef.value?.removeEventListener('wheel', previewWheelBound)
-    previewWheelBound = undefined
-  }
-  if (open && a4BodyRef.value !== null) {
-    previewWheelBound = onPreviewWheel
-    a4BodyRef.value.addEventListener('wheel', onPreviewWheel, { passive: false })
-  }
-})
+// flush: post —— 等弹窗 DOM 渲染完再绑定监听（默认 pre 时 ref 还是 null，监听永远绑不上）
+watch(
+  previewHtml,
+  (open) => {
+    if (previewWheelBound !== undefined) {
+      a4BodyRef.value?.removeEventListener('wheel', previewWheelBound)
+      previewWheelBound = undefined
+    }
+    if (open && a4BodyRef.value !== null) {
+      previewWheelBound = onPreviewWheel
+      a4BodyRef.value.addEventListener('wheel', onPreviewWheel, { passive: false })
+    }
+  },
+  { flush: 'post' }
+)
 
 const a4BodyRef = ref<HTMLElement | null>(null)
 
