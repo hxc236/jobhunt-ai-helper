@@ -25,10 +25,10 @@ const sample: Resume = {
       endDate: '2026-06',
       gpa: '3.7/4.0',
       rank: '前 15%',
-      courses: ['数据结构', '操作系统'],
-      honors: ['校级一等奖学金（2024）']
+      courses: ['数据结构', '操作系统']
     }
   ],
+  honors: ['校级一等奖学金（2024）'],
   skills: [{ category: '工程能力', text: 'Java、Python 服务端开发' }],
   projects: [
     {
@@ -64,12 +64,14 @@ describe('resumeToForm / formToResume 往返', () => {
     form.education[0]!.coursesText = '数据结构\n操作系统\n数据库原理'
     form.projects[0]!.techStackText = 'Java\nSpring Boot\nRedis'
     form.skills['工程能力'] = 'Java\nPython\nTypeScript'
+    form.honorsText = '一等奖学金\n蓝桥杯省二等奖'
 
     const resume = formToResume(form)
     expect(resume.basics?.jobIntention?.city).toEqual(['北京', '上海'])
     expect(resume.education?.[0]?.courses).toEqual(['数据结构', '操作系统', '数据库原理'])
     expect(resume.projects?.[0]?.techStack).toEqual(['Java', 'Spring Boot', 'Redis'])
     expect(resume.skills?.[0]).toEqual({ category: '工程能力', text: 'Java\nPython\nTypeScript' })
+    expect(resume.honors).toEqual(['一等奖学金', '蓝桥杯省二等奖'])
   })
 })
 
@@ -81,8 +83,8 @@ describe('formToResume 归一化', () => {
     form.basics.phone = ''
     form.basics.gender = ''
     form.basics.jobIntention.cityText = '  北京  , 杭州、深圳\n\n'
-    form.education.push({ school: '   ', degree: '', major: '', startDate: '', endDate: '', gpa: '', rank: '', coursesText: '', honorsText: '' })
-    form.education.push({ school: '清华大学', degree: '硕士', major: '软件工程', startDate: '2026-09', endDate: '', gpa: '', rank: '', coursesText: '\n', honorsText: '' })
+    form.education.push({ school: '   ', degree: '', major: '', startDate: '', endDate: '', gpa: '', rank: '', coursesText: '' })
+    form.education.push({ school: '清华大学', degree: '硕士', major: '软件工程', startDate: '2026-09', endDate: '', gpa: '', rank: '', coursesText: '\n' })
     form.skills['工程能力'] = '  精通 Java 服务端开发  '
     form.skills['其他能力'] = '\n  \n'
 

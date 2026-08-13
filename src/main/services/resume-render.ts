@@ -105,8 +105,8 @@ export function renderSheet(resume: Resume, photoDataUri?: string): string {
     }
   }
 
-  // 竞赛与荣誉：聚合所有教育条目的荣誉，单行 · 连接（源自教育经历拆分）
-  const honors = (resume.education ?? []).flatMap((e) => e.honors ?? [])
+  // 竞赛与荣誉：顶层字段（从教育经历拆出），单行 · 连接
+  const honors = resume.honors ?? []
   if (honors.length > 0) {
     parts.push('<h2>竞赛与荣誉</h2>')
     parts.push(

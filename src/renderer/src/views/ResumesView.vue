@@ -46,6 +46,28 @@ async function openPreview(resume: StoredResume): Promise<void> {
   }
 }
 
+/** A4 预览缩放（弹窗放大 + 默认适配整页 + 按钮/Ctrl+滚轮调节）。 */
+const previewZoom = ref(1)
+const PREVIEW_ZOOM_MIN = 0.4
+const PREVIEW_ZOOM_MAX = 1.5
+
+/** 适配：让整页 A4（794×1123）在弹窗可视区内完整可见。 */
+function fitPreviewZoom(): number {
+  const widthFit = (960 - 48) / 794
+  const heightFit = (window.innerHeight * 0.86 - 80) / 1123
+  return Math.max(PREVIEW_ZOOM_MIN, Math.min(1, widthFit, heightFit))
+}
+
+function zoomPreviewBy(delta: number): void {
+  previewZoom.value = Math.min(PREVIEW_ZOOM_MAX, Math.max(PREVIEW_ZOOM_MIN, previewZoom.value + delta))
+}
+
+/** Ctrl+滚轮缩放（弹窗内容区）。 */
+function onPreviewWheel(event: WheelEvent): void {
+  if (!event.ctrlKey) return
+  zoomPreviewBy(-event.deltaY * 0.001)
+}
+
 async function previewCurrent(): Promise<void> {
   previewError.value = ''
   exportMessage.value = ''
@@ -129,16 +151,31 @@ function startRename(resume: StoredResume): void {
 
 async function commitRename(): Promise<void> {
   const target = renameTarget.value
-  renameTarget.value = null
   if (target === null) return
   const title = renameTitle.value.trim()
-  if (title === '' || title === (target.meta.title ?? '')) return
+  if (title === '' || title === (target.meta.title ?? '')) {
+    renameTarget.value = null
+    return
+  }
   try {
     await window.api.resumes.update(target.meta.id as string, { ...target, meta: { ...target.meta, title } })
     await load()
   } catch (err) {
     errorMessage.value = `改名失败：${String(err)}`
+  } finally {
+    renameTarget.value = null
   }
+}
+
+/** 改名输入按键：IME 组合期间忽略（修复中文输入 Enter 提前提交/静默丢失）。 */
+function onRenameKeydown(event: KeyboardEvent): void {
+  if (event.isComposing) return
+  if (event.key === 'Enter') void commitRename()
+  else if (event.key === 'Escape') renameTarget.value = null
+}
+
+function onRenameFocus(event: FocusEvent): void {
+  ;(event.target as HTMLInputElement | null)?.select()
 }
 
 const bases = computed(() => resumes.value.filter((r) => r.meta.baseResumeId == null))
@@ -256,7 +293,7 @@ function removeRow<K extends keyof ResumeForm>(key: K, index: number): void {
 }
 
 const EMPTY_EDU: ResumeForm['education'][number] = {
-  school: '', degree: '', major: '', startDate: '', endDate: '', gpa: '', rank: '', coursesText: '', honorsText: ''
+  school: '', degree: '', major: '', startDate: '', endDate: '', gpa: '', rank: '', coursesText: ''
 }
 const EMPTY_PROJECT: ResumeForm['projects'][number] = {
   name: '', startDate: '', endDate: '', description: '', techStackText: ''
@@ -318,14 +355,15 @@ onMounted(() => void load())
           <input
             v-model="renameTitle"
             class="rename-input"
+            autofocus
             @click.stop
-            @keyup.enter="commitRename"
-            @keyup.esc="renameTarget = null"
+            @keydown.stop="onRenameKeydown"
             @blur="commitRename"
+            @focus="onRenameFocus"
           />
         </template>
         <template v-else>
-          <div class="res-name" title="双击改名" @dblclick.stop="startRename(r)">{{ r.meta.title ?? '未命名简历' }}</div>
+          <div class="res-name" title="双击改名" @click.stop @dblclick.stop="startRename(r)">{{ r.meta.title ?? '未命名简历' }}</div>
         </template>
         <div class="res-meta">更新于 {{ fmtDate(r.meta.updatedAt) }} · 基准</div>
         <div class="res-actions">
@@ -353,14 +391,15 @@ onMounted(() => void load())
           <input
             v-model="renameTitle"
             class="rename-input"
+            autofocus
             @click.stop
-            @keyup.enter="commitRename"
-            @keyup.esc="renameTarget = null"
+            @keydown.stop="onRenameKeydown"
             @blur="commitRename"
+            @focus="onRenameFocus"
           />
         </template>
         <template v-else>
-          <div class="res-name" title="双击改名" @dblclick.stop="startRename(r)">{{ r.meta.title ?? '未命名优化稿' }}</div>
+          <div class="res-name" title="双击改名" @click.stop @dblclick.stop="startRename(r)">{{ r.meta.title ?? '未命名优化稿' }}</div>
         </template>
         <div class="res-meta">
           更新于 {{ fmtDate(r.meta.updatedAt) }} · 派生
@@ -432,6 +471,7 @@ onMounted(() => void load())
                 <span class="label">照片</span>
                 <div class="photo-field">
                   <img v-if="photoPreviewUrl" :src="photoPreviewUrl" class="photo-thumb" alt="照片预览" />
+                  <span v-if="form.basics.photo !== ''" class="photo-ok">已上传</span>
                   <button class="btn ghost" type="button" @click="pickPhoto">上传照片</button>
                   <button v-if="form.basics.photo !== ''" class="btn ghost" type="button" @click="removePhoto">移除</button>
                 </div>
@@ -483,8 +523,14 @@ onMounted(() => void load())
                 <label class="field"><span class="label">绩点（如 3.7/4.0）</span><input v-model="e.gpa" /></label>
                 <label class="field"><span class="label">排名 <em class="soe">国企看重</em></span><input v-model="e.rank" placeholder="前 10%" /></label>
                 <label class="field"><span class="label">相关课程（每行一个）</span><textarea v-model="e.coursesText" rows="2" /></label>
-                <label class="field"><span class="label">荣誉/奖学金（每行一个）</span><textarea v-model="e.honorsText" rows="2" /></label>
               </div>
+            </div>
+          </div>
+
+          <div class="editor-sec">
+            <h3>竞赛和荣誉</h3>
+            <div class="form-grid">
+              <label class="field span2"><span class="label">荣誉/奖项（每行一个，A4 单行·连接）</span><textarea v-model="form.honorsText" rows="3" placeholder="国家奖学金（2025）&#10;蓝桥杯省一等奖" /></label>
             </div>
           </div>
 
@@ -572,8 +618,13 @@ onMounted(() => void load())
   </Modal>
 
   <!-- ===== 弹窗：A4 预览 + 导出 PDF ===== -->
-  <Modal :open="previewHtml !== ''" :title="`A4 预览 · ${previewTitle}`" @close="previewHtml = ''">
+  <Modal :open="previewHtml !== ''" :title="`A4 预览 · ${previewTitle}`" width="960px" @close="previewHtml = ''">
     <template #head-actions>
+      <span class="zoom-hint">Ctrl + 滚轮缩放</span>
+      <button class="btn" type="button" @click="previewZoom = fitPreviewZoom()">适配</button>
+      <button class="btn" type="button" @click="zoomPreviewBy(-0.1)">−</button>
+      <button class="btn" type="button" @click="previewZoom = 1">100%</button>
+      <button class="btn" type="button" @click="zoomPreviewBy(0.1)">＋</button>
       <button class="btn" type="button" :disabled="exporting" @click="exportPdf">
         {{ exporting ? '导出中…' : '导出 PDF' }}
       </button>
@@ -582,8 +633,10 @@ onMounted(() => void load())
       {{ exportMessage }}
     </p>
     <p v-if="previewError" class="hint" style="color: #dc2626">{{ previewError }}</p>
-    <div class="a4-body">
-      <iframe class="a4-frame" :srcdoc="previewHtml" title="A4 预览" />
+    <div class="a4-body" @wheel.prevent="onPreviewWheel">
+      <div class="a4-zoom" :style="{ zoom: previewZoom }">
+        <iframe class="a4-frame" :srcdoc="previewHtml" title="A4 预览" />
+      </div>
     </div>
   </Modal>
 </template>
@@ -720,11 +773,17 @@ onMounted(() => void load())
 }
 
 .photo-thumb {
-  width: 48px;
-  height: 64px;
+  width: 76px;
+  height: 100px;
   object-fit: cover;
   border: 1px solid #d8d8d8;
   border-radius: 4px;
+}
+
+.photo-ok {
+  color: #059669;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .res-meta {
@@ -855,20 +914,33 @@ onMounted(() => void load())
   color: #92400e;
 }
 
-/* A4 预览弹窗 */
+/* A4 预览弹窗：放大 + 缩放适配整页（zoom 包裹，iframe 固定 A4 尺寸） */
 .a4-body {
   background: var(--surface);
   display: flex;
   justify-content: center;
+  align-items: flex-start;
   padding: 14px;
+  overflow: auto;
+  max-height: 78vh;
+}
+
+.a4-zoom {
+  line-height: 0;
+  flex-shrink: 0;
 }
 
 .a4-frame {
-  width: 740px;
-  max-width: 100%;
-  height: 70vh;
+  width: 794px;
+  height: 1123px;
   border: 1px solid var(--border);
   background: #ffffff;
   box-shadow: 0 4px 24px color-mix(in srgb, #000000 12%, transparent);
+}
+
+.zoom-hint {
+  font-size: 11.5px;
+  color: var(--muted);
+  margin-right: 4px;
 }
 </style>

@@ -24,9 +24,9 @@ const sample: Resume = {
       endDate: '2026-06',
       gpa: '3.7/4.0',
       courses: ['数据结构'],
-      honors: ['一等奖学金', '蓝桥杯省二等奖']
     }
   ],
+  honors: ['一等奖学金', '蓝桥杯省二等奖'],
   skills: [{ category: '工程能力', text: 'Java、Python 服务端开发' }],
   projects: [
     {

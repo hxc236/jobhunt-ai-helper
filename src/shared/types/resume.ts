@@ -62,7 +62,6 @@ export interface ResumeEducation {
   /** 排名，如「前 10%」（国企看重） */
   rank?: string
   courses?: string[]
-  honors?: string[]
 }
 
 /** 能力分类（ADR-0009：固定三分类，每类一段话描述）。 */
@@ -101,6 +100,8 @@ export interface Resume {
   skills?: ResumeSkillGroup[]
   projects?: ResumeProject[]
   experience?: ResumeExperience[]
+  /** 竞赛与荣誉（顶层字段：从教育经历拆出，A4 单行·连接） */
+  honors?: string[]
   /** 自我评价（可留空，优化稿生成） */
   selfAssessment?: string
 }

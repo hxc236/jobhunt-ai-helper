@@ -46,7 +46,6 @@ export interface ResumeForm {
     gpa: string
     rank: string
     coursesText: string
-    honorsText: string
   }>
   skills: Record<SkillCategory, string>
   projects: Array<{
@@ -64,6 +63,8 @@ export interface ResumeForm {
     highlightsText: string
     techStackText: string
   }>
+  /** 竞赛与荣誉（每行一个；A4 单行·连接） */
+  honorsText: string
   selfAssessment: string
 }
 
@@ -88,6 +89,7 @@ export function emptyResumeForm(): ResumeForm {
     skills: { 工程能力: '', 科研能力: '', 其他能力: '' },
     projects: [],
     experience: [],
+    honorsText: '',
     selfAssessment: ''
   }
 }
@@ -126,8 +128,7 @@ export function resumeToForm(resume: Resume): ResumeForm {
     endDate: e.endDate ?? '',
     gpa: e.gpa ?? '',
     rank: e.rank ?? '',
-    coursesText: (e.courses ?? []).join('\n'),
-    honorsText: (e.honors ?? []).join('\n')
+    coursesText: (e.courses ?? []).join('\n')
   }))
   form.skills = { 工程能力: '', 科研能力: '', 其他能力: '' }
   for (const s of resume.skills ?? []) {
@@ -148,6 +149,7 @@ export function resumeToForm(resume: Resume): ResumeForm {
     highlightsText: (x.highlights ?? []).join('\n'),
     techStackText: (x.techStack ?? []).join('\n')
   }))
+  form.honorsText = (resume.honors ?? []).join('\n')
   form.selfAssessment = resume.selfAssessment ?? ''
   return form
 }
@@ -169,8 +171,7 @@ export function formToResume(form: ResumeForm): Resume {
       endDate: e.endDate.trim() === '' ? null : e.endDate.trim(),
       gpa: clean(e.gpa),
       rank: clean(e.rank),
-      courses: splitLines(e.coursesText),
-      honors: splitLines(e.honorsText)
+      courses: splitLines(e.coursesText)
     }))
     .filter(isNonEmptyEntry)
 
@@ -227,6 +228,7 @@ export function formToResume(form: ResumeForm): Resume {
     skills,
     projects,
     experience,
+    honors: splitLines(form.honorsText),
     selfAssessment: clean(form.selfAssessment)
   }
   return resume

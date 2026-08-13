@@ -18,6 +18,7 @@ export interface SectionDiff {
 const SECTIONS = [
   'basics',
   'education',
+  'honors',
   'skills',
   'projects',
   'experience',

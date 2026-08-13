@@ -164,15 +164,16 @@ function resumeSections(resume: Resume): Record<string, string> {
     )
     .join(' ')
   const education = (resume.education ?? [])
-    .map((e) => [e.school, e.degree, e.major, e.gpa, e.rank, ...(e.courses ?? []), ...(e.honors ?? [])].join(' '))
+    .map((e) => [e.school, e.degree, e.major, e.gpa, e.rank, ...(e.courses ?? [])].join(' '))
     .join(' ')
+  const honors = (resume.honors ?? []).join(' ')
 
   return {
     basics: [basics.name, basics.phone, basics.email, basics.location, basics.hometown].join(' '),
     skills,
     projects,
     experience,
-    education
+    education: [education, honors].filter((v) => v !== '').join(' ')
   }
 }
 

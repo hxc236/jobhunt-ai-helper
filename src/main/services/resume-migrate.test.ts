@@ -8,7 +8,7 @@ const legacyResume = {
   meta: { title: '基准简历', baseResumeId: null, targetJobId: null },
   basics: { name: '张伟', hometown: '河北石家庄' },
   education: [
-    { school: '北京理工大学', degree: '本科', major: '计算机科学与技术' }
+    { school: '北京理工大学', degree: '本科', major: '计算机科学与技术', honors: ['一等奖学金', '蓝桥杯省二等奖'] }
   ],
   skills: [
     { category: '编程语言', items: ['Java', 'Python'], proficiency: '熟练' },
@@ -63,6 +63,10 @@ describe('transformLegacyResume', () => {
         techStack: ['Java', 'Spring Boot']
       }
     ])
+    // 荣誉：教育条目 → 顶层聚合，教育条目不再含荣誉
+    expect(next.honors).toEqual(['一等奖学金', '蓝桥杯省二等奖'])
+    expect(next.education?.[0]).not.toHaveProperty('honors')
+    expect(next.education?.[0]).toMatchObject({ school: '北京理工大学', degree: '本科' })
     // 其余分节原样保留；证书字段剥离（已从模型移除）
     expect(next.experience).toEqual(legacyResume.experience)
     expect(next.basics).toEqual(legacyResume.basics)

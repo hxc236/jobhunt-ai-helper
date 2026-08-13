@@ -90,7 +90,7 @@ describe('ResumeService', () => {
       const legacy = {
         meta: {},
         basics: { name: '张伟' },
-        education: [{ school: 'X大学', degree: '本科', major: '计算机' }],
+        education: [{ school: 'X大学', degree: '本科', major: '计算机', honors: ['奖学金'] }],
         skills: [{ category: '编程语言', items: ['Java'], proficiency: '熟练' }],
         projects: [{ name: '平台', role: '后端', highlights: ['要点'], link: 'https://x' }]
       }
@@ -103,6 +103,8 @@ describe('ResumeService', () => {
         // additionalProperties:false 在对象级报错（/skills/0 而非 /skills/0/items）
         expect(issues.some((i) => i.instancePath === '/skills/0' && i.keyword === 'additionalProperties')).toBe(true)
         expect(issues.some((i) => i.instancePath === '/projects/0' && i.keyword === 'additionalProperties')).toBe(true)
+        // 荣誉旧位置（education 条目内）同样被拒
+        expect(issues.some((i) => i.instancePath === '/education/0' && i.keyword === 'additionalProperties')).toBe(true)
         // 非三分类枚举同时被拒
         expect(issues.some((i) => i.instancePath === '/skills/0/category' && i.keyword === 'enum')).toBe(true)
       }

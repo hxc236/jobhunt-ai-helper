@@ -1,5 +1,5 @@
 import type { Db } from '../db/migrations'
-import type { Resume, ResumeProject, ResumeSkillGroup } from '../../shared/types/resume'
+import type { Resume, ResumeEducation, ResumeProject, ResumeSkillGroup } from '../../shared/types/resume'
 
 /**
  * 旧模型 → v2 一次性数据迁移（ADR-0009 / wayfinder「简历模块可用」）。
@@ -25,13 +25,26 @@ interface LegacyProject {
   link?: string | null
 }
 
-type LegacyResume = Omit<Resume, 'skills' | 'projects'> & {
+interface LegacyEducation {
+  school?: string
+  degree?: string
+  major?: string
+  startDate?: string
+  endDate?: string | null
+  gpa?: string
+  rank?: string
+  courses?: string[]
+  honors?: string[]
+}
+
+type LegacyResume = Omit<Resume, 'skills' | 'projects' | 'education'> & {
+  education?: LegacyEducation[]
   skills?: LegacySkillGroup[]
   projects?: LegacyProject[]
   certificates?: Array<{ name?: string; issuer?: string; date?: string }>
 }
 
-/** 形状检测：任一技能组带 items/proficiency，任一项目带 role/highlights/link，或带 certificates → 旧结构。 */
+/** 形状检测：技能 items/proficiency、项目 role/highlights/link、certificates、教育条目带 honors → 旧结构。 */
 export function isLegacyResume(value: unknown): value is LegacyResume {
   if (typeof value !== 'object' || value === null) return false
   const resume = value as Partial<LegacyResume>
@@ -41,7 +54,8 @@ export function isLegacyResume(value: unknown): value is LegacyResume {
   const legacyProject = (resume.projects ?? []).some(
     (p) => p.role !== undefined || Array.isArray(p.highlights) || p.link !== undefined
   )
-  return legacySkill || legacyProject || Array.isArray(resume.certificates)
+  const legacyHonors = (resume.education ?? []).some((e) => Array.isArray(e.honors))
+  return legacySkill || legacyProject || Array.isArray(resume.certificates) || legacyHonors
 }
 
 /** 旧结构 → v2：技能条目合并为「工程能力」一段话（格式：分类：条目、条目；…）；项目裁剪。 */
@@ -67,9 +81,15 @@ export function transformLegacyResume(legacy: LegacyResume): Resume {
     techStack: p.techStack
   }))
 
+  // 荣誉：教育条目 → 顶层聚合（从教育经历拆出），并从教育条目剥离
+  const honors = (legacy.education ?? []).flatMap((e) => e.honors ?? [])
+  const education = (legacy.education ?? []).map(
+    ({ honors: _dropped, ...rest }) => rest as ResumeEducation
+  )
+
   // 证书字段已从模型移除（用户定稿）——旧数据一并剥离
-  const { certificates: _dropped, ...rest } = legacy
-  return { ...rest, skills, projects }
+  const { certificates: _droppedCert, ...rest } = legacy
+  return { ...rest, education, skills, projects, honors }
 }
 
 /** 扫描 resumes 表并转换旧结构行；返回转换行数（幂等：重复调用返回 0）。 */

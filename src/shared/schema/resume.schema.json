@@ -57,9 +57,9 @@
           "endDate": { "type": ["string", "null"], "description": "YYYY-MM；应届未毕业可留 null" },
           "gpa": { "type": "string", "description": "如 3.8/4.0" },
           "rank": { "type": "string", "description": "排名，如 前10%（国企看重）" },
-          "courses": { "type": "array", "items": { "type": "string" }, "description": "相关课程" },
-          "honors": { "type": "array", "items": { "type": "string" }, "description": "奖学金/荣誉" }
-        }
+          "courses": { "type": "array", "items": { "type": "string" }, "description": "相关课程" }
+        },
+        "additionalProperties": false
       }
     },
     "skills": {
@@ -102,6 +102,7 @@
         }
       }
     },
+    "honors": { "type": "array", "items": { "type": "string" }, "description": "竞赛与荣誉（顶层：从教育经历拆出）" },
     "selfAssessment": { "type": "string", "description": "自我评价（可留空，优化稿生成）" }
   }
 }
