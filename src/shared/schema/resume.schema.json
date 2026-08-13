@@ -103,6 +103,21 @@
       }
     },
     "honors": { "type": "array", "items": { "type": "string" }, "description": "竞赛与荣誉（顶层：从教育经历拆出）" },
+    "research": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": { "type": "string", "description": "研究课题标题" },
+          "startDate": { "type": "string" },
+          "endDate": { "type": "string" },
+          "description": { "type": "string", "description": "研究内容（一段话）" },
+          "achievement": { "type": "string", "description": "成果（单条文本，如论文/专利）" }
+        },
+        "additionalProperties": false
+      },
+      "description": "科研经历（标题/时间选填/研究内容/成果）"
+    },
     "selfAssessment": { "type": "string", "description": "自我评价（可留空，优化稿生成）" }
   }
 }

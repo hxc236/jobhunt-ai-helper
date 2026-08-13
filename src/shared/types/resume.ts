@@ -92,6 +92,17 @@ export interface ResumeExperience {
   techStack?: string[]
 }
 
+export interface ResumeResearch {
+  /** 研究课题标题 */
+  title?: string
+  startDate?: string
+  endDate?: string
+  /** 研究内容（一段话） */
+  description?: string
+  /** 成果（单条文本，如论文/专利） */
+  achievement?: string
+}
+
 /** 简历 JSON（与 resume.schema.json 对齐；meta.id / meta.updatedAt 由服务端管理，输入可缺省）。 */
 export interface Resume {
   meta: ResumeMeta
@@ -100,6 +111,8 @@ export interface Resume {
   skills?: ResumeSkillGroup[]
   projects?: ResumeProject[]
   experience?: ResumeExperience[]
+  /** 科研经历（标题/时间选填/研究内容/成果） */
+  research?: ResumeResearch[]
   /** 竞赛与荣誉（顶层字段：从教育经历拆出，A4 单行·连接） */
   honors?: string[]
   /** 自我评价（可留空，优化稿生成） */

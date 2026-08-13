@@ -63,6 +63,14 @@ export interface ResumeForm {
     highlightsText: string
     techStackText: string
   }>
+  /** 科研经历（标题/时间选填/研究内容/成果） */
+  research: Array<{
+    title: string
+    startDate: string
+    endDate: string
+    description: string
+    achievement: string
+  }>
   /** 竞赛与荣誉（每行一个；A4 单行·连接） */
   honorsText: string
   selfAssessment: string
@@ -89,6 +97,7 @@ export function emptyResumeForm(): ResumeForm {
     skills: { 工程能力: '', 科研能力: '', 其他能力: '' },
     projects: [],
     experience: [],
+    research: [],
     honorsText: '',
     selfAssessment: ''
   }
@@ -149,6 +158,13 @@ export function resumeToForm(resume: Resume): ResumeForm {
     highlightsText: (x.highlights ?? []).join('\n'),
     techStackText: (x.techStack ?? []).join('\n')
   }))
+  form.research = (resume.research ?? []).map((r) => ({
+    title: r.title ?? '',
+    startDate: r.startDate ?? '',
+    endDate: r.endDate ?? '',
+    description: r.description ?? '',
+    achievement: r.achievement ?? ''
+  }))
   form.honorsText = (resume.honors ?? []).join('\n')
   form.selfAssessment = resume.selfAssessment ?? ''
   return form
@@ -201,6 +217,16 @@ export function formToResume(form: ResumeForm): Resume {
     }))
     .filter(isNonEmptyEntry)
 
+  const research = form.research
+    .map((r) => ({
+      title: clean(r.title),
+      startDate: clean(r.startDate),
+      endDate: clean(r.endDate),
+      description: clean(r.description),
+      achievement: clean(r.achievement)
+    }))
+    .filter(isNonEmptyEntry)
+
   const resume: Resume = {
     meta: {
       title: clean(form.meta.title),
@@ -228,6 +254,7 @@ export function formToResume(form: ResumeForm): Resume {
     skills,
     projects,
     experience,
+    research,
     honors: splitLines(form.honorsText),
     selfAssessment: clean(form.selfAssessment)
   }
@@ -263,7 +290,13 @@ const SECTION_LABELS: Record<string, string> = {
   skills: '技能',
   projects: '项目经历',
   experience: '实习经历',
+  research: '科研经历',
   selfAssessment: '自我评价'
+}
+
+/** 分节内字段覆盖标签（如 research 的 title/description 与 experience/projects 同名字段不同含义）。 */
+const SECTION_FIELD_LABELS: Record<string, Record<string, string>> = {
+  research: { title: '标题', description: '研究内容', achievement: '成果' }
 }
 
 const FIELD_LABELS: Record<string, string> = {
@@ -320,7 +353,7 @@ export function issueSection(instancePath: string): string {
     } else if (part === 'jobIntention' || part === 'links') {
       segments.push(FIELD_LABELS[part] ?? part)
     } else {
-      segments.push(FIELD_LABELS[part] ?? part)
+      segments.push(SECTION_FIELD_LABELS[section]?.[part] ?? FIELD_LABELS[part] ?? part)
     }
   }
   return segments.length === 0 ? label : `${label} · ${segments.join(' · ')}`

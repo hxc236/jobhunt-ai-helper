@@ -386,6 +386,9 @@ const EMPTY_PROJECT: ResumeForm['projects'][number] = {
 const EMPTY_EXP: ResumeForm['experience'][number] = {
   company: '', title: '', startDate: '', endDate: '', highlightsText: '', techStackText: ''
 }
+const EMPTY_RESEARCH: ResumeForm['research'][number] = {
+  title: '', startDate: '', endDate: '', description: '', achievement: ''
+}
 
 function fmtDate(iso: string | undefined): string {
   return iso === undefined ? '' : iso.slice(0, 10)
@@ -672,6 +675,23 @@ onMounted(() => {
                 <label class="field"><span class="label">结束时间</span><input v-model="x.endDate" placeholder="2026-06" /></label>
                 <label class="field"><span class="label">要点（每行一个）</span><textarea v-model="x.highlightsText" rows="3" /></label>
                 <label class="field"><span class="label">技术栈（每行一个）</span><textarea v-model="x.techStackText" rows="3" /></label>
+              </div>
+            </div>
+          </div>
+
+          <div class="editor-sec">
+            <h3>科研经历 <button class="btn" type="button" @click="addRow('research', EMPTY_RESEARCH)">+ 添加</button></h3>
+            <div v-for="(r, i) in form.research" :key="i" class="entry">
+              <div class="entry-head">
+                <span class="entry-label">第 {{ i + 1 }} 条</span>
+                <button class="btn ghost" type="button" @click="removeRow('research', i)">删除</button>
+              </div>
+              <div class="form-grid">
+                <label class="field span2"><span class="label">标题（研究课题名）</span><input v-model="r.title" placeholder="如：基于 Transformer 的命名实体识别研究" /></label>
+                <label class="field"><span class="label">开始时间（选填）</span><input v-model="r.startDate" placeholder="2025-03" /></label>
+                <label class="field"><span class="label">结束时间（选填）</span><input v-model="r.endDate" placeholder="2025-09" /></label>
+                <label class="field span2"><span class="label">研究内容</span><textarea v-model="r.description" rows="3" placeholder="研究什么、怎么做的——一段话写清" /></label>
+                <label class="field span2"><span class="label">成果（单条）</span><input v-model="r.achievement" placeholder="如：以第一作者发表 EI 论文一篇" /></label>
               </div>
             </div>
           </div>

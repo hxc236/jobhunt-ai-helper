@@ -185,7 +185,7 @@ export class OptimizeService {
       '',
       constraint,
       '',
-      '输出结构要求（v2）：skills 为固定三分类（工程能力/科研能力/其他能力）每类一段话（{category, text}）；projects 仅含 name/startDate/endDate/description/techStack；不得输出已删除字段（items/proficiency/highlights/role/link/certificates）。',
+      '输出结构要求（v2）：skills 为固定三分类（工程能力/科研能力/其他能力）每类一段话（{category, text}）；projects 仅含 name/startDate/endDate/description/techStack；research 仅含 title/startDate/endDate/description/achievement；不得输出已删除字段（items/proficiency/highlights/role/link/certificates）。',
       '',
       `JD 分析：\n${JSON.stringify(jdAnalysis)}`,
       '',

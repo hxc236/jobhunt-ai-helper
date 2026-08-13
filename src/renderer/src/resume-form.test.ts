@@ -49,6 +49,15 @@ const sample: Resume = {
       techStack: ['Java']
     }
   ],
+  research: [
+    {
+      title: '基于 Transformer 的 NER 研究',
+      startDate: '2025-03',
+      endDate: '2025-09',
+      description: '低资源场景 NER 迁移方法',
+      achievement: '以第一作者发表 EI 论文一篇'
+    }
+  ],
   selfAssessment: '基础扎实'
 }
 
@@ -146,6 +155,32 @@ describe('issueSection 校验错误定位（F-13/#25 验收：保存时校验错
     expect(issueSection('/basics/jobIntention/position')).toBe('基本信息 · 求职意向 · 求职意向岗位')
     expect(issueSection('/basics/links/0/url')).toBe('基本信息 · 链接 · 第1条 · 链接地址')
     expect(issueSection('')).toBe('简历整体')
+  })
+
+  it('科研经历往返：标题/时间/研究内容/成果保留；空条目丢弃', () => {
+    const form = resumeToForm(sample)
+    expect(form.research).toHaveLength(1)
+    expect(form.research[0]).toEqual({
+      title: '基于 Transformer 的 NER 研究',
+      startDate: '2025-03',
+      endDate: '2025-09',
+      description: '低资源场景 NER 迁移方法',
+      achievement: '以第一作者发表 EI 论文一篇'
+    })
+    const back = formToResume(form)
+    expect(back.research).toEqual(sample.research)
+
+    // 表单归一化：trim、空串 → undefined；全空条目丢弃
+    const cleaned = formToResume(
+      resumeToForm({ ...sample, research: [{ title: '  课题A  ', description: '', achievement: '专利' }, { title: '', description: '', achievement: '' }] })
+    )
+    expect(cleaned.research).toEqual([{ title: '课题A', description: undefined, achievement: '专利' }])
+  })
+
+  it('issueSection：科研经历分节 + 字段中文标签', () => {
+    expect(issueSection('/research/0/achievement')).toBe('科研经历 · 第1条 · 成果')
+    expect(issueSection('/research/1/description')).toBe('科研经历 · 第2条 · 研究内容')
+    expect(issueSection('/research/0/title')).toBe('科研经历 · 第1条 · 标题')
   })
 
   it('未知分节/字段回退原路径', () => {

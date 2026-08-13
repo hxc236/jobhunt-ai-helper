@@ -14,14 +14,15 @@ export interface SectionDiff {
   reason?: string
 }
 
-/** 参与对比的简历节（顺序即展示顺序）。 */
+/** 参与对比的简历节（顺序即展示顺序，与 A4 预览一致：教育 → 实习 → 项目 → 科研 → 荣誉 → 技能 → 自评）。 */
 const SECTIONS = [
   'basics',
   'education',
+  'experience',
+  'projects',
+  'research',
   'honors',
   'skills',
-  'projects',
-  'experience',
   'selfAssessment'
 ] as const
 

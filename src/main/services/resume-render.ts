@@ -107,13 +107,16 @@ export function renderSheet(resume: Resume, photoDataUri?: string): string {
     }
   }
 
-  // 竞赛与荣誉：顶层字段（从教育经历拆出），单行 · 连接
-  const honors = resume.honors ?? []
-  if (honors.length > 0) {
-    parts.push('<h2>竞赛与荣誉</h2>')
-    parts.push(
-      `<div class="inline">${honors.map((h, i) => `${esc(h)}${i < honors.length - 1 ? '<span class="dot">·</span>' : ''}`).join('')}</div>`
-    )
+  if ((resume.experience ?? []).length > 0) {
+    parts.push('<h2>实习经历</h2>')
+    for (const x of resume.experience ?? []) {
+      parts.push(
+        `<div class="entry"><div class="entry-head"><span>${esc(x.company ?? '')}　<em>${esc(x.title ?? '')}</em></span><span>${esc(dateRange(x.startDate, x.endDate))}</span></div>`
+      )
+      if ((x.highlights ?? []).length > 0) parts.push(`<ul>${(x.highlights ?? []).map((h) => `<li>${esc(h)}</li>`).join('')}</ul>`)
+      if ((x.techStack ?? []).length > 0) parts.push(`<div class="tags">${(x.techStack ?? []).map((t) => `<span class="tag">${esc(t)}</span>`).join('')}</div>`)
+      parts.push('</div>')
+    }
   }
 
   if ((resume.projects ?? []).length > 0) {
@@ -128,29 +131,45 @@ export function renderSheet(resume: Resume, photoDataUri?: string): string {
     }
   }
 
-  if ((resume.experience ?? []).length > 0) {
-    parts.push('<h2>实习经历</h2>')
-    for (const x of resume.experience ?? []) {
+  // 全空条目不渲染；标题/内容/成果全空 → 整节省略
+  const research = (resume.research ?? []).filter(
+    (r) =>
+      (r.title ?? '') !== '' ||
+      (r.description ?? '') !== '' ||
+      (r.achievement ?? '') !== ''
+  )
+  if (research.length > 0) {
+    parts.push('<h2>科研经历</h2>')
+    for (const r of research) {
       parts.push(
-        `<div class="entry"><div class="entry-head"><span>${esc(x.company ?? '')}　<em>${esc(x.title ?? '')}</em></span><span>${esc(dateRange(x.startDate, x.endDate))}</span></div>`
+        `<div class="entry"><div class="entry-head"><span>${esc(r.title ?? '')}</span><span>${esc(dateRange(r.startDate, r.endDate))}</span></div>`
       )
-      if ((x.highlights ?? []).length > 0) parts.push(`<ul>${(x.highlights ?? []).map((h) => `<li>${esc(h)}</li>`).join('')}</ul>`)
-      if ((x.techStack ?? []).length > 0) parts.push(`<div class="tags">${(x.techStack ?? []).map((t) => `<span class="tag">${esc(t)}</span>`).join('')}</div>`)
+      if (r.description !== undefined && r.description !== '') parts.push(`<div class="desc">${esc(r.description)}</div>`)
+      if (r.achievement !== undefined && r.achievement !== '') parts.push(`<div class="inline">成果：${esc(r.achievement)}</div>`)
       parts.push('</div>')
+    }
+  }
+
+  // 竞赛与荣誉：顶层字段（从教育经历拆出），单行 · 连接
+  const honors = resume.honors ?? []
+  if (honors.length > 0) {
+    parts.push('<h2>竞赛与荣誉</h2>')
+    parts.push(
+      `<div class="inline">${honors.map((h, i) => `${esc(h)}${i < honors.length - 1 ? '<span class="dot">·</span>' : ''}`).join('')}</div>`
+    )
+  }
+
+  // 技能节置于简历末尾之前（用户定稿顺序：教育 → 实习 → 项目 → 科研 → 荣誉 → 技能 → 自我评价）
+  if ((resume.skills ?? []).length > 0) {
+    parts.push('<h2>技能和其他</h2>')
+    for (const s of resume.skills ?? []) {
+      parts.push(`<p class="skill-p"><span class="skills-cat">${esc(s.category)}</span>：${esc(s.text)}</p>`)
     }
   }
 
   if (resume.selfAssessment !== undefined && resume.selfAssessment !== '') {
     parts.push('<h2>自我评价</h2>')
     parts.push(`<div class="desc">${esc(resume.selfAssessment)}</div>`)
-  }
-
-  // 技能节置于简历最后（用户定稿：技能和其他放末尾）
-  if ((resume.skills ?? []).length > 0) {
-    parts.push('<h2>技能和其他</h2>')
-    for (const s of resume.skills ?? []) {
-      parts.push(`<p class="skill-p"><span class="skills-cat">${esc(s.category)}</span>：${esc(s.text)}</p>`)
-    }
   }
 
   parts.push('</div>')

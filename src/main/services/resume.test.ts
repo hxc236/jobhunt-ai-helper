@@ -129,6 +129,37 @@ describe('ResumeService', () => {
       })
       expect(created.basics.photo).toBe('res-x.jpg')
     })
+
+    it('v2 科研经历：合法 research 接受；多余字段/缺字段组合被拒', () => {
+      const svc = makeService()
+      const created = svc.create({
+        meta: {},
+        basics: { name: '张伟' },
+        education: [],
+        research: [
+          {
+            title: '基于 Transformer 的 NER 研究',
+            startDate: '2025-03',
+            endDate: '2025-09',
+            description: '低资源 NER 迁移方法研究',
+            achievement: 'EI 论文一篇'
+          }
+        ]
+      })
+      expect(created.research?.[0].achievement).toBe('EI 论文一篇')
+      // 未定义字段（如 role）被 additionalProperties 拒绝
+      expect(() =>
+        svc.create({
+          meta: {},
+          basics: { name: '张伟' },
+          education: [],
+          research: [{ title: '课题', role: '组长' }]
+        } as unknown as Resume)
+      ).toThrow(ResumeValidationError)
+      // 旧数据（无 research）依旧通过（可选字段）
+      const legacy = svc.create({ meta: {}, basics: { name: '张伟' }, education: [] })
+      expect(legacy.research).toBeUndefined()
+    })
   })
 
   describe('create（多份基准简历）', () => {

@@ -43,6 +43,21 @@ describe('diffResumeSections（F-20/#34 验收：对比视图高亮正确）', (
     expect(bySection.selfAssessment?.reason).toBe('突出学习能力')
   })
 
+  it('科研经历参与对比：research 节变化被检出（含顺序在 experience 之后）', () => {
+    const withResearch: Resume = {
+      ...base,
+      research: [{ title: '课题A', achievement: '论文' }]
+    }
+    const diffs = diffResumeSections(base, withResearch, [])
+    expect(diffs.find((d) => d.section === 'research')?.changed).toBe(true)
+    // 展示顺序：… education → experience → projects → research → honors → skills → selfAssessment
+    const order = diffs.map((d) => d.section)
+    expect(order.indexOf('research')).toBeGreaterThan(order.indexOf('projects'))
+    expect(order.indexOf('research')).toBeLessThan(order.indexOf('honors'))
+    // 双方均无 research → 未改
+    expect(diffResumeSections(base, base, []).find((d) => d.section === 'research')?.changed).toBe(false)
+  })
+
   it('完全一致 → 全部未改', () => {
     const diffs = diffResumeSections(base, base, [])
     expect(diffs.every((d) => !d.changed)).toBe(true)

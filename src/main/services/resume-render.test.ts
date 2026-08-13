@@ -52,6 +52,61 @@ describe('resume-render A4 模板（F-15/#30）', () => {
     expect(html).toContain(".fact + .fact::before { content: ' | '")
   })
 
+  it('分节顺序：教育 → 实习 → 项目 → 科研 → 竞赛荣誉 → 技能 → 自我评价', () => {
+    const sheet = renderSheet({
+      ...sample,
+      research: [{ title: '某课题' }]
+    })
+    const headings = [...sheet.matchAll(/<h2>([^<]+)<\/h2>/g)].map((m) => m[1])
+    expect(headings).toEqual(['教育背景', '实习经历', '项目经历', '科研经历', '竞赛与荣誉', '技能和其他', '自我评价'])
+  })
+
+  it('科研经历：标题+时间、研究内容、成果（成果单条文本）', () => {
+    const sheet = renderSheet({
+      ...sample,
+      research: [
+        {
+          title: '基于 Transformer 的命名实体识别研究',
+          startDate: '2025-03',
+          endDate: '2025-09',
+          description: '研究低资源场景下 NER 的迁移方法，提出数据增强策略。',
+          achievement: '以第一作者发表 EI 论文一篇'
+        }
+      ]
+    })
+    expect(sheet).toContain('<h2>科研经历</h2>')
+    expect(sheet).toContain('基于 Transformer 的命名实体识别研究')
+    expect(sheet).toContain('2025.03 ~ 2025.09')
+    expect(sheet).toContain('研究低资源场景下 NER 的迁移方法，提出数据增强策略。')
+    expect(sheet).toContain('成果：以第一作者发表 EI 论文一篇')
+  })
+
+  it('科研经历空条目不渲染；时间缺省时不显示时间', () => {
+    const sheet = renderSheet({
+      ...sample,
+      research: [{ title: '未定题研究', description: '', achievement: '' }]
+    })
+    expect(sheet).toContain('<h2>科研经历</h2>')
+    expect(sheet).toContain('未定题研究')
+    expect(sheet).not.toContain('-至今')
+  })
+
+  it('科研经历标题为空但内容非空：内容不进 entry-head（布局正确）', () => {
+    const sheet = renderSheet({
+      ...sample,
+      research: [{ title: '', description: '只有研究内容', achievement: '' }]
+    })
+    expect(sheet).toContain('<h2>科研经历</h2>')
+    expect(sheet).not.toMatch(/entry-head"><span><div class="desc"/)
+    expect(sheet).toMatch(/<div class="entry"><div class="entry-head"><span><\/span>/)
+    expect(sheet).toContain('只有研究内容')
+  })
+
+  it('科研经历标题/内容/成果均空 → 整节省略', () => {
+    const sheet = renderSheet({ ...sample, research: [{ title: '', description: '', achievement: '' }] })
+    expect(sheet).not.toContain('科研经历')
+  })
+
   it('分节渲染：基本信息/意向/链接/教育/技能/项目/经历/证书/自评齐全', () => {
     const sheet = renderSheet(sample)
     expect(sheet).toContain('<h1>张伟</h1>')
@@ -70,18 +125,19 @@ describe('resume-render A4 模板（F-15/#30）', () => {
     }
     expect(sheet).toContain('求职意向：后端开发工程师（校招）')
     expect(sheet).toContain('https://github.com/z')
-    for (const heading of ['教育背景', '竞赛与荣誉', '项目经历', '实习经历', '自我评价']) {
+    for (const heading of ['教育背景', '实习经历', '项目经历', '竞赛与荣誉', '技能和其他', '自我评价']) {
       expect(sheet).toContain(`<h2>${heading}</h2>`)
     }
-    // 竞赛与荣誉紧随教育背景之后（源自教育经历拆分）
-    expect(sheet.indexOf('<h2>竞赛与荣誉</h2>')).toBeGreaterThan(sheet.indexOf('<h2>教育背景</h2>'))
-    expect(sheet.indexOf('<h2>竞赛与荣誉</h2>')).toBeLessThan(sheet.indexOf('<h2>项目经历</h2>'))
+    // 节顺序（用户定稿）：教育 → 实习 → 项目 → 科研 → 荣誉 → 技能 → 自我评价
+    expect(sheet.indexOf('<h2>教育背景</h2>')).toBeLessThan(sheet.indexOf('<h2>实习经历</h2>'))
+    expect(sheet.indexOf('<h2>实习经历</h2>')).toBeLessThan(sheet.indexOf('<h2>项目经历</h2>'))
+    expect(sheet.indexOf('<h2>竞赛与荣誉</h2>')).toBeGreaterThan(sheet.indexOf('<h2>项目经历</h2>'))
+    expect(sheet.indexOf('<h2>竞赛与荣誉</h2>')).toBeLessThan(sheet.indexOf('<h2>技能和其他</h2>'))
     // 荣誉从教育经历中移出，聚合为「竞赛与荣誉」单行 · 连接
     expect(sheet).not.toContain('荣誉：')
     expect(sheet).toContain('一等奖学金<span class="dot">·</span>蓝桥杯省二等奖')
-    // 技能节：标题为「技能和其他」，且置于简历最后（自我评价之后）
-    expect(sheet).toContain('<h2>技能和其他</h2>')
-    expect(sheet.indexOf('<h2>技能和其他</h2>')).toBeGreaterThan(sheet.indexOf('<h2>自我评价</h2>'))
+    // 技能节在自我评价之前（用户定稿顺序）
+    expect(sheet.indexOf('<h2>技能和其他</h2>')).toBeLessThan(sheet.indexOf('<h2>自我评价</h2>'))
     expect(sheet).toContain('北京理工大学　本科 · 计算机科学与技术')
     expect(sheet).toContain('GPA 3.7/4.0')
     // 课程标签行内
