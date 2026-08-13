@@ -60,6 +60,12 @@ function fitFrameHeight(): void {
   if (doc?.body !== undefined && doc.body.scrollHeight > 0) {
     // +2 缓冲：抵消 iframe 1px 边框对视口的占用，确保内层 0 滚动
     a4ContentHeight.value = doc.body.scrollHeight + 2
+    // iframe 内 Ctrl+滚轮缩放：跨文档冒泡不可靠，直接向同源 srcdoc 注入监听（每文档一次）
+    const docAny = doc as Document & { __zoomBound?: boolean }
+    if (!docAny.__zoomBound) {
+      docAny.__zoomBound = true
+      doc.addEventListener('wheel', onPreviewWheel, { passive: false })
+    }
   }
   // 每次打开预览默认适配整页（用户手动缩放不触发 load，不会被覆盖）
   previewZoom.value = fitPreviewZoom()
@@ -76,31 +82,23 @@ function zoomPreviewBy(delta: number): void {
   previewZoom.value = Math.min(PREVIEW_ZOOM_MAX, Math.max(PREVIEW_ZOOM_MIN, previewZoom.value + delta))
 }
 
-/** Ctrl+滚轮缩放（非 Ctrl 滚轮留给弹窗滚动，不拦截）。非被动监听：见 previewHtml watch。 */
+/** Ctrl+滚轮缩放（非 Ctrl 滚轮留给弹窗滚动，不拦截）。 */
 function onPreviewWheel(event: WheelEvent): void {
   if (!event.ctrlKey) return
   event.preventDefault()
   zoomPreviewBy(-event.deltaY * 0.001)
 }
 
-let previewWheelBound: ((e: WheelEvent) => void) | undefined
-// flush: post —— 等弹窗 DOM 渲染完再绑定监听（默认 pre 时 ref 还是 null，监听永远绑不上）
-watch(
-  previewHtml,
-  (open) => {
-    if (previewWheelBound !== undefined) {
-      a4BodyRef.value?.removeEventListener('wheel', previewWheelBound)
-      previewWheelBound = undefined
-    }
-    if (open && a4BodyRef.value !== null) {
-      previewWheelBound = onPreviewWheel
-      a4BodyRef.value.addEventListener('wheel', onPreviewWheel, { passive: false })
-    }
-  },
-  { flush: 'post' }
-)
-
-const a4BodyRef = ref<HTMLElement | null>(null)
+/** 弹窗区域任意位置的 Ctrl+滚轮（iframe 内部由注入监听处理；此处跳过 iframe 目标避免双倍缩放）。 */
+function onDocWheel(event: WheelEvent): void {
+  if (!event.ctrlKey || previewHtml.value === '') return
+  if (!(event.target instanceof Node)) return
+  const mask = document.querySelector('.mask.open')
+  if (mask === null || !mask.contains(event.target)) return
+  if (event.target instanceof HTMLIFrameElement) return // iframe 内事件已由注入监听处理
+  event.preventDefault()
+  zoomPreviewBy(-event.deltaY * 0.001)
+}
 
 async function previewCurrent(): Promise<void> {
   previewError.value = ''
@@ -285,6 +283,7 @@ function onWindowBlur(): void {
 onUnmounted(() => {
   window.removeEventListener('blur', onWindowBlur)
   document.removeEventListener('visibilitychange', onWindowBlur)
+  document.removeEventListener('wheel', onDocWheel)
 })
 
 function switchToJson(): void {
@@ -403,6 +402,7 @@ onMounted(() => {
   void load()
   window.addEventListener('blur', onWindowBlur)
   document.addEventListener('visibilitychange', onWindowBlur)
+  document.addEventListener('wheel', onDocWheel, { passive: false })
 })
 </script>
 
@@ -723,7 +723,7 @@ onMounted(() => {
       {{ exportMessage }}
     </p>
     <p v-if="previewError" class="hint" style="color: #dc2626">{{ previewError }}</p>
-    <div ref="a4BodyRef" class="a4-body">
+    <div class="a4-body">
       <!-- transform 缩放（不改 iframe 内部视口，内层永不产生滚动条）；外层容器用缩放后尺寸占位。
            iframe 宽 834 = body padding(20+20) + sheet 794：内容精确适配，无水平溢出 → 无任何内层滚动条 -->
       <div
@@ -746,7 +746,8 @@ onMounted(() => {
 <style scoped>
 .workspace {
   overflow-y: auto;
-  padding: 20px 24px;
+  /* 顶部不留 padding：置顶栏吸顶时与工作区顶边严丝合缝（裂缝修复） */
+  padding: 0 24px 20px;
   background: var(--bg);
   min-width: 0;
 }
@@ -755,16 +756,14 @@ onMounted(() => {
   position: sticky;
   top: 0;
   z-index: 20;
-  /* 抵消 .workspace 的 padding（20px 24px）：负边距让置顶栏贴住滚动区顶边、横向全宽，
-     缝隙不再漏出下方内容 */
-  margin: -20px -24px 12px;
-  padding: 16px 24px 12px;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
+  padding: 14px 0 12px;
   background: var(--bg);
   border-bottom: 1px solid var(--border);
+  margin-bottom: 12px;
 }
 
 .editor-title-input {
@@ -815,6 +814,7 @@ onMounted(() => {
 
 .ws-msg {
   font-size: 12px;
+  margin-top: 12px;
   margin-bottom: 10px;
 }
 
