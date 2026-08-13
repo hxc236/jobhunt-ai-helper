@@ -52,6 +52,36 @@ describe('resume-render A4 模板（F-15/#30）', () => {
     expect(html).toContain(".fact + .fact::before { content: ' | '")
   })
 
+  it('项目描述：多行 → 每行一条列表；单行 → 直接显示', () => {
+    const multi = renderSheet({
+      ...sample,
+      projects: [{ name: '平台', description: '完成订单模块\n性能优化 30%\n输出压测报告' }]
+    })
+    expect(multi).toContain('<ul><li>完成订单模块</li><li>性能优化 30%</li><li>输出压测报告</li></ul>')
+    const single = renderSheet({
+      ...sample,
+      experience: [],
+      projects: [{ name: '平台', description: '单行描述' }]
+    })
+    expect(single).toContain('<div class="desc">单行描述</div>')
+    expect(single).not.toContain('<ul>')
+  })
+
+  it('科研研究内容：多行 → 每行一条列表；单行 → 直接显示', () => {
+    const multi = renderSheet({
+      ...sample,
+      research: [{ title: '课题', description: '数据增强策略\n跨域迁移实验' }]
+    })
+    expect(multi).toContain('<ul><li>数据增强策略</li><li>跨域迁移实验</li></ul>')
+    const single = renderSheet({
+      ...sample,
+      experience: [],
+      research: [{ title: '课题', description: '单行内容' }]
+    })
+    expect(single).toContain('<div class="desc">单行内容</div>')
+    expect(single).not.toContain('<ul>')
+  })
+
   it('分节顺序：教育 → 实习 → 项目 → 科研 → 竞赛荣誉 → 技能 → 自我评价', () => {
     const sheet = renderSheet({
       ...sample,

@@ -655,7 +655,7 @@ onMounted(() => {
                 <label class="field"><span class="label">项目名</span><input v-model="p.name" /></label>
                 <label class="field"><span class="label">开始时间（YYYY-MM）</span><input v-model="p.startDate" placeholder="2025-03" /></label>
                 <label class="field"><span class="label">结束时间</span><input v-model="p.endDate" placeholder="2025-08" /></label>
-                <label class="field span2"><span class="label">描述（一段话）</span><textarea v-model="p.description" rows="3" placeholder="做了什么、结果如何——一段话写清" /></label>
+                <label class="field span2"><span class="label">描述（每行一条）</span><textarea v-model="p.description" rows="3" placeholder="做了什么、结果如何——每行一条，多条自动分条显示" /></label>
                 <label class="field span2"><span class="label">技术栈（每行一个）</span><textarea v-model="p.techStackText" rows="2" /></label>
               </div>
             </div>
@@ -690,7 +690,7 @@ onMounted(() => {
                 <label class="field span2"><span class="label">标题（研究课题名）</span><input v-model="r.title" placeholder="如：基于 Transformer 的命名实体识别研究" /></label>
                 <label class="field"><span class="label">开始时间（选填）</span><input v-model="r.startDate" placeholder="2025-03" /></label>
                 <label class="field"><span class="label">结束时间（选填）</span><input v-model="r.endDate" placeholder="2025-09" /></label>
-                <label class="field span2"><span class="label">研究内容</span><textarea v-model="r.description" rows="3" placeholder="研究什么、怎么做的——一段话写清" /></label>
+                <label class="field span2"><span class="label">研究内容（每行一条）</span><textarea v-model="r.description" rows="3" placeholder="研究什么、怎么做的——每行一条，多条自动分条显示" /></label>
                 <label class="field span2"><span class="label">成果（单条）</span><input v-model="r.achievement" placeholder="如：以第一作者发表 EI 论文一篇" /></label>
               </div>
             </div>

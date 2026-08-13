@@ -36,6 +36,7 @@ export function renderResumeHtml(resume: Resume, photoDataUri?: string): string 
   .sheet .inline { margin-top: 3px; font-size: 13px; }
   .sheet .inline .dot { margin: 0 8px 0 2px; color: #bbb; }
   .sheet .desc { color: #444; margin-top: 4px; }
+  .sheet ul { margin-top: 4px; padding-left: 20px; color: #444; }
   .sheet .tags { margin-top: 4px; }
   .sheet .tag { display: inline-block; background: #eef3fb; color: #2b5ca8; border-radius: 3px; font-size: 12px; padding: 1px 8px; margin-right: 6px; }
   .sheet .skill-p { margin-bottom: 6px; }
@@ -125,7 +126,7 @@ export function renderSheet(resume: Resume, photoDataUri?: string): string {
       parts.push(
         `<div class="entry"><div class="entry-head"><span>${esc(p.name ?? '')}</span><span>${esc(dateRange(p.startDate, p.endDate))}</span></div>`
       )
-      if (p.description !== undefined && p.description !== '') parts.push(`<div class="desc">${esc(p.description)}</div>`)
+      if (p.description !== undefined && p.description !== '') parts.push(renderDescLines(p.description))
       if ((p.techStack ?? []).length > 0) parts.push(`<div class="tags">${(p.techStack ?? []).map((t) => `<span class="tag">${esc(t)}</span>`).join('')}</div>`)
       parts.push('</div>')
     }
@@ -144,7 +145,7 @@ export function renderSheet(resume: Resume, photoDataUri?: string): string {
       parts.push(
         `<div class="entry"><div class="entry-head"><span>${esc(r.title ?? '')}</span><span>${esc(dateRange(r.startDate, r.endDate))}</span></div>`
       )
-      if (r.description !== undefined && r.description !== '') parts.push(`<div class="desc">${esc(r.description)}</div>`)
+      if (r.description !== undefined && r.description !== '') parts.push(renderDescLines(r.description))
       if (r.achievement !== undefined && r.achievement !== '') parts.push(`<div class="inline">成果：${esc(r.achievement)}</div>`)
       parts.push('</div>')
     }
@@ -174,6 +175,18 @@ export function renderSheet(resume: Resume, photoDataUri?: string): string {
 
   parts.push('</div>')
   return parts.join('\n')
+}
+
+/** 描述按行拆条：1 条 → 直接显示（desc）；多条 → 每行一条列表（不揉成一段话）。 */
+function renderDescLines(text: string): string {
+  const lines = text
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter((line) => line !== '')
+  if (lines.length <= 1) {
+    return lines.length === 1 ? `<div class="desc">${esc(lines[0])}</div>` : ''
+  }
+  return `<ul>${lines.map((line) => `<li>${esc(line)}</li>`).join('')}</ul>`
 }
 
 /** 'YYYY-MM' / 'YYYY-MM-DD' 归一为 'YYYY.MM'；缺省 → '至今' 或 '—'。 */
