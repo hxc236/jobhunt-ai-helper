@@ -101,11 +101,17 @@ export function renderSheet(resume: Resume, photoDataUri?: string): string {
       const bits = [e.gpa !== undefined && e.gpa !== '' ? `GPA ${e.gpa}` : null, e.rank !== undefined && e.rank !== '' ? `排名 ${e.rank}` : null].filter((v): v is string => v !== null)
       if (bits.length > 0) parts.push(`<div class="entry-sub"><span>${esc(bits.join('　·　'))}</span></div>`)
       if ((e.courses ?? []).length > 0) parts.push(`<div class="inline">相关课程：${(e.courses ?? []).map((c) => `<span class="tag">${esc(c)}</span>`).join('')}</div>`)
-      if ((e.honors ?? []).length > 0) {
-        parts.push(`<div class="inline">荣誉：${(e.honors ?? []).map((h, i) => `${esc(h)}${i < (e.honors ?? []).length - 1 ? '<span class="dot">·</span>' : ''}`).join('')}</div>`)
-      }
       parts.push('</div>')
     }
+  }
+
+  // 竞赛与荣誉：聚合所有教育条目的荣誉，单行 · 连接（源自教育经历拆分）
+  const honors = (resume.education ?? []).flatMap((e) => e.honors ?? [])
+  if (honors.length > 0) {
+    parts.push('<h2>竞赛与荣誉</h2>')
+    parts.push(
+      `<div class="inline">${honors.map((h, i) => `${esc(h)}${i < honors.length - 1 ? '<span class="dot">·</span>' : ''}`).join('')}</div>`
+    )
   }
 
   if ((resume.projects ?? []).length > 0) {

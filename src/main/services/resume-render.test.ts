@@ -24,7 +24,7 @@ const sample: Resume = {
       endDate: '2026-06',
       gpa: '3.7/4.0',
       courses: ['数据结构'],
-      honors: ['一等奖学金']
+      honors: ['一等奖学金', '蓝桥杯省二等奖']
     }
   ],
   skills: [{ category: '工程能力', text: 'Java、Python 服务端开发' }],
@@ -59,17 +59,22 @@ describe('resume-render A4 模板（F-15/#30）', () => {
     expect(sheet).toContain('<span class="k">生源地</span>河北石家庄')
     expect(sheet).toContain('求职意向：后端开发工程师（校招）')
     expect(sheet).toContain('https://github.com/z')
-    for (const heading of ['教育背景', '项目经历', '实习经历', '自我评价']) {
+    for (const heading of ['教育背景', '竞赛与荣誉', '项目经历', '实习经历', '自我评价']) {
       expect(sheet).toContain(`<h2>${heading}</h2>`)
     }
+    // 竞赛与荣誉紧随教育背景之后（源自教育经历拆分）
+    expect(sheet.indexOf('<h2>竞赛与荣誉</h2>')).toBeGreaterThan(sheet.indexOf('<h2>教育背景</h2>'))
+    expect(sheet.indexOf('<h2>竞赛与荣誉</h2>')).toBeLessThan(sheet.indexOf('<h2>项目经历</h2>'))
+    // 荣誉从教育经历中移出，聚合为「竞赛与荣誉」单行 · 连接
+    expect(sheet).not.toContain('荣誉：')
+    expect(sheet).toContain('一等奖学金<span class="dot">·</span>蓝桥杯省二等奖')
     // 技能节：标题为「技能和其他」，且置于简历最后（自我评价之后）
     expect(sheet).toContain('<h2>技能和其他</h2>')
     expect(sheet.indexOf('<h2>技能和其他</h2>')).toBeGreaterThan(sheet.indexOf('<h2>自我评价</h2>'))
     expect(sheet).toContain('北京理工大学　本科 · 计算机科学与技术')
     expect(sheet).toContain('GPA 3.7/4.0')
-    // 课程标签行内 + 荣誉行内
+    // 课程标签行内
     expect(sheet).toContain('相关课程：<span class="tag">数据结构</span>')
-    expect(sheet).toContain('荣誉：一等奖学金')
     expect(sheet).toContain('工程能力')
     expect(sheet).toContain('Java、Python 服务端开发')
     expect(sheet).toContain('<span class="tag">Java</span>')
@@ -99,6 +104,7 @@ describe('resume-render A4 模板（F-15/#30）', () => {
     const sheet = renderSheet(empty)
     expect(sheet).toContain('<h1>李娜</h1>')
     expect(sheet).not.toContain('<h2>教育背景</h2>')
+    expect(sheet).not.toContain('<h2>竞赛与荣誉</h2>')
     expect(sheet).not.toContain('<h2>项目经历</h2>')
     expect(sheet).not.toContain('<h2>自我评价</h2>')
   })
