@@ -226,12 +226,17 @@ describe('ResumeService', () => {
     })
   })
 
-  it('文件库持久化：重开连接后简历仍在', () => {
+  it('文件库持久化：重开连接后简历仍在（含技能/荣誉等全字段）', () => {
     const dir = mkdtempSync(join(tmpdir(), 'jobhunt-resume-'))
     const file = join(dir, 's.db')
     try {
       const first = openDatabase(file)
-      const created = new ResumeService(first).create(baseResume())
+      const created = new ResumeService(first).create({
+        ...baseResume(),
+        skills: [{ category: '工程能力', text: 'Java 服务端开发' }],
+        honors: ['蓝桥杯省一等奖'],
+        selfAssessment: '基础扎实'
+      })
       first.close()
 
       const second = openDatabase(file)

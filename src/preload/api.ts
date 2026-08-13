@@ -16,7 +16,7 @@ export interface IpcBridge {
  * 渲染侧 api 客户端：channel → 类型化方法（「无类型绕过」：方法名与载荷类型
  * 均由 shared/protocol 的 IpcProtocol / IpcEventMap 推导，渲染层不出现裸 channel 字符串）。
  */
-export function createRendererApi(bridge: IpcBridge): RendererApi {
+export function createRendererApi(bridge: IpcBridge): Omit<RendererApi, 'getPathForFile'> {
   return {
     ping: () => bridge.invoke(IpcChannel.Ping),
     settings: {

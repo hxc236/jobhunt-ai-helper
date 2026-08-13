@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import type { Resume, StoredResume } from '@shared/types/resume'
 import { defaultBaseTitle, emptyResumeForm, formToResume, issueSection, resumeToForm, SKILL_CATEGORIES, type ResumeForm } from '../resume-form'
 import Modal from '../components/Modal.vue'
@@ -120,8 +120,9 @@ async function onPhotoPicked(event: Event): Promise<void> {
   const file = input.files?.[0]
   input.value = ''
   if (file === undefined) return
-  const filePath = (file as unknown as { path?: string }).path
-  if (filePath === undefined) {
+  // Electron 32+ 移除 File.path：路径经 preload webUtils.getPathForFile 解析
+  const filePath = window.api.getPathForFile(file)
+  if (filePath === '') {
     errorMessage.value = '无法获取文件路径'
     return
   }
@@ -158,7 +159,9 @@ async function commitRename(): Promise<void> {
     return
   }
   try {
-    await window.api.resumes.update(target.meta.id as string, { ...target, meta: { ...target.meta, title } })
+    // 深拷贝为纯对象：浅拷贝会带 Vue reactive Proxy 嵌套，IPC 结构化克隆失败（"could not be cloned"）
+    const payload = structuredClone({ ...target, meta: { ...target.meta, title } })
+    await window.api.resumes.update(target.meta.id as string, payload)
     await load()
   } catch (err) {
     errorMessage.value = `改名失败：${String(err)}`
@@ -198,17 +201,57 @@ function openEditor(resume?: StoredResume): void {
   successMessage.value = ''
   issues.value = []
   jsonError.value = ''
+  loadingForm = true
   Object.assign(form, resume === undefined ? emptyResumeForm() : resumeToForm(resume))
+  loadingForm = false
+  formDirty = false
   editingId.value = resume?.meta.id ?? ''
   jsonMode.value = false
   renameTarget.value = null
   // 照片缩略图由 watch(form.basics.photo) 统一刷新
 }
 
-function closeEditor(): void {
+async function closeEditor(): Promise<void> {
+  if (autosaveTimer !== undefined) {
+    clearTimeout(autosaveTimer)
+    autosaveTimer = undefined
+  }
+  // 自动保存兜底：返回列表前仍有未保存改动 → 先存
+  if (formDirty && !saving.value) await save()
   editingId.value = null
   issues.value = []
 }
+
+/** 自动保存（体验定稿）：脏标记 + 焦点脱离即存（防抖）+ 关闭/切窗兜底。 */
+let formDirty = false
+let loadingForm = false
+let autosaveTimer: ReturnType<typeof setTimeout> | undefined
+
+watch(
+  form,
+  () => {
+    if (!loadingForm) formDirty = true
+  },
+  { deep: true }
+)
+
+function scheduleAutosave(): void {
+  if (!formDirty || saving.value) return
+  if (autosaveTimer !== undefined) clearTimeout(autosaveTimer)
+  autosaveTimer = setTimeout(() => {
+    autosaveTimer = undefined
+    void save()
+  }, 500)
+}
+
+function onWindowBlur(): void {
+  scheduleAutosave()
+}
+
+onUnmounted(() => {
+  window.removeEventListener('blur', onWindowBlur)
+  document.removeEventListener('visibilitychange', onWindowBlur)
+})
 
 function switchToJson(): void {
   jsonText.value = JSON.stringify(formToResume(form), null, 2)
@@ -219,7 +262,10 @@ function switchToJson(): void {
 function switchToForm(): void {
   try {
     const parsed = JSON.parse(jsonText.value) as Resume
+    loadingForm = true
     Object.assign(form, resumeToForm(parsed))
+    loadingForm = false
+    formDirty = false
     jsonError.value = ''
     jsonMode.value = false
   } catch (err) {
@@ -228,6 +274,7 @@ function switchToForm(): void {
 }
 
 async function save(): Promise<void> {
+  if (saving.value) return // 防并发：手动保存与自动保存互斥
   issues.value = []
   successMessage.value = ''
   let resume: Resume
@@ -245,14 +292,19 @@ async function save(): Promise<void> {
   }
 
   saving.value = true
+  const closed = editingId.value === null // 保存期间用户已返回列表（自动保存竞态）
   try {
     const targetId = editingId.value
     const stored =
       targetId !== null && targetId !== ''
         ? await window.api.resumes.update(targetId, resume)
         : await window.api.resumes.create(resume)
+    if (closed) return // 已关闭：不回填表单、不重新打开编辑器
     successMessage.value = `已保存「${stored.meta.title ?? stored.meta.id}」`
+    loadingForm = true
     Object.assign(form, resumeToForm(stored))
+    loadingForm = false
+    formDirty = false
     if (jsonMode.value) jsonText.value = JSON.stringify(stored, null, 2)
     editingId.value = stored.meta.id
     await load()
@@ -313,7 +365,11 @@ function onRowKeydown(e: KeyboardEvent, resume: StoredResume): void {
   }
 }
 
-onMounted(() => void load())
+onMounted(() => {
+  void load()
+  window.addEventListener('blur', onWindowBlur)
+  document.addEventListener('visibilitychange', onWindowBlur)
+})
 </script>
 
 <template>
@@ -423,9 +479,16 @@ onMounted(() => void load())
 
       <!-- 编辑器 -->
       <template v-if="editingId !== null">
-        <div class="ws-head">
-          <div>
-            <div class="ws-title">{{ editingExisting ? '编辑简历' : '新建基准简历' }}</div>
+        <!-- 置顶栏（始终可见）：可编辑的简历名 + 全部操作 -->
+        <div class="editor-bar">
+          <div class="editor-bar-title">
+            <input
+              v-model="form.meta.title"
+              class="editor-title-input"
+              :placeholder="editingExisting ? '未命名' : defaultBaseTitle(form.basics.name) || '新建基准简历'"
+              title="修改简历名称（自动保存）"
+              @blur="scheduleAutosave"
+            />
             <div class="ws-sub">
               <Pill v-if="editingExisting" tone="tint">派生稿</Pill>
               <Pill v-else>基准</Pill>
@@ -433,12 +496,12 @@ onMounted(() => void load())
             </div>
           </div>
           <div class="head-actions">
+            <button class="btn primary" type="button" :disabled="saving" @click="save">
+              {{ saving ? '保存中…' : '保存' }}
+            </button>
             <button class="btn" type="button" :disabled="saving" @click="previewCurrent">生成 A4 预览</button>
             <button class="btn" type="button" :disabled="saving" @click="jsonMode ? switchToForm() : switchToJson()">
               {{ jsonMode ? '⇄ 表单模式' : '⇄ JSON 模式' }}
-            </button>
-            <button class="btn primary" type="button" :disabled="saving" @click="save">
-              {{ saving ? '保存中…' : '保存' }}
             </button>
             <button class="btn" type="button" :disabled="saving" @click="closeEditor">返回列表</button>
           </div>
@@ -454,14 +517,14 @@ onMounted(() => void load())
           </ul>
         </div>
 
-        <div v-if="jsonMode" class="editor-sec">
+        <div v-if="jsonMode" class="editor-sec" @focusout="scheduleAutosave">
           <h3>JSON 模式</h3>
           <p class="hint">直接编辑 resume.schema.json 结构；切换到表单模式或保存时解析校验。</p>
           <p v-if="jsonError" class="ws-msg err">{{ jsonError }}</p>
           <textarea v-model="jsonText" class="json-textarea" rows="28" spellcheck="false" />
         </div>
 
-        <form v-else @submit.prevent="save">
+        <form v-else @submit.prevent="save" @focusout="scheduleAutosave">
           <div class="editor-sec">
             <h3>基本信息 <em class="soe">国企字段：政治面貌 / 生源地</em></h3>
             <div class="form-grid">
@@ -535,7 +598,7 @@ onMounted(() => void load())
           </div>
 
           <div class="editor-sec">
-            <h3>技能 <em class="soe">固定三分类，每类一段话</em></h3>
+            <h3>技能</h3>
             <div class="form-grid">
               <label v-for="c in SKILL_CATEGORIES" :key="c" class="field span2">
                 <span class="label">{{ c }}</span>
@@ -582,13 +645,6 @@ onMounted(() => void load())
           <div class="editor-sec">
             <h3>自我评价</h3>
             <textarea v-model="form.selfAssessment" rows="3" placeholder="可留空（优化稿可生成）" />
-          </div>
-
-          <div class="ws-actions">
-            <button class="btn primary" type="submit" :disabled="saving">
-              {{ saving ? '保存中…' : '保存' }}
-            </button>
-            <button class="btn" type="button" :disabled="saving" @click="closeEditor">取消</button>
           </div>
         </form>
       </template>
@@ -647,6 +703,43 @@ onMounted(() => void load())
   padding: 20px 24px;
   background: var(--bg);
   min-width: 0;
+}
+
+.editor-bar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 0 12px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 12px;
+}
+
+.editor-title-input {
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: inherit;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 2px 6px;
+  width: min(420px, 100%);
+  background: transparent;
+  outline: none;
+}
+
+.editor-title-input:hover {
+  border-color: var(--border);
+  background: var(--surface);
+}
+
+.editor-title-input:focus {
+  border-color: #2b5ca8;
+  background: var(--surface);
 }
 
 .ws-head {
@@ -914,15 +1007,14 @@ onMounted(() => void load())
   color: #92400e;
 }
 
-/* A4 预览弹窗：放大 + 缩放适配整页（zoom 包裹，iframe 固定 A4 尺寸） */
+/* A4 预览弹窗：放大 + 缩放适配整页（zoom 包裹，iframe 固定 A4 尺寸）
+ * 滚动只保留最外层 .modal-body 一个容器：.a4-body 不再滚动，iframe 内容恰好等于固定尺寸 */
 .a4-body {
   background: var(--surface);
   display: flex;
   justify-content: center;
   align-items: flex-start;
   padding: 14px;
-  overflow: auto;
-  max-height: 78vh;
 }
 
 .a4-zoom {

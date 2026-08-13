@@ -434,6 +434,8 @@ export interface RendererApi {
   learn: LearnApi
   interview: InterviewApi
   asr: AsrApi
+  /** 本地文件路径（Electron 32+ 移除 File.path，须经 preload webUtils 解析）。 */
+  getPathForFile: (file: { name: string }) => string
   /** 订阅主进程事件推送；返回取消订阅函数。 */
   on: <E extends IpcEventName>(event: E, listener: (payload: IpcEventMap[E]) => void) => () => void
 }
