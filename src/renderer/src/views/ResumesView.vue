@@ -50,11 +50,23 @@ async function openPreview(resume: StoredResume): Promise<void> {
 const previewZoom = ref(1)
 const PREVIEW_ZOOM_MIN = 0.4
 const PREVIEW_ZOOM_MAX = 1.5
+const a4FrameRef = ref<HTMLIFrameElement | null>(null)
+/** iframe 内容实际高度（自适应：内层永不产生滚动条，滚动只留在弹窗最外层）。 */
+const a4ContentHeight = ref(1123)
 
-/** 适配：让整页 A4（794×1123）在弹窗可视区内完整可见。 */
+function fitFrameHeight(): void {
+  const frame = a4FrameRef.value
+  const doc = frame?.contentDocument
+  if (frame !== null && doc?.body !== undefined && doc.body.scrollHeight > 0) {
+    a4ContentHeight.value = doc.body.scrollHeight
+    frame.style.height = `${a4ContentHeight.value}px`
+  }
+}
+
+/** 适配：让整页 A4（794×内容高）在弹窗可视区内完整可见。 */
 function fitPreviewZoom(): number {
   const widthFit = (960 - 48) / 794
-  const heightFit = (window.innerHeight * 0.86 - 80) / 1123
+  const heightFit = (window.innerHeight * 0.86 - 80) / a4ContentHeight.value
   return Math.max(PREVIEW_ZOOM_MIN, Math.min(1, widthFit, heightFit))
 }
 
@@ -62,11 +74,26 @@ function zoomPreviewBy(delta: number): void {
   previewZoom.value = Math.min(PREVIEW_ZOOM_MAX, Math.max(PREVIEW_ZOOM_MIN, previewZoom.value + delta))
 }
 
-/** Ctrl+滚轮缩放（弹窗内容区）。 */
+/** Ctrl+滚轮缩放（非 Ctrl 滚轮留给弹窗滚动，不拦截）。非被动监听：见 previewHtml watch。 */
 function onPreviewWheel(event: WheelEvent): void {
   if (!event.ctrlKey) return
+  event.preventDefault()
   zoomPreviewBy(-event.deltaY * 0.001)
 }
+
+let previewWheelBound: ((e: WheelEvent) => void) | undefined
+watch(previewHtml, (open) => {
+  if (previewWheelBound !== undefined) {
+    a4BodyRef.value?.removeEventListener('wheel', previewWheelBound)
+    previewWheelBound = undefined
+  }
+  if (open && a4BodyRef.value !== null) {
+    previewWheelBound = onPreviewWheel
+    a4BodyRef.value.addEventListener('wheel', onPreviewWheel, { passive: false })
+  }
+})
+
+const a4BodyRef = ref<HTMLElement | null>(null)
 
 async function previewCurrent(): Promise<void> {
   previewError.value = ''
@@ -689,9 +716,9 @@ onMounted(() => {
       {{ exportMessage }}
     </p>
     <p v-if="previewError" class="hint" style="color: #dc2626">{{ previewError }}</p>
-    <div class="a4-body" @wheel.prevent="onPreviewWheel">
+    <div ref="a4BodyRef" class="a4-body">
       <div class="a4-zoom" :style="{ zoom: previewZoom }">
-        <iframe class="a4-frame" :srcdoc="previewHtml" title="A4 预览" />
+        <iframe ref="a4FrameRef" class="a4-frame" :srcdoc="previewHtml" title="A4 预览" @load="fitFrameHeight" />
       </div>
     </div>
   </Modal>
