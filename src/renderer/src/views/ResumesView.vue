@@ -709,14 +709,16 @@ onMounted(() => {
   position: sticky;
   top: 0;
   z-index: 20;
+  /* 抵消 .workspace 的 padding（20px 24px）：负边距让置顶栏贴住滚动区顶边、横向全宽，
+     缝隙不再漏出下方内容 */
+  margin: -20px -24px 12px;
+  padding: 16px 24px 12px;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
-  padding: 10px 0 12px;
   background: var(--bg);
   border-bottom: 1px solid var(--border);
-  margin-bottom: 12px;
 }
 
 .editor-title-input {
