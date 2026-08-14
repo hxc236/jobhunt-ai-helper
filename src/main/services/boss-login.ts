@@ -1,4 +1,4 @@
-import { BrowserWindow } from 'electron'
+import { BrowserWindow, session } from 'electron'
 
 /**
  * BOSS 登录态（issue #51）：持久化会话 + 扫码登录窗口 + 状态检测。
@@ -59,7 +59,23 @@ export class BossLoginService {
   }
 
   /**
-   * 登录状态检测：分区内隐藏窗口加载搜索页，页面内 fetch getUserInfo
+   * 一键清除 BOSS 会话数据（issue #67）：清 persist:boss 分区的
+   * cookie + localStorage + sessionStorage（保留缓存），并关闭已打开的
+   * BOSS 窗口。风控自救：指纹 cookie（wbg/wt2/__a）与 localStorage
+   * 一并清除，恢复"新访客"形态。登录态随之失效。
+   */
+  async clearSessionData(): Promise<void> {
+    const s = session.fromPartition(BOSS_PARTITION)
+    await s.clearStorageData({
+      storages: ['cookies', 'localstorage']
+    })
+    if (this.loginWindow !== null && !this.loginWindow.isDestroyed()) {
+      this.loginWindow.destroy()
+      this.loginWindow = null
+    }
+  }
+
+  /** 登录状态检测：分区内隐藏窗口加载搜索页，页面内 fetch getUserInfo
    * （真实端点 /wapi/zpuser/wap/getUserInfo.json，网络捕获实测；code===0 = 已登录）。
    * 等待 settleMs 让页面 XHR 自然执行（与采集抓取同一节奏）；任何异常 → false。
    */

@@ -59,8 +59,10 @@ export function createRendererApi(bridge: IpcBridge): Omit<RendererApi, 'getPath
         bridge.invoke(IpcChannel.CrawlConfirmImport, { runId, sourceUrls }),
       bossLogin: {
         open: () => bridge.invoke(IpcChannel.BossLoginOpen),
-        status: () => bridge.invoke(IpcChannel.BossLoginStatus)
+        status: () => bridge.invoke(IpcChannel.BossLoginStatus),
+        clear: () => bridge.invoke(IpcChannel.BossLoginClear)
       },
+      ocrExtract: (source) => bridge.invoke(IpcChannel.PositionOcrExtract, { source }),
       crawlPresets: {
         list: () => bridge.invoke(IpcChannel.CrawlPresetsList),
         create: (name, conditions) => bridge.invoke(IpcChannel.CrawlPresetsCreate, { name, conditions }),

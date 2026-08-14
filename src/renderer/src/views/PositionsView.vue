@@ -191,6 +191,25 @@ async function openBossLogin(): Promise<void> {
   await window.api.crawls.bossLogin.open()
 }
 
+/* ---------- #67：一键清 BOSS 会话数据（风控自救） ---------- */
+const clearingBoss = ref(false)
+const bossClearMessage = ref('')
+
+async function clearBossSession(): Promise<void> {
+  if (!window.confirm('清除 BOSS 会话数据会：\n\n1. 清空 BOSS 登录态（需要重新登录）\n2. 移除风控标记的浏览器指纹 cookie\n3. 关闭已打开的 BOSS 窗口\n\n确定清除吗？')) return
+  clearingBoss.value = true
+  bossClearMessage.value = ''
+  try {
+    await window.api.crawls.bossLogin.clear()
+    bossClearMessage.value = '已清除 BOSS 会话数据，登录态已失效；冷却后重新打开窗口即可'
+    bossLoginStatus.value = false
+  } catch (err) {
+    bossClearMessage.value = `清除失败：${String(err)}`
+  } finally {
+    clearingBoss.value = false
+  }
+}
+
 function toggleSelect(url: string): void {
   const next = new Set(selectedUrls.value)
   if (next.has(url)) next.delete(url)
@@ -487,6 +506,27 @@ function endLabel(p: Pick<PositionListItem, 'end_date' | 'hire_type'>): string {
   return `截止 ${p.end_date.slice(5)}`
 }
 
+/* ---------- #67：截图 OCR 提取岗位信息（录入表单内） ---------- */
+const ocrExtracting = ref(false)
+const ocrError = ref('')
+
+async function extractFromScreenshot(source: 'clipboard' | 'file'): Promise<void> {
+  ocrError.value = ''
+  ocrExtracting.value = true
+  try {
+    const result = await window.api.crawls.ocrExtract(source)
+    if (result.draft !== null) {
+      applyBossDraft(result.draft)
+    } else {
+      ocrError.value = result.error ?? '截图提取失败'
+    }
+  } catch (err) {
+    ocrError.value = String(err)
+  } finally {
+    ocrExtracting.value = false
+  }
+}
+
 /* ---------- 弹窗开关 ---------- */
 const addOpen = ref(false)
 const crawlOpen = ref(false)
@@ -758,6 +798,21 @@ onMounted(() => {
         <span class="label">JD 全文</span>
         <textarea v-model="form.jd" rows="6" placeholder="粘贴职位描述…" />
       </label>
+      <!-- #67：从截图提取（Windows OCR，零请求；支持 BOSS 详情页精准识别） -->
+      <div class="field span2" style="display: flex; gap: 8px; align-items: center">
+        <button
+          class="btn"
+          type="button"
+          :disabled="ocrExtracting"
+          @click="extractFromScreenshot('clipboard')"
+        >
+          {{ ocrExtracting ? '识别中…' : '从截图提取（粘贴）' }}
+        </button>
+        <button class="btn ghost" type="button" :disabled="ocrExtracting" @click="extractFromScreenshot('file')">
+          从图片文件提取
+        </button>
+        <span class="hint">Win+Shift+S 截图后粘贴；BOSS 详情页截图自动识别公司/岗位/薪资/JD</span>
+      </div>
       <label class="field span2">
         <span class="label">备注</span>
         <textarea v-model="form.notes" rows="2" placeholder="选填" />
@@ -765,6 +820,7 @@ onMounted(() => {
     </form>
     <p v-if="formError" class="empty" style="margin-top: 12px">{{ formError }}</p>
     <p v-if="formSuccess" class="empty" style="margin-top: 12px">{{ formSuccess }}</p>
+    <p v-if="ocrError" class="empty" style="margin-top: 8px">{{ ocrError }}</p>
 
     <template #foot>
       <span class="note">带 * 为必填 · 保存后进入「未投递」状态</span>
@@ -838,7 +894,17 @@ onMounted(() => {
         <button class="btn ghost" type="button" :disabled="bossLoginChecking" @click="checkBossLogin">
           {{ bossLoginChecking ? '检测中…' : '刷新状态' }}
         </button>
+        <!-- #67：风控自救——一键清 BOSS 会话数据（cookie/localStorage/指纹） -->
+        <button
+          class="btn ghost danger"
+          type="button"
+          :disabled="clearingBoss"
+          @click="clearBossSession"
+        >
+          {{ clearingBoss ? '清除中…' : '清除会话数据' }}
+        </button>
       </div>
+      <span v-if="bossClearMessage" class="hint">{{ bossClearMessage }}</span>
     </div>
 
     <!-- issue #57：BOSS 采集条件（招聘类型/岗位关键词/城市/薪资/公司名可选） -->

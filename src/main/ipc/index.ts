@@ -1,4 +1,5 @@
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
+import { clipboard, dialog } from 'electron'
 import {
   IpcChannel,
   IpcEvent,
@@ -21,6 +22,11 @@ import { exportResumePdf } from '../services/resume-export'
 import type { ResumeService } from '../services/resume'
 import type { SettingsService } from '../services/settings'
 import { pushEvent } from './events'
+import { ocrImage } from '../services/ocr'
+import { toScreenshotDraft } from '../services/screenshot-extract'
+import { writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { BossLoginService } from '../services/boss-login'
 import type { CrawlPresetService } from '../services/crawl-presets'
 
@@ -91,6 +97,36 @@ export function registerIpcHandlers({ settings, agent, positions, resumes, crawl
   handleRequest(IpcChannel.CrawlGetRun, (request) => crawls.getRun(request.id))
   handleRequest(IpcChannel.BossLoginOpen, () => bossLogin.openLoginWindow())
   handleRequest(IpcChannel.BossLoginStatus, () => bossLogin.isLoggedIn())
+  // #67：一键清 BOSS 会话数据（风控自救）——清 cookie/localStorage/sessionStorage + 关窗口
+  handleRequest(IpcChannel.BossLoginClear, () => bossLogin.clearSessionData())
+  // #67：截图 OCR 提取（剪贴板图片或文件 → 临时 png → Windows OCR → 职位卡草稿）
+  handleRequest(IpcChannel.PositionOcrExtract, async (request) => {
+    let imagePath: string
+    if (request.source === 'clipboard') {
+      const img = clipboard.readImage()
+      if (img.isEmpty()) throw new Error('剪贴板中没有图片——请先截图（Win+Shift+S）')
+      imagePath = join(tmpdir(), `jobhunt-ocr-${Date.now()}.png`)
+      await writeFile(imagePath, img.toPNG())
+    } else {
+      const picked = await dialog.showOpenDialog({
+        title: '选择岗位截图',
+        properties: ['openFile'],
+        filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'bmp', 'webp'] }]
+      })
+      if (picked.canceled || picked.filePaths.length === 0) {
+        throw new Error('未选择图片')
+      }
+      imagePath = picked.filePaths[0]
+    }
+    try {
+      const text = await ocrImage(imagePath)
+      return toScreenshotDraft(text)
+    } finally {
+      if (request.source === 'clipboard') {
+        await import('node:fs/promises').then((m) => m.unlink(imagePath).catch(() => undefined))
+      }
+    }
+  })
   handleRequest(IpcChannel.CrawlPresetsList, () => crawlPresets.list())
   handleRequest(IpcChannel.CrawlPresetsCreate, (request) => crawlPresets.create(request.name, request.conditions))
   handleRequest(IpcChannel.CrawlPresetsDelete, (request) => crawlPresets.delete(request.id))

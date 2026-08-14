@@ -92,6 +92,8 @@ export const IpcChannel = {
   CrawlGetRun: 'crawl:get-run',
   BossLoginOpen: 'boss-login:open',
   BossLoginStatus: 'boss-login:status',
+  BossLoginClear: 'boss-login:clear', // #67：一键清 BOSS 会话数据（风控自救）
+  PositionOcrExtract: 'position:ocr-extract', // #67：截图 OCR 提取职位信息
   CrawlPresetsList: 'crawl-presets:list',
   CrawlPresetsCreate: 'crawl-presets:create',
   CrawlPresetsDelete: 'crawl-presets:delete',
@@ -161,6 +163,12 @@ export interface IpcProtocol {
   // status 检测登录态（分区内页面 fetch getUserInfo，code===0 = 已登录）。
   [IpcChannel.BossLoginOpen]: { request: void; response: void }
   [IpcChannel.BossLoginStatus]: { request: void; response: boolean }
+  [IpcChannel.BossLoginClear]: { request: void; response: void }
+  // #67：主进程读剪贴板图片（或弹文件选择器）→ OCR → 职位卡草稿
+  [IpcChannel.PositionOcrExtract]: {
+    request: { source: 'clipboard' } | { source: 'file' }
+    response: BossPageExtractResult
+  }
   // issue #57：常用采集（crawl_presets 增删查）
   [IpcChannel.CrawlPresetsList]: { request: void; response: CrawlPreset[] }
   [IpcChannel.CrawlPresetsCreate]: {
@@ -391,7 +399,11 @@ export interface CrawlApi {
     open: () => Promise<void>
     /** 登录状态（分区内 getUserInfo code===0 = 已登录）。 */
     status: () => Promise<boolean>
+    /** 一键清 BOSS 会话数据（#67：风控自救——cookie/localStorage 指纹 + 登录态）。 */
+    clear: () => Promise<void>
   }
+  /** 截图 OCR 提取职位信息（#67：剪贴板图片或文件 → 职位卡草稿）。 */
+  ocrExtract: (source: 'clipboard' | 'file') => Promise<BossPageExtractResult>
   /** 常用采集（issue #57：保存命名条件、复用、删除）。 */
   crawlPresets: {
     list: () => Promise<CrawlPreset[]>
