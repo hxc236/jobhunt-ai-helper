@@ -276,6 +276,31 @@ export interface CrawlImportResult {
   updated: number
 }
 
+/** CSV 导入预览行（#68/T2）：解析输入 + 缺字段/已存在标记 + 校验错误。 */
+export interface CsvImportPreviewItem {
+  input: PositionInput
+  /** 缺字段（company/title 必填、校招 recruit_season 必填——与手动录入一致；UI 标缺字段）。 */
+  missingFields: string[]
+  /** 去重键 company|title|hire_type|recruit_season 命中已有职位（UI 默认不勾选，防误覆盖）。 */
+  exists: boolean
+  /** 校验错误（枚举/日期/薪资区间等 create 规则失败信息；非 null 行不可导入）。 */
+  error: string | null
+}
+
+/** CSV 导入确认请求行（勾选的行；exists 行需 update=true 才走更新路径）。 */
+export interface CsvImportSelection {
+  input: PositionInput
+  /** true = 更新已有职位（仅 exists 行有意义）；false = 跳过（防误覆盖手动数据）。 */
+  update: boolean
+}
+
+/** CSV 导入结果统计（#68/T2：failed 为失败原因，顺序与请求一致）。 */
+export interface CsvImportResult {
+  inserted: number
+  updated: number
+  failed: string[]
+}
+
 /** 语音识别就绪状态（F-26/#40：模型缺失 → ready=false + 原因，UI 降级文字输入）。 */
 export interface AsrStatus {
   ready: boolean
