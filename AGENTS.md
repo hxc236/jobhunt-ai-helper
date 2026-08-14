@@ -1,5 +1,9 @@
 ## Agent skills
 
+### Implement workflow
+
+On `/skill:implement`, first create a git worktree, implement there, then request a merge and merge into `main` only after approval.
+
 ### Issue tracker
 
 Issues and specs for this repo live as GitHub issues, driven via the `gh` CLI. See `docs/agents/issue-tracker.md`.
