@@ -37,6 +37,11 @@ export function createRendererApi(bridge: IpcBridge): Omit<RendererApi, 'getPath
       setApplication: (positionId, patch) =>
         bridge.invoke(IpcChannel.PositionsSetApplication, { positionId, patch })
     },
+    csvImport: {
+      preview: (filePath) => bridge.invoke(IpcChannel.CsvImportPreview, { filePath }),
+      confirm: (items) => bridge.invoke(IpcChannel.CsvImportConfirm, { items }),
+      template: () => bridge.invoke(IpcChannel.CsvImportTemplate)
+    },
     resumes: {
       list: () => bridge.invoke(IpcChannel.ResumesList),
       create: (resume) => bridge.invoke(IpcChannel.ResumesCreate, { resume }),

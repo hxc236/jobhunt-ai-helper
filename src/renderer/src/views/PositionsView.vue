@@ -18,6 +18,9 @@ import {
   type CrawlPreset,
   type CrawlPreview,
   type CrawlRun,
+  type CsvImportPreviewResult,
+  type CsvImportResult,
+  type CsvImportSelection,
   type HireType,
   type Position,
   type PositionInput,
@@ -535,6 +538,153 @@ async function extractFromScreenshot(source: 'clipboard' | 'file'): Promise<void
 /* ---------- 弹窗开关 ---------- */
 const addOpen = ref(false)
 const crawlOpen = ref(false)
+const csvOpen = ref(false)
+
+/* ---------- #68/T3：CSV 批量导入 ---------- */
+const csvFileInput = ref<HTMLInputElement | null>(null)
+const csvFileName = ref('')
+const csvPreview = ref<CsvImportPreviewResult | null>(null)
+/** 行选中态（index → 勾选）；exists 行默认不勾选（防误覆盖手动数据）。 */
+const csvSelected = ref<Set<number>>(new Set())
+/** 行更新态（index → 勾选的行走更新路径；仅 exists 行展示开关，默认随勾选开启）。 */
+const csvUpdate = ref<Set<number>>(new Set())
+const csvImporting = ref(false)
+const csvMessage = ref('')
+const csvError = ref('')
+
+/** 字段中文标签（缺字段标记展示用）。 */
+const CSV_FIELD_LABELS: Record<string, string> = {
+  company: '公司',
+  title: '岗位',
+  recruit_season: '秋招季'
+}
+
+const CSV_ENCODING_HINTS: Record<'utf8' | 'gbk', string> = {
+  utf8: 'UTF-8（含 BOM）',
+  gbk: 'GBK/GB2312（Excel 中文版导出常见）'
+}
+
+/** 可勾选行数（校验失败行不可导入）。 */
+const csvSelectableCount = computed(
+  () => csvPreview.value?.items.filter((i) => i.error === null).length ?? 0
+)
+
+function pickCsvFile(): void {
+  csvFileInput.value?.click()
+}
+
+async function onCsvFilePicked(e: Event): Promise<void> {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (file === undefined) return
+  const path = window.api.getPathForFile(file)
+  if (path === '') {
+    csvError.value = '无法读取文件路径，请重试'
+    return
+  }
+  csvError.value = ''
+  csvMessage.value = ''
+  csvPreview.value = null
+  csvFileName.value = file.name
+  try {
+    const result = await window.api.csvImport.preview(path)
+    csvPreview.value = result
+    // 勾选默认：非 exists 行全选（与采集预览一致）；exists 行默认不勾选（防误覆盖）
+    csvSelected.value = new Set(
+      result.items.map((_, i) => i).filter((i) => !result.items[i].exists)
+    )
+    csvUpdate.value = new Set()
+  } catch (err) {
+    csvError.value = String(err)
+  } finally {
+    input.value = '' // 允许重复选择同一文件
+  }
+}
+
+function toggleCsvSelect(index: number): void {
+  const next = new Set(csvSelected.value)
+  const updates = new Set(csvUpdate.value)
+  if (next.has(index)) {
+    next.delete(index)
+    updates.delete(index)
+  } else {
+    next.add(index)
+    // exists 行勾选 = 意图导入 → 默认走更新路径（防误覆盖可取消勾选）
+    if (csvPreview.value?.items[index].exists === true) updates.add(index)
+  }
+  csvSelected.value = next
+  csvUpdate.value = updates
+}
+
+function toggleCsvUpdate(index: number): void {
+  const next = new Set(csvUpdate.value)
+  if (next.has(index)) next.delete(index)
+  else next.add(index)
+  csvUpdate.value = next
+}
+
+function csvToggleAll(checked: boolean): void {
+  if (csvPreview.value === null) return
+  const items = csvPreview.value.items
+  csvSelected.value = new Set(
+    checked ? items.map((_, i) => i).filter((i) => !items[i].exists) : []
+  )
+  if (!checked) csvUpdate.value = new Set()
+}
+
+function csvResultText(r: CsvImportResult): string {
+  return `导入完成：成功 ${r.inserted} 条，更新 ${r.updated} 条${
+    r.failed.length > 0 ? `，失败 ${r.failed.length} 条` : ''
+  }`
+}
+
+async function confirmCsvImport(): Promise<void> {
+  if (csvPreview.value === null) return
+  csvImporting.value = true
+  csvMessage.value = ''
+  csvError.value = ''
+  try {
+    const preview = csvPreview.value
+    const items: CsvImportSelection[] = [...csvSelected.value]
+      .sort((a, b) => a - b)
+      .map((i) => ({
+        input: preview.items[i].input,
+        // 仅 exists 行 update 标志有意义（勾选即默认更新；可取消）；新行走插入
+        update: preview.items[i].exists ? csvUpdate.value.has(i) : false
+      }))
+    const result = await window.api.csvImport.confirm(items)
+    csvMessage.value = csvResultText(result)
+    if (result.failed.length > 0) {
+      csvError.value = `失败行（仅修正后重试）：\n${result.failed
+        .slice(0, 5)
+        .join('\n')}${result.failed.length > 5 ? `\n…等 ${result.failed.length} 条` : ''}`
+    }
+    // 列表即时刷新 + 顶栏统计联动（#68/T3 验收：导入后立即可见）
+    await refresh()
+  } catch (err) {
+    csvError.value = String(err)
+  } finally {
+    csvImporting.value = false
+  }
+}
+
+async function downloadCsvTemplate(): Promise<void> {
+  csvError.value = ''
+  try {
+    const path = await window.api.csvImport.template()
+    if (path !== null) csvMessage.value = `模板已保存：${path}`
+  } catch (err) {
+    csvError.value = `模板下载失败：${String(err)}`
+  }
+}
+
+function openCsvImport(): void {
+  csvError.value = ''
+  csvMessage.value = ''
+  csvPreview.value = null
+  csvFileName.value = ''
+  csvOpen.value = true
+}
 
 /**
  * issue #62：BOSS 窗口 F8 提取草稿 → 预填录入表单（用户核对后保存；不自动入库）。
@@ -605,6 +755,9 @@ onMounted(() => {
           <div class="col-count">显示 {{ filteredPositions.length }} / {{ allPositions.length }}</div>
         </div>
         <div class="head-actions">
+          <button class="btn" type="button" @click="openCsvImport">
+            <Icon name="upload" />CSV 导入
+          </button>
           <button class="btn" type="button" @click="openCrawl">
             <Icon name="refresh" />采集
           </button>
@@ -840,6 +993,120 @@ onMounted(() => {
       <button class="btn" type="button" @click="addOpen = false">取消</button>
       <button class="btn primary" type="button" :disabled="submitting" @click="submit">
         {{ submitting ? '保存中…' : '保存职位卡' }}
+      </button>
+    </template>
+  </Modal>
+
+  <!-- ===== 弹窗：CSV 批量导入（#68/T3） ===== -->
+  <Modal :open="csvOpen" title="CSV 批量导入职位卡" width="760px" @close="csvOpen = false">
+    <div class="crawl-bar">
+      <button class="btn primary" type="button" @click="pickCsvFile">
+        <Icon name="upload" />选择 CSV 文件
+      </button>
+      <button class="btn" type="button" @click="downloadCsvTemplate">
+        <Icon name="download" />下载模板（含示例行）
+      </button>
+      <span class="hint" style="margin-top: 0">UTF-8（含 BOM）/ GBK 自动识别 · 表头支持中文别名（公司/岗位/…）</span>
+      <input
+        ref="csvFileInput"
+        type="file"
+        accept=".csv,text/csv"
+        style="display: none"
+        @change="onCsvFilePicked"
+      />
+    </div>
+
+    <p v-if="csvFileName" class="hint">已选文件：{{ csvFileName }}</p>
+    <p v-if="csvError" class="empty" style="margin-top: 10px">{{ csvError }}</p>
+    <p v-if="csvMessage" class="empty" style="margin-top: 10px">{{ csvMessage }}</p>
+
+    <template v-if="csvPreview">
+      <div class="crawl-summary">
+        <span>解析 {{ csvPreview.items.length }} 行</span>
+        <span>·</span>
+        <span>
+          已存在 <b style="color: var(--fg)">{{ csvPreview.items.filter((i) => i.exists).length }}</b> 行（默认不勾选）
+        </span>
+        <span>·</span>
+        <span>
+          缺字段 <b style="color: var(--fg)">{{ csvPreview.items.filter((i) => i.missingFields.length > 0).length }}</b> 行
+        </span>
+        <span style="flex: 1"></span>
+        <span class="hint">编码：{{ CSV_ENCODING_HINTS[csvPreview.encoding] }}</span>
+      </div>
+      <!-- #68/T3：乱码提示（GBK 兑底识别下，无 BOM 的 UTF-8 中文文件可能解码异常） -->
+      <p v-if="csvPreview.encoding === 'gbk'" class="hint">
+        ⚠ 若下方预览出现乱码，请用 Excel「另存为 CSV UTF-8（带 BOM）」后重新选择
+      </p>
+      <p v-if="csvPreview.errors.length > 0" class="hint" style="color: #b45309">
+        解析跳过 {{ csvPreview.errors.length }} 行坏数据：{{ csvPreview.errors.slice(0, 3).join('；') }}
+      </p>
+
+      <label class="select-all">
+        <input
+          type="checkbox"
+          :checked="csvSelected.size === csvSelectableCount && csvSelectableCount > 0"
+          @change="csvToggleAll(($event.target as HTMLInputElement).checked)"
+        />
+        全选可导入行（{{ csvSelected.size }}/{{ csvSelectableCount }}）
+      </label>
+
+      <div v-for="(item, index) in csvPreview.items" :key="index" class="crawl-item">
+        <input
+          type="checkbox"
+          :checked="csvSelected.has(index)"
+          :disabled="item.error !== null"
+          @change="toggleCsvSelect(index)"
+        />
+        <div class="ci-main">
+          <div class="ci-title">
+            {{ item.input.company || '（无公司名）' }} · {{ item.input.title || '（无岗位名）' }}
+          </div>
+          <div class="ci-meta">
+            <span v-if="item.input.hire_type">{{ item.input.hire_type }}</span>
+            <span v-if="item.input.hire_type === '校招'"> · {{ item.input.recruit_season || '缺秋招季' }}</span>
+            <span v-if="item.input.city"> · {{ item.input.city }}</span>
+            <span v-if="item.input.salary_text"> · {{ item.input.salary_text }}</span>
+            <span v-if="item.input.batch"> · {{ item.input.batch }}</span>
+            <span v-if="item.input.end_date"> · 截止 {{ item.input.end_date.slice(5) }}</span>
+            <Pill v-if="item.exists" tone="tint">已存在</Pill>
+          </div>
+          <div class="ci-tags">
+            <span v-for="mf in item.missingFields" :key="mf" class="pill ghost">
+              缺{{ CSV_FIELD_LABELS[mf] ?? mf }}
+            </span>
+            <span v-if="item.error" class="pill ghost" style="color: #b45309">{{ item.error }}</span>
+            <label v-if="item.exists && item.error === null" class="csv-update-toggle">
+              <input
+                type="checkbox"
+                :checked="csvUpdate.has(index)"
+                :disabled="!csvSelected.has(index)"
+                @change="toggleCsvUpdate(index)"
+              />
+              更新已有
+            </label>
+          </div>
+        </div>
+      </div>
+    </template>
+    <template v-else>
+      <p class="empty" style="margin-top: 16px">
+        选择一个 CSV 文件后在此预览：逐行字段 + 缺字段/已存在标记，勾选确认后批量导入。
+      </p>
+    </template>
+
+    <template #foot>
+      <span class="note">
+        {{ csvPreview ? `预览 ${csvPreview.items.length} 行，勾选 ${csvSelected.size} 行` : '模板列：company/公司、title/岗位、hire_type/招聘类型…（下载模板查看全部）' }}
+      </span>
+      <button class="btn" type="button" @click="csvOpen = false">关闭</button>
+      <button
+        class="btn primary"
+        type="button"
+        :disabled="csvImporting || csvSelected.size === 0"
+        @click="confirmCsvImport"
+      >
+        {{ csvImporting ? '导入中…' : `确认导入（${csvSelected.size} 条）` }}
       </button>
     </template>
   </Modal>
@@ -1225,6 +1492,21 @@ onMounted(() => {
   gap: 10px;
   flex-wrap: wrap;
   align-items: flex-end;
+}
+
+.csv-update-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.csv-update-toggle input {
+  width: 13px;
+  height: 13px;
+  accent-color: var(--fg);
 }
 
 .select-all {

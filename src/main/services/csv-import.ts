@@ -1,10 +1,13 @@
+import { readFile } from 'node:fs/promises'
 import type {
   CsvImportPreviewItem,
+  CsvImportPreviewResult,
   CsvImportResult,
   CsvImportSelection,
   PositionInput,
   PositionPatch
 } from '../../shared/types'
+import { buildHeaderMap, detectCsvEncoding, parseCsv, parseCsvRowsToInputs } from './csv'
 import { dedupeKeyOf, type PositionService, validateInput } from './position'
 
 /**
@@ -18,6 +21,21 @@ import { dedupeKeyOf, type PositionService, validateInput } from './position'
 
 export class CsvImportService {
   constructor(private readonly positions: PositionService) {}
+
+  /**
+   * 文件预览（#68/T3 IPC 数据源）：读文件 → 编码检测（UTF-8 含 BOM / GBK）→ 解码 →
+   * CSV 解析（表头别名映射 + 坏行收集）→ 逐行校验/去重标记。
+   * encoding 供渲染层展示（乱码提示依据）。
+   */
+  async previewFile(filePath: string): Promise<CsvImportPreviewResult> {
+    const buffer = await readFile(filePath)
+    const encoding = detectCsvEncoding(buffer)
+    const text = new TextDecoder(encoding).decode(buffer)
+    const rows = parseCsv(text)
+    const headerMap = buildHeaderMap(rows[0] ?? [])
+    const { inputs, errors } = parseCsvRowsToInputs(rows, headerMap)
+    return { encoding, errors, items: this.preview(inputs) }
+  }
 
   /** 预览：解析输入 → 逐行标记缺字段/校验错误/已存在（exists 由去重键实时查询，不信任调用方）。 */
   preview(inputs: PositionInput[]): CsvImportPreviewItem[] {

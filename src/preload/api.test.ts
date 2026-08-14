@@ -174,6 +174,30 @@ describe('createRendererApi（渲染侧 api 客户端）', () => {
     expect(fake.invocations).toEqual([{ channel: IpcChannel.CrawlGetRun, args: [{ id: 7 }] }])
   })
 
+  it('csvImport.preview 映射到 csv-import:preview 并传 { filePath }', async () => {
+    const fake = makeFakeBridge()
+    const api = createRendererApi(fake.bridge)
+    await api.csvImport.preview('C:/tmp/jobs.csv')
+    expect(fake.invocations).toEqual([
+      { channel: IpcChannel.CsvImportPreview, args: [{ filePath: 'C:/tmp/jobs.csv' }] }
+    ])
+  })
+
+  it('csvImport.confirm 映射到 csv-import:confirm 并传 { items }', async () => {
+    const fake = makeFakeBridge()
+    const api = createRendererApi(fake.bridge)
+    const items = [{ input: { company: '华为', company_type: '其他' as const, title: '前端' }, update: false }]
+    await api.csvImport.confirm(items)
+    expect(fake.invocations).toEqual([{ channel: IpcChannel.CsvImportConfirm, args: [{ items }] }])
+  })
+
+  it('csvImport.template 映射到 csv-import:template，不带参数', async () => {
+    const fake = makeFakeBridge()
+    const api = createRendererApi(fake.bridge)
+    await api.csvImport.template()
+    expect(fake.invocations).toEqual([{ channel: IpcChannel.CsvImportTemplate, args: [] }])
+  })
+
   it('resumes.uploadParse 映射到 resumes:upload-parse 并传 { filePath }', async () => {
     const fake = makeFakeBridge()
     const api = createRendererApi(fake.bridge)

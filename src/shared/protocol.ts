@@ -21,6 +21,9 @@ import type {
   CrawlRun,
   CrawlRunOptions,
   CrawlRunResult,
+  CsvImportPreviewResult,
+  CsvImportResult,
+  CsvImportSelection,
   Position,
   PositionFilters,
   PositionInput,
@@ -97,6 +100,10 @@ export const IpcChannel = {
   CrawlPresetsList: 'crawl-presets:list',
   CrawlPresetsCreate: 'crawl-presets:create',
   CrawlPresetsDelete: 'crawl-presets:delete',
+  // #68/T3：CSV 批量导入 —— preview 读文件（编码检测/解析/逐行校验标记）；confirm 勾选批量 upsert；template 模板下载
+  CsvImportPreview: 'csv-import:preview',
+  CsvImportConfirm: 'csv-import:confirm',
+  CsvImportTemplate: 'csv-import:template',
   AsrStart: 'asr:start',
   AsrStop: 'asr:stop'
 } as const
@@ -159,6 +166,14 @@ export interface IpcProtocol {
     request: { runId: number; sourceUrls: string[] }
     response: CrawlImportResult
   }
+  // #68/T3：CSV 批量导入 —— preview 主进程读文件（UTF-8 含 BOM / GBK 自动识别 + 解析 + 逐行校验）；
+  // confirm 勾选批量 upsert；template 保存对话框下载模板（取消 → null）。
+  [IpcChannel.CsvImportPreview]: { request: { filePath: string }; response: CsvImportPreviewResult }
+  [IpcChannel.CsvImportConfirm]: {
+    request: { items: CsvImportSelection[] }
+    response: CsvImportResult
+  }
+  [IpcChannel.CsvImportTemplate]: { request: void; response: string | null }
   // issue #51：BOSS 登录态 —— open 打开可见登录窗口（persist:boss 分区，扫码）；
   // status 检测登录态（分区内页面 fetch getUserInfo，code===0 = 已登录）。
   [IpcChannel.BossLoginOpen]: { request: void; response: void }
@@ -381,8 +396,7 @@ export interface OptimizeApi {
   run: (jobId: string, resumeId: string, mode: OptimizationMode) => Promise<OptimizeResult>
 }
 
-/** 渲染进程可见的 crawls api 表面（F-08/#22：执行框架 + 留痕；F-11/#29：预览 + 确认导入）。 */
-export interface CrawlApi {
+/** 渲染进程可见的 crawls api 表面（F-08/#22：执行框架 + 留痕；F-11/#29：预览 + 确认导入）。 */export interface CrawlApi {
   /** 执行一次采集（节流/重试/上限框架内完成；返回留痕 + 候选，供预览）。 */
   run: (source: PositionSource, options: CrawlRunOptions) => Promise<CrawlRunResult>
   /** 采集留痕列表（倒序）。 */
@@ -434,6 +448,16 @@ export interface ResumeApi {
   exportPdf: (id: string) => Promise<string | null>
 }
 
+/** 渲染进程可见的 csv 导入 api 表面（#68/T3：CSV 批量导入弹窗）。 */
+export interface CsvImportApi {
+  /** 预览：主进程读文件（UTF-8 含 BOM / GBK 自动识别 → 解析 → 逐行校验/去重标记）。 */
+  preview: (filePath: string) => Promise<CsvImportPreviewResult>
+  /** 勾选确认导入（批量 upsert：新行插入 / exists 且 update 更新 / 否则跳过；返回统计）。 */
+  confirm: (items: CsvImportSelection[]) => Promise<CsvImportResult>
+  /** 模板下载（含示例行的 CSV，保存对话框；取消返回 null）。 */
+  template: () => Promise<string | null>
+}
+
 /**
  * 渲染进程可见的 api 表面（经 contextBridge 暴露为 `window.api`）。
  * 渲染层只通过该对象调用主进程，不裸调 ipcRenderer。
@@ -444,6 +468,7 @@ export interface RendererApi {
   positions: PositionsApi
   resumes: ResumeApi
   crawls: CrawlApi
+  csvImport: CsvImportApi
   optimize: OptimizeApi
   topics: TopicsApi
   learn: LearnApi

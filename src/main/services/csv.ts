@@ -31,6 +31,15 @@ export const CSV_FIELDS = [
 ] as const
 export type CsvField = (typeof CSV_FIELDS)[number]
 
+/**
+ * 模板 CSV 文本（#68/T3 模板下载）：全字段表头（英文标准列名）+ 一条示例行。
+ * 写入文件时调用方加 UTF-8 BOM 前缀（Excel 直接识别编码；BOM 也是编码检测依据）。
+ */
+export const CSV_TEMPLATE_TEXT = [
+  'company,title,hire_type,recruit_season,city,salary_min,salary_max,salary_text,channel,channel_url,start_date,end_date,batch,jd,notes',
+  '华为,前端开发工程师,校招,2027秋招,深圳,20,40,20-40K·14薪,官网,https://example.com/job/1,2026-08-01,2026-09-30,提前批,负责前端页面开发与体验优化,示例行——导入后请删除'
+].join('\n')
+
 /** 表头列 → 职位卡字段映射（buildHeaderMap 产出；未知列/重复别名列 = null）。 */
 export type HeaderMap = Record<number, CsvField | null>
 

@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest'
+import { unlink, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { openDatabase } from '../db/database'
 import { PositionService } from './position'
 import { CsvImportService } from './csv-import'
@@ -160,5 +163,54 @@ describe('CsvImportService.importSelected（insert / update / 跳过 三路径�
     const result = csv.importSelected([{ input: { ...base, company: '腾讯', jd: '新JD' }, update: false }])
     expect(result).toEqual({ inserted: 0, updated: 0, failed: [] }) // 已存在且未选更新 → 跳过
     expect(positions.list()).toHaveLength(1)
+  })
+})
+
+describe('CsvImportService.previewFile（#68/T3：文件 → 编码检测/解码 → 解析 → 预览）', () => {
+  it('GBK 编码文件（Excel 中文版导出形态）→ 正确解码并预览', async () => {
+    const { csv } = makeServices()
+    // 「华为,前端工程师,2027秋招」GBK 字节（TextDecoder('gbk') 回读验证）
+    const gbkDataRow = Uint8Array.from([
+      0xbb, 0xaa, 0xce, 0xaa, 0x2c, 0xc7, 0xb0, 0xb6, 0xcb, 0xb9, 0xa4, 0xb3, 0xcc, 0xca, 0xa6, 0x2c, 0x32, 0x30, 0x32, 0x37, 0xc7, 0xef, 0xd5, 0xd0, 0x0d, 0x0a
+    ])
+    const filePath = join(tmpdir(), `jobhunt-csv-gbk-${Date.now()}.csv`)
+    try {
+      // 表头为 ASCII（GBK 字节 = ASCII 字节）
+      await writeFile(filePath, Buffer.concat([Buffer.from('company,title,recruit_season\r\n'), gbkDataRow]))
+      const result = await csv.previewFile(filePath)
+      expect(result.encoding).toBe('gbk')
+      expect(result.errors).toEqual([])
+      expect(result.items).toHaveLength(1)
+      expect(result.items[0].input).toEqual({
+        company: '华为',
+        company_type: '其他',
+        title: '前端工程师',
+        recruit_season: '2027秋招'
+      })
+      expect(result.items[0].missingFields).toEqual([])
+      expect(result.items[0].error).toBeNull()
+      expect(result.items[0].exists).toBe(false)
+    } finally {
+      await unlink(filePath).catch(() => undefined)
+    }
+  })
+
+  it('UTF-8 含 BOM 文件 → 编码识别 utf8，BOM 不进入首字段', async () => {
+    const { csv } = makeServices()
+    const filePath = join(tmpdir(), `jobhunt-csv-utf8-${Date.now()}.csv`)
+    try {
+      await writeFile(filePath, '\uFEFFcompany,title\n华为,前端\n', 'utf8')
+      const result = await csv.previewFile(filePath)
+      expect(result.encoding).toBe('utf8')
+      expect(result.items[0].input.company).toBe('华为')
+      expect(result.items[0].input.title).toBe('前端')
+    } finally {
+      await unlink(filePath).catch(() => undefined)
+    }
+  })
+
+  it('文件不存在 → 错误上抛（渲染层可见提示）', async () => {
+    const { csv } = makeServices()
+    await expect(csv.previewFile(join(tmpdir(), 'no-such-file-xyz.csv'))).rejects.toThrow()
   })
 })

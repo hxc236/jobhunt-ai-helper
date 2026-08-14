@@ -25,6 +25,7 @@ import { BossParser } from './services/parsers/boss'
 import { BossLoginService } from './services/boss-login'
 import { collectBossPage, toBossPageDraft } from './services/boss-page-extract'
 import { PositionService } from './services/position'
+import { CsvImportService } from './services/csv-import'
 import { ResumeService } from './services/resume'
 import { SettingsService } from './services/settings'
 
@@ -92,6 +93,8 @@ app.whenReady().then(() => {
   const settings = new SettingsService(db)
   // F-01（#17）：职位卡（手动录入 + 去重，见 services/position.ts）
   const positions = new PositionService(db)
+  // #68/T3：CSV 批量导入（预览/勾选批量 upsert——复用 PositionService 规范校验与插入/更新路径）
+  const csvImport = new CsvImportService(positions)
   // F-12（issue #19）：简历 CRUD（schema 校验 + 删除语义，见 services/resume.ts）
   // ADR-0009：照片存储目录（userData/resume-photos），删除简历随删照片
   const resumePhotos = new PhotoStore(join(app.getPath('userData'), 'resume-photos'))
@@ -171,7 +174,7 @@ app.whenReady().then(() => {
     new SherpaAsrProvider(join(app.getAppPath(), 'resources', 'sherpa-onnx'))
   )
 
-  registerIpcHandlers({ settings, agent, positions, resumes, crawls, bossLogin, crawlPresets, optimize, topics, learn, interview, asr })
+  registerIpcHandlers({ settings, agent, positions, resumes, crawls, bossLogin, crawlPresets, optimize, topics, learn, interview, asr, csvImport })
   createWindow()
 
   app.on('activate', () => {

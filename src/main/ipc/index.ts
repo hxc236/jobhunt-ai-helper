@@ -12,6 +12,7 @@ import {
 import { ping } from '../services/ping'
 import type { AgentService } from '../services/agent'
 import type { CrawlService } from '../services/crawl'
+import type { CsvImportService } from '../services/csv-import'
 import type { OptimizeService } from '../services/optimize'
 import type { TopicService } from '../services/topic'
 import type { LearnService } from '../services/learn'
@@ -27,6 +28,7 @@ import { toScreenshotDraft } from '../services/screenshot-extract'
 import { writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { CSV_TEMPLATE_TEXT } from '../services/csv'
 import type { BossLoginService } from '../services/boss-login'
 import type { CrawlPresetService } from '../services/crawl-presets'
 
@@ -42,6 +44,7 @@ export interface IpcDeps {
   settings: SettingsService
   agent: AgentService
   positions: PositionService
+  csvImport: CsvImportService
   resumes: ResumeService
   crawls: CrawlService
   bossLogin: BossLoginService
@@ -57,7 +60,7 @@ export interface IpcDeps {
  * 注册全部 IPC handler（薄层：仅参数校验 + 转调服务）。
  * 主进程启动时调用一次；后续通道（EF-04 起）在此追加。
  */
-export function registerIpcHandlers({ settings, agent, positions, resumes, crawls, bossLogin, crawlPresets, optimize, topics, learn, interview, asr }: IpcDeps): void {
+export function registerIpcHandlers({ settings, agent, positions, resumes, crawls, bossLogin, crawlPresets, optimize, topics, learn, interview, asr, csvImport }: IpcDeps): void {
   handleRequest(IpcChannel.Ping, (): PingResponse => ping())
 
   handleRequest(IpcChannel.SettingsGet, (request) => settings.get(request.key))
@@ -132,6 +135,20 @@ export function registerIpcHandlers({ settings, agent, positions, resumes, crawl
   handleRequest(IpcChannel.CrawlPresetsDelete, (request) => crawlPresets.delete(request.id))
   // F-11（#29）：预览统计 + 确认导入（upsert：source_url 优先 + dedupe_key 兜底）
   handleRequest(IpcChannel.CrawlPreview, (request) => crawls.preview(request.runId))
+  // #68/T3：CSV 批量导入 —— 预览（读文件/编码检测/解析/逐行标记）、勾选确认（批量 upsert）、模板下载
+  handleRequest(IpcChannel.CsvImportPreview, (request) => csvImport.previewFile(request.filePath))
+  handleRequest(IpcChannel.CsvImportConfirm, (request) => csvImport.importSelected(request.items))
+  handleRequest(IpcChannel.CsvImportTemplate, async () => {
+    const picked = await dialog.showSaveDialog({
+      title: '保存 CSV 模板',
+      defaultPath: '职位卡导入模板.csv',
+      filters: [{ name: 'CSV 文件', extensions: ['csv'] }]
+    })
+    if (picked.canceled || picked.filePath === '') return null
+    // UTF-8 BOM 前缀：Excel 直接识别编码（BOM 也是应用编码检测依据）
+    await writeFile(picked.filePath, `\uFEFF${CSV_TEMPLATE_TEXT}`, 'utf8')
+    return picked.filePath
+  })
   // #32：优化流程触发（三轮进度已由 OptimizeService onProgress → optimize:progress 推送）
   handleRequest(IpcChannel.OptimizeRun, (request) =>
     optimize.run(request.jobId, request.resumeId, request.mode)

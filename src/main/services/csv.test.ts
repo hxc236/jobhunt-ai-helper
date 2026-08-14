@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildHeaderMap, detectCsvEncoding, parseCsv, parseCsvRowsToInputs } from './csv'
+import { buildHeaderMap, CSV_TEMPLATE_TEXT, detectCsvEncoding, parseCsv, parseCsvRowsToInputs } from './csv'
 
 /**
  * CSV 解析纯函数层（issue #69 / spec #68）fixture 测试。
@@ -231,5 +231,29 @@ describe('parseCsvRowsToInputs 表头映射 + 逐行转换', () => {
     const { inputs, errors } = parseCsvRowsToInputs([], {})
     expect(inputs).toEqual([])
     expect(errors[0]).toContain('为空')
+  })
+})
+
+describe('CSV_TEMPLATE_TEXT 模板（#68/T3 模板下载）', () => {
+  it('表头为全字段英文标准列名，示例行可解析为合法输入', () => {
+    const rows = parseCsv(CSV_TEMPLATE_TEXT)
+    expect(rows).toHaveLength(2)
+    const headerMap = buildHeaderMap(rows[0])
+    expect(rows[0].map((_, i) => headerMap[i])).toEqual([
+      'company', 'title', 'hire_type', 'recruit_season', 'city',
+      'salary_min', 'salary_max', 'salary_text', 'channel', 'channel_url',
+      'start_date', 'end_date', 'batch', 'jd', 'notes'
+    ])
+    const { inputs, errors } = parseCsvRowsToInputs(rows, headerMap)
+    expect(errors).toEqual([])
+    expect(inputs[0]).toMatchObject({
+      company: '华为',
+      title: '前端开发工程师',
+      hire_type: '校招',
+      recruit_season: '2027秋招',
+      city: '深圳',
+      salary_min: 20,
+      salary_max: 40
+    })
   })
 })

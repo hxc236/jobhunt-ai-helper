@@ -301,6 +301,15 @@ export interface CsvImportResult {
   failed: string[]
 }
 
+/** CSV 导入预览结果（#68/T3：文件解码/解析后 的预览项 + 编码与坏行提示）。 */
+export interface CsvImportPreviewResult {
+  /** 检测到的文件编码（UTF-8 BOM → utf8；无 BOM GBK 兑底；乱码提示依据）。 */
+  encoding: 'utf8' | 'gbk'
+  /** 解析层错误（表头未识别/列数不匹配/薪资非数字等；不中断预览）。 */
+  errors: string[]
+  items: CsvImportPreviewItem[]
+}
+
 /** 语音识别就绪状态（F-26/#40：模型缺失 → ready=false + 原因，UI 降级文字输入）。 */
 export interface AsrStatus {
   ready: boolean
