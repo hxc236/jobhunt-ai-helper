@@ -35,6 +35,7 @@ import Modal from '../components/Modal.vue'
 import CountdownBadge from '../components/CountdownBadge.vue'
 import Pill from '../components/Pill.vue'
 import Icon from '../components/Icon.vue'
+import { csvSelections } from '../csv-import-form'
 
 /** 职位模块（#42 T2）：双栏 = 列表（筛选/搜索/行）+ 详情列；录入/采集走弹窗。 */
 
@@ -644,14 +645,12 @@ async function confirmCsvImport(): Promise<void> {
   csvMessage.value = ''
   csvError.value = ''
   try {
-    const preview = csvPreview.value
-    const items: CsvImportSelection[] = [...csvSelected.value]
-      .sort((a, b) => a - b)
-      .map((i) => ({
-        input: preview.items[i].input,
-        // 仅 exists 行 update 标志有意义（勾选即默认更新；可取消）；新行走插入
-        update: preview.items[i].exists ? csvUpdate.value.has(i) : false
-      }))
+    // #72：经 csvSelections 剥离 Vue 响应式代理（Proxy 无法 structured clone → IPC 报错）
+    const items: CsvImportSelection[] = csvSelections(
+      csvPreview.value,
+      csvSelected.value,
+      csvUpdate.value
+    )
     const result = await window.api.csvImport.confirm(items)
     csvMessage.value = csvResultText(result)
     if (result.failed.length > 0) {
