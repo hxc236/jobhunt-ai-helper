@@ -32,6 +32,11 @@ const emit = defineEmits<{ (e: 'changed'): void }>()
 
 const router = useRouter()
 
+/** #67：岗位网址跳转（window.open → 主进程 setWindowOpenHandler → 系统浏览器）。 */
+function openJobUrl(url: string): void {
+  window.open(url, '_blank')
+}
+
 const position = ref<Position | null>(null)
 const application = ref<Application | null>(null)
 const loading = ref(true)
@@ -441,6 +446,12 @@ onMounted(() => void load())
         </Pill>
       </div>
       <div class="d-sub">{{ position.company }} · {{ SOURCE_LABELS[position.source] }}</div>
+      <!-- #67：岗位网址（channel_url）——点击系统浏览器打开 -->
+      <div v-if="position.channel_url" class="d-url">
+        <a :href="position.channel_url" :title="position.channel_url" @click.prevent="openJobUrl(position.channel_url)">
+          🔗 {{ position.channel_url }}
+        </a>
+      </div>
       <div class="d-meta">
         <Pill>{{ position.company_type }}</Pill>
         <Pill v-if="position.hire_type" :tone="position.hire_type === '校招' ? '' : 'tint'">{{ position.hire_type }}</Pill>
@@ -755,8 +766,8 @@ onMounted(() => void load())
             <input v-model="form.channel" placeholder="官网 / 牛客 / 猎聘 / 邮箱 / 内推…" />
           </label>
           <label class="field">
-            <span class="label">渠道链接</span>
-            <input v-model="form.channel_url" placeholder="https://…" />
+            <span class="label">岗位网址</span>
+            <input v-model="form.channel_url" placeholder="https://…（点击可在列表/详情直接跳转）" />
           </label>
           <label class="field">
             <span class="label">网申开始</span>
@@ -821,6 +832,21 @@ h1 {
   font-size: 13px;
   color: var(--muted);
   margin-top: 2px;
+}
+
+.d-url {
+  margin-top: 6px;
+  font-size: 12px;
+}
+
+.d-url a {
+  color: var(--accent, #2563eb);
+  text-decoration: none;
+  word-break: break-all;
+}
+
+.d-url a:hover {
+  text-decoration: underline;
 }
 
 .d-meta {

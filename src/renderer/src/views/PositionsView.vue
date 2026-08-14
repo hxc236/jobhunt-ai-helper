@@ -217,6 +217,11 @@ function toggleSelect(url: string): void {
   selectedUrls.value = next
 }
 
+/** #67：岗位网址跳转（window.open → 主进程 setWindowOpenHandler → 系统浏览器）。 */
+function openJobUrl(url: string): void {
+  window.open(url, '_blank')
+}
+
 function toggleAll(checked: boolean): void {
   selectedUrls.value = new Set(
     checked ? preview.value?.items.map((i) => i.candidate.source_url) ?? [] : []
@@ -691,6 +696,14 @@ onMounted(() => {
         >
           <div class="pr-main">
             <span class="pr-company">{{ p.company }}</span>
+            <!-- #67：岗位网址（channel_url）——点击系统浏览器打开 -->
+            <a
+              v-if="p.channel_url"
+              class="pr-url"
+              :href="p.channel_url"
+              :title="p.channel_url"
+              @click.stop.prevent="openJobUrl(p.channel_url)"
+            >🔗</a>
             <CountdownBadge :days-left="p.days_left" />
           </div>
           <div class="pr-title">{{ p.title }}</div>
@@ -783,8 +796,8 @@ onMounted(() => {
         <input v-model="form.channel" placeholder="官网 / 牛客 / 猎聘 / 邮箱 / 内推…" />
       </label>
       <label class="field">
-        <span class="label">渠道链接</span>
-        <input v-model="form.channel_url" placeholder="https://…" />
+        <span class="label">岗位网址</span>
+        <input v-model="form.channel_url" placeholder="https://…（点击可在列表/详情直接跳转）" />
       </label>
       <label class="field">
         <span class="label">网申开始</span>
@@ -1077,6 +1090,16 @@ onMounted(() => {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+}
+
+.pr-url {
+  font-size: 12px;
+  text-decoration: none;
+  opacity: 0.7;
+}
+
+.pr-url:hover {
+  opacity: 1;
 }
 
 .pr-company {
