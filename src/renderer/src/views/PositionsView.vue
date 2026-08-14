@@ -185,8 +185,9 @@ async function checkBossLogin(): Promise<void> {
 }
 
 async function openBossLogin(): Promise<void> {
+  // 只开可见窗口，不再紧随隐藏窗口检测（issue #62）：一次点击两次导航，
+  // 是隐性 BOSS 请求；登录态显示以「刷新状态」手动为准
   await window.api.crawls.bossLogin.open()
-  await checkBossLogin()
 }
 
 function toggleSelect(url: string): void {
@@ -500,7 +501,8 @@ function openCrawl(): void {
   importMessage.value = ''
   crawlOpen.value = true
   void loadPresets()
-  void checkBossLogin()
+  // 不在弹窗打开时自动检测 BOSS 登录态（issue #62）：隐藏窗口加载搜索页
+  // 是隐性 BOSS 请求，会喂养风控累积评分；需检查时点「刷新状态」
 }
 
 onMounted(() => {
@@ -761,8 +763,26 @@ onMounted(() => {
         <span class="label">关键词（公司名）</span>
         <input v-model="crawlKeyword" placeholder="如：腾讯" :disabled="crawling" />
       </label>
-      <button class="btn primary" type="button" :disabled="crawling" style="align-self: flex-end" @click="startCrawl">
+      <button
+        v-if="crawlSource !== 'boss'"
+        class="btn primary"
+        type="button"
+        :disabled="crawling"
+        style="align-self: flex-end"
+        @click="startCrawl"
+      >
         {{ crawling ? '采集中…' : '开始采集' }}
+      </button>
+      <!-- issue #62：BOSS 自动采集会触发风控，已停用；改人工浏览 + F8 提取 -->
+      <button
+        v-else
+        class="btn primary"
+        type="button"
+        disabled
+        style="align-self: flex-end"
+        title="BOSS 自动采集会触发风控，已停用"
+      >
+        人工浏览提取（详情页按 F8）
       </button>
     </div>
     <!-- issue #51：BOSS 登录态（薪资可见性前提）——扫码登录 + 状态检测 -->
