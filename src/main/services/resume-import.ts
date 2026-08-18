@@ -3,9 +3,10 @@ import { statSync } from 'node:fs'
 import { basename, extname } from 'node:path'
 import type { Resume, ResumeImportProvenance, StoredResume } from '../../shared/types/resume'
 import type { ResumeDraft, ResumeFieldStatus } from '../../shared/types'
-import { parseUploadFile, ResumeParseError } from './resume-parse'
+import { parseUploadFile, buildDraft, ResumeParseError } from './resume-parse'
 import type { ResumeService } from './resume'
 import type { AgentService, AgentSession, AgentSettingsStore } from './agent'
+import type { PdfOcrAdapter } from './ocr-import'
 import { extractJson } from './optimize'
 import { assertValidResume, ResumeValidationError } from './resume-schema'
 
@@ -28,8 +29,8 @@ export const MAX_IMPORT_BYTES = 20 * 1024 * 1024
 /** PDF 页数上限（规格 #73 Upload boundaries）。 */
 export const MAX_PDF_PAGES = 10
 
-/** 导入阶段（UI 进度展示；后续 ticket 扩展 OCR 第 N/M 页等阶段）。 */
-export type ImportPhase = 'read' | 'parse' | 'map' | 'agent'
+/** 导入阶段（UI 进度展示；后续 ticket 扩展 Agent 结构化等阶段）。 */
+export type ImportPhase = 'read' | 'parse' | 'map' | 'agent' | 'ocr'
 
 /** Agent 降级/未使用原因（UI 展示；规格「未配置、关闭或失败时显示原因并使用本地草稿」）。 */
 export type AgentFailReason =
@@ -53,7 +54,7 @@ const AGENT_WAIT_DEFAULT_MS = 30_000
 
 /** 主 → 渲染事件（经 IPC pushEvent 转发）。 */
 export type ImportEvent =
-  | { type: 'progress'; token: string; phase: ImportPhase }
+  | { type: 'progress'; token: string; phase: ImportPhase; detail?: string }
   | {
       type: 'done'
       token: string
@@ -113,6 +114,8 @@ export class ResumeImportService {
       emit: (event: ImportEvent) => void
       /** #77：Agent 服务（未注入 = 无 Agent 增强，恒本地草稿）。 */
       agent?: AgentService
+      /** #81：扫描型 PDF 的 OCR adapter（未注入 = 扫描件走「需要 OCR」降级路径）。 */
+      ocrAdapter?: PdfOcrAdapter
       /** 非敏感设置存取（开关 + 隐私同意记录）。 */
       settings?: AgentSettingsStore
       /** Agent 等待阈值 ms（默认 30_000；测试注入短值）。 */
@@ -177,7 +180,7 @@ export class ResumeImportService {
     const provenance: ResumeImportProvenance = {
       fileName: basename(entry.filePath),
       fileType: extname(entry.filePath).toLowerCase() === '.pdf' ? 'pdf' : 'docx',
-      parsePath: 'text',
+      parsePath: entry.draft.parsePath ?? 'text',
       importedAt: new Date().toISOString()
     }
     const stored = this.deps.resumeService.createImported(resume, provenance)
@@ -211,7 +214,11 @@ export class ResumeImportService {
       if (entry.cancelled) return this.finishCancelled(entry)
       this.emit('progress', token, 'parse')
       // #78：PDF 逐页提取（页码/坐标/来源），页数上限由导入边界控制（20MB 已同步校验）
-      const draft = await parseUploadFile(entry.filePath, { maxPdfPages: MAX_PDF_PAGES })
+      const parsed = await parseUploadFile(entry.filePath, { maxPdfPages: MAX_PDF_PAGES })
+      if (entry.cancelled) return this.finishCancelled(entry)
+      // #81：扫描型 PDF（无文本层）→ 逐页栅格化 + Windows OCR，结果进入同一草稿/确认流程
+      const draft =
+        parsed.scanned && this.deps.ocrAdapter !== undefined ? await this.ocrPdfDraft(entry) : parsed
       if (entry.cancelled) return this.finishCancelled(entry)
       this.emit('progress', token, 'map')
       const localResume = draftToResume(draft)
@@ -366,6 +373,29 @@ export class ResumeImportService {
     })
   }
 
+  /**
+   * #81：扫描型 PDF → 逐页 OCR（进度 ocr 第 N/M 页；可取消；结果合并为带页码标记的草稿）。
+   * OCR 全部为空 → 明确错误（不建空草稿）；单页失败/引擎缺失 → 错误透传（UI 给重试/换文件/手动新建）。
+   */
+  private async ocrPdfDraft(entry: DraftEntry): Promise<ResumeDraft> {
+    const adapter = this.deps.ocrAdapter
+    if (adapter === undefined) throw new Error('OCR adapter 未注入')
+    const { numPages } = await adapter.open(entry.filePath)
+    try {
+      const pageTexts: string[] = []
+      for (let pageNo = 1; pageNo <= numPages; pageNo++) {
+        if (entry.cancelled) throw new ImportCancelledError()
+        this.deps.emit({ type: 'progress', token: entry.token, phase: 'ocr', detail: `第 ${pageNo}/${numPages} 页` })
+        const text = await adapter.ocrPage(entry.filePath, pageNo, () => entry.cancelled)
+        if (entry.cancelled) throw new ImportCancelledError()
+        pageTexts.push(text)
+      }
+      return buildOcrDraft(entry.filePath, pageTexts)
+    } finally {
+      void adapter.dispose()
+    }
+  }
+
   private emit(type: 'progress', token: string, phase: ImportPhase): void {
     this.deps.emit({ type, token, phase })
   }
@@ -442,6 +472,28 @@ export function buildRepairPrompt(issueText: string): string {
 export function isTransientAgentError(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err)
   return /ECONN|ENET|ETIMEDOUT|timeout|超时|网络|连接|fetch failed|5\d\d/i.test(message)
+}
+
+/**
+ * OCR 逐页文本 → 草稿（#81）：带页码标记（Agent 理解跨页上下文 + 核对展示），parsePath=ocr；
+ * 全部页 OCR 为空 → 抛错（明确原因，UI 提供重试/换文件/手动新建，不建空草稿）。
+ */
+export function buildOcrDraft(filePath: string, pageTexts: string[]): ResumeDraft {
+  const trimmed = pageTexts.map((t) => t.trim())
+  const hasAnyText = trimmed.some((t) => t !== '')
+  if (!hasAnyText) {
+    throw new Error('OCR 识别结果为空——请确认 PDF 清晰、方向正常，或换用清晰文件重试')
+  }
+  const ruleText = trimmed.filter((t) => t !== '').join('\n')
+  const draft = buildDraft(basename(filePath), ruleText)
+  const markedText = trimmed.map((t, i) => `===== 第 ${i + 1} 页 =====\n${t}`).join('\n')
+  return {
+    ...draft,
+    text: markedText,
+    pages: trimmed.map((text, i) => ({ pageNo: i + 1, text })),
+    parsePath: 'ocr',
+    scanned: false
+  }
 }
 
 /**

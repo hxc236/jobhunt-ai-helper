@@ -325,7 +325,7 @@ export interface IpcEventMap {
   [IpcEvent.CrawlProgress]: { runId: number; done: number; total: number }
   [IpcEvent.BossPageExtracted]: BossPageExtractResult
   // #75：简历导入异步流程事件（token 关联 start 返回；cancelled 为静默取消）
-  [IpcEvent.ResumesImportProgress]: { token: string; phase: string }
+  [IpcEvent.ResumesImportProgress]: { token: string; phase: string; detail?: string }
   [IpcEvent.ResumesImportDone]: {
     token: string
     draft: ResumeDraft

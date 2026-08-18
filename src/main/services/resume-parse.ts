@@ -168,6 +168,7 @@ export function buildDraft(fileName: string, rawText: string): ResumeDraft {
     fields,
     fieldStatus,
     missingFields,
+    parsePath: 'text',
     unmappedText: extractUnmappedLines(lines),
     scanned
   }

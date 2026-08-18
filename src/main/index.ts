@@ -20,6 +20,8 @@ import { LearnService } from './services/learn'
 import { InterviewService } from './services/interview'
 import { AsrService, SherpaAsrProvider } from './services/asr'
 import { ResumeImportService } from './services/resume-import'
+import { WindowsPdfOcrAdapter } from './services/ocr-import'
+import { disposeRasterWindow } from './services/pdf-raster'
 import { NowcoderParser } from './services/parsers/nowcoder'
 import { LiepinParser } from './services/parsers/liepin'
 import { BossParser } from './services/parsers/boss'
@@ -174,16 +176,19 @@ app.whenReady().then(() => {
   const asr = new AsrService(
     new SherpaAsrProvider(join(app.getAppPath(), 'resources', 'sherpa-onnx'))
   )
-  // #75/#77：简历导入（DOCX 本地导入闭环 + Agent 自动结构化）——token 化异步流程，事件推送阶段/结果
+  // #75/#77：简历导入（DOCX/PDF 本地导入闭环 + Agent 自动结构化）——token 化异步流程，事件推送阶段/结果
+  // #81：扫描型 PDF → Windows OCR（栅格化 + 中文 OCR；缺语言包时给出明确错误）
   const resumeImport = new ResumeImportService({
     resumeService: resumes,
     // #77：Agent 结构化（未配置/关闭/失败自动降级本地草稿）；settings 存开关与隐私同意
     agent,
     settings,
+    // #81：扫描型 PDF OCR adapter（真实 Windows OCR；自动化测试注入替身）
+    ocrAdapter: new WindowsPdfOcrAdapter(),
     emit: (event) => {
       switch (event.type) {
         case 'progress':
-          pushEvent(IpcEvent.ResumesImportProgress, { token: event.token, phase: event.phase })
+          pushEvent(IpcEvent.ResumesImportProgress, { token: event.token, phase: event.phase, ...(event.detail !== undefined ? { detail: event.detail } : {}) })
           break
         case 'done':
           pushEvent(IpcEvent.ResumesImportDone, {
@@ -217,7 +222,10 @@ app.whenReady().then(() => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
 
-  app.on('before-quit', () => agent.dispose())
+  app.on('before-quit', () => {
+    agent.dispose()
+    disposeRasterWindow() // #81：释放栅格化隐藏窗口
+  })
 })
 
 app.on('window-all-closed', () => {

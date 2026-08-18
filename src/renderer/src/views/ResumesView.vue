@@ -49,6 +49,8 @@ interface ImportState {
   token: string
   phase: string
   error: string | null
+  /** 阶段详情（如 OCR 第 N/M 页）。 */
+  detail: string | null
   /** #77：待用户决策的 Agent 环节（隐私同意 / 超时）。 */
   pendingKind: 'consent' | 'timeout' | null
 }
@@ -98,7 +100,8 @@ const IMPORT_PHASE_LABEL: Record<string, string> = {
   read: '读取文件',
   parse: '解析文本',
   map: '生成草稿',
-  agent: 'Agent 结构化'
+  agent: 'Agent 结构化',
+  ocr: 'OCR 识别'
 }
 /** 离开导入流程前的取消确认弹窗。 */
 const importCancelConfirm = ref(false)
@@ -121,10 +124,10 @@ async function onImportFilePicked(event: Event): Promise<void> {
   }
   try {
     const { token } = await window.api.resumes.importDocx.start(filePath)
-    importState.value = { token, phase: 'read', error: null, pendingKind: null }
+    importState.value = { token, phase: 'read', error: null, detail: null, pendingKind: null }
   } catch (err) {
     // start 同步校验失败（类型/大小/不可读）：弹窗展示错误与替代入口
-    importState.value = { token: '', phase: 'read', error: String(err), pendingKind: null }
+    importState.value = { token: '', phase: 'read', error: String(err), detail: null, pendingKind: null }
   }
 }
 
@@ -186,16 +189,18 @@ function subscribeImportEvents(): () => void {
       const state = importState.value
       if (state === null || state.token !== payload.token) return
       state.phase = payload.phase
+      state.detail = payload.detail ?? null
     }),
     window.api.on(IpcEvent.ResumesImportDone, (payload) => {
       const state = importState.value
       if (state === null || state.token !== payload.token) return
       if (payload.draft.scanned) {
-        // #78：扫描型 PDF（无文本层）→ 不建空草稿，引导 OCR 路径（#81 提供）或换文件/手动新建
+        // OCR 全空/未注入 adapter 的安全兜底：不建空草稿，引导换文件或手动新建
         importState.value = {
           token: '',
           phase: 'read',
-          error: '该 PDF 无法提取文本（扫描件/无文本层）。OCR 导入将在后续版本提供；可改用 DOCX 文件、重试或手动新建简历。',
+          error: '该 PDF 无法提取到可用文本（扫描件且 OCR 未启用或结果为空）。可重试、换用清晰文件或手动新建简历。',
+          detail: null,
           pendingKind: null
         }
         void window.api.resumes.importDocx.dispose(payload.token)
@@ -1204,7 +1209,9 @@ onMounted(() => {
     </template>
     <!-- 进度阶段 -->
     <template v-else-if="importState !== null">
-      <p class="hint">{{ IMPORT_PHASE_LABEL[importState.phase] ?? importState.phase }}…（解析期间可继续使用其他功能）</p>
+      <p class="hint">
+        {{ IMPORT_PHASE_LABEL[importState.phase] ?? importState.phase }}{{ importState.detail !== null ? ' ' + importState.detail : '' }}…（解析期间可继续使用其他功能）
+      </p>
     </template>
     <template #foot>
       <template v-if="importState?.pendingKind === 'consent'">
