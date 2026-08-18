@@ -19,8 +19,9 @@ import type { LearnService } from '../services/learn'
 import type { InterviewService } from '../services/interview'
 import type { AsrService } from '../services/asr'
 import type { PositionService } from '../services/position'
-import { exportResumePdf } from '../services/resume-export'
-import type { ResumeService } from '../services/resume'
+import { exportResumeDocx, exportResumePdf } from '../services/resume-export'
+import { buildResumeDocx, type DocxPhoto } from '../services/resume-docx'
+import { ResumeNotFoundError, type ResumeService } from '../services/resume'
 import type { SettingsService } from '../services/settings'
 import { pushEvent } from './events'
 import { ocrImage } from '../services/ocr'
@@ -195,9 +196,26 @@ export function registerIpcHandlers({ settings, agent, positions, resumes, crawl
   handleRequest(IpcChannel.ResumesImportPhoto, (request) => resumes.importPhoto(request.filePath))
   handleRequest(IpcChannel.ResumesRemovePhoto, (request) => resumes.removePhoto(request.fileName))
   handleRequest(IpcChannel.ResumesPhotoDataUri, (request) => resumes.photoDataUri(request.fileName) ?? null)
-  handleRequest(IpcChannel.ResumesExportPdf, (request) => {
-    const html = resumes.renderHtml(request.id)
-    const title = resumes.get(request.id)?.meta.title ?? '简历'
+  // #74：统一导出入口（PDF/DOCX 双格式）——按已保存 id 导出（编辑器内导出先保存/校验）。
+  handleRequest(IpcChannel.ResumesExport, async (request) => {
+    const resume = resumes.get(request.id)
+    if (resume === undefined) {
+      throw new ResumeNotFoundError(request.id)
+    }
+    const title = resume.meta.title ?? '简历'
+    if (request.format === 'docx') {
+      const photo = resume.basics?.photo !== undefined ? resumes.photoDataUri(resume.basics.photo) : undefined
+      const docx = await buildResumeDocx(resume, photo === undefined ? undefined : decodePhoto(photo))
+      return exportResumeDocx(docx, title)
+    }
+    const html = resumes.renderFromResume(resume)
     return exportResumePdf(html, title)
   })
+}
+
+/** 照片 data URI → DOCX 内嵌图片（ext + 二进制）。 */
+function decodePhoto(dataUri: string): DocxPhoto {
+  const match = /^data:image\/([a-z0-9+.]+);base64,([A-Za-z0-9+/=]+)$/.exec(dataUri)
+  if (match === null) throw new Error(`无法解析照片 data URI：${dataUri.slice(0, 40)}…`)
+  return { ext: match[1], data: Buffer.from(match[2], 'base64') }
 }

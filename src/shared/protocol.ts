@@ -69,7 +69,7 @@ export const IpcChannel = {
   ResumesImportPhoto: 'resumes:import-photo',
   ResumesRemovePhoto: 'resumes:remove-photo',
   ResumesPhotoDataUri: 'resumes:photo-data-uri',
-  ResumesExportPdf: 'resumes:export-pdf',
+  ResumesExport: 'resumes:export',
   OptimizeRun: 'optimize:run',
   TopicsList: 'topics:list',
   TopicsGenerate: 'topics:generate',
@@ -193,14 +193,17 @@ export interface IpcProtocol {
   [IpcChannel.CrawlPresetsDelete]: { request: { id: number }; response: void }
   // F-14（#26）：简历上传解析 —— docx/pdf → 文本 → 结构化草稿（置信度/待确认标记；扫描件降级）
   [IpcChannel.ResumesUploadParse]: { request: { filePath: string }; response: ResumeDraft }
-  // F-15（#30）：A4 渲染与 PDF 导出 —— render-html 纯函数（iframe 预览）；
-  // export-pdf 经隐藏窗口 printToPDF + 保存对话框，返回保存路径（取消 → null）。
+  // #74：简历 PDF/DOCX 双格式导出 —— 按已保存 id 导出（编辑器内导出先保存/校验）；
+  // export 经保存对话框写盘（取消 → null）；PDF 走 printToPDF，DOCX 走 WordprocessingML 生成。
   [IpcChannel.ResumesRenderHtml]: { request: { id: string }; response: string }
   [IpcChannel.ResumesRenderFromResume]: { request: { resume: Resume }; response: string }
   [IpcChannel.ResumesImportPhoto]: { request: { filePath: string }; response: string }
   [IpcChannel.ResumesRemovePhoto]: { request: { fileName: string }; response: void }
   [IpcChannel.ResumesPhotoDataUri]: { request: { fileName: string }; response: string | null }
-  [IpcChannel.ResumesExportPdf]: { request: { id: string }; response: string | null }
+  [IpcChannel.ResumesExport]: {
+    request: { id: string; format: 'pdf' | 'docx' }
+    response: string | null
+  }
   // F-07/#32：优化流程 —— run 三轮编排（进度经 optimize:progress 事件推送；结果含优化稿+changes）
   [IpcChannel.OptimizeRun]: {
     request: { jobId: string; resumeId: string; mode: OptimizationMode }
@@ -444,8 +447,8 @@ export interface ResumeApi {
   removePhoto: (fileName: string) => Promise<void>
   /** 照片 data URI（表单缩略图展示；文件缺失返回 null）。 */
   photoDataUri: (fileName: string) => Promise<string | null>
-  /** 导出 PDF（F-15/#30：保存对话框；取消返回 null）。 */
-  exportPdf: (id: string) => Promise<string | null>
+  /** 导出简历（#74：PDF/DOCX 双格式；保存对话框；取消返回 null）。按已保存 id 或未保存对象导出。 */
+  export: (id: string, format: 'pdf' | 'docx') => Promise<string | null>
 }
 
 /** 渲染进程可见的 csv 导入 api 表面（#68/T3：CSV 批量导入弹窗）。 */

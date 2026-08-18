@@ -53,7 +53,7 @@ export function createRendererApi(bridge: IpcBridge): Omit<RendererApi, 'getPath
       importPhoto: (filePath) => bridge.invoke(IpcChannel.ResumesImportPhoto, { filePath }),
       removePhoto: (fileName) => bridge.invoke(IpcChannel.ResumesRemovePhoto, { fileName }),
       photoDataUri: (fileName) => bridge.invoke(IpcChannel.ResumesPhotoDataUri, { fileName }),
-      exportPdf: (id) => bridge.invoke(IpcChannel.ResumesExportPdf, { id })
+      export: (id, format) => bridge.invoke(IpcChannel.ResumesExport, { id, format })
     },
     crawls: {
       run: (source, options) => bridge.invoke(IpcChannel.CrawlRun, { source, options }),

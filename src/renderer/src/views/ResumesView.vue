@@ -30,14 +30,23 @@ const deleteTarget = ref<StoredResume | null>(null)
 const previewHtml = ref('')
 const previewTitle = ref('')
 const previewId = ref('')
+/** 预览来源：true = 编辑器内未保存表单（previewCurrent），导出前需先保存/校验。 */
+const previewFromForm = ref(false)
 const exporting = ref(false)
 const exportMessage = ref('')
 const previewError = ref('')
+/** 列表行导出菜单：当前打开的菜单所属简历 id（null = 关闭）。 */
+const exportMenuTarget = ref<string | null>(null)
+
+function closeExportMenu(): void {
+  exportMenuTarget.value = null
+}
 
 async function openPreview(resume: StoredResume): Promise<void> {
   previewError.value = ''
   exportMessage.value = ''
   previewId.value = resume.meta.id as string
+  previewFromForm.value = false
   try {
     previewHtml.value = await window.api.resumes.renderHtml(resume.meta.id as string)
     previewTitle.value = resume.meta.title ?? '简历'
@@ -107,16 +116,41 @@ async function previewCurrent(): Promise<void> {
     const resume: Resume = jsonMode.value ? (JSON.parse(jsonText.value) as Resume) : formToResume(form)
     previewHtml.value = await window.api.resumes.renderFromResume(resume)
     previewTitle.value = resume.meta.title ?? '简历'
+    previewId.value = editingId.value ?? ''
+    previewFromForm.value = true
   } catch (err) {
     previewError.value = String(err)
   }
 }
 
-async function exportPdf(): Promise<void> {
+/**
+ * 导出简历（#74：PDF/DOCX 双格式）。
+ * - 编辑器内预览（previewFromForm）导出前先走保存/校验流程：校验失败阻止导出并定位问题；
+ * - 列表行预览使用已保存版本（id 导出）；
+ * - 取消/成功/失败均返回明确消息。
+ */
+async function exportResume(format: 'pdf' | 'docx'): Promise<void> {
   exporting.value = true
   exportMessage.value = ''
   try {
-    const path = await window.api.resumes.exportPdf(previewId.value)
+    let id = previewId.value
+    if (previewFromForm.value) {
+      const saved = await save()
+      if (!saved || issues.value.length > 0) {
+        exportMessage.value = '导出已阻止：当前修改未通过校验（见上方问题列表，修复后重试）'
+        return
+      }
+      if (editingId.value === null || editingId.value === '') {
+        exportMessage.value = '导出失败：保存后仍未取得简历标识'
+        return
+      }
+      id = editingId.value
+    }
+    if (id === '') {
+      exportMessage.value = '导出失败：缺少简历标识'
+      return
+    }
+    const path = await window.api.resumes.export(id, format)
     exportMessage.value = path === null ? '已取消导出' : `已导出：${path}`
   } catch (err) {
     exportMessage.value = `导出失败：${String(err)}`
@@ -125,10 +159,11 @@ async function exportPdf(): Promise<void> {
   }
 }
 
-/** 列表行「导出 PDF」：先渲染 A4 预览再导出（原型 pdf 图标按钮语义）。 */
-async function exportPdfFromRow(resume: StoredResume): Promise<void> {
+/** 列表行「导出」菜单：先渲染 A4 预览（已保存版本）再按所选格式导出。 */
+async function exportFromRow(resume: StoredResume, format: 'pdf' | 'docx'): Promise<void> {
+  exportMenuTarget.value = null
   await openPreview(resume)
-  if (previewError.value === '') await exportPdf()
+  if (previewError.value === '') await exportResume(format)
 }
 
 const form = reactive<ResumeForm>(emptyResumeForm())
@@ -284,6 +319,7 @@ onUnmounted(() => {
   window.removeEventListener('blur', onWindowBlur)
   document.removeEventListener('visibilitychange', onWindowBlur)
   document.removeEventListener('wheel', onDocWheel)
+  document.removeEventListener('click', closeExportMenu)
 })
 
 function switchToJson(): void {
@@ -306,8 +342,8 @@ function switchToForm(): void {
   }
 }
 
-async function save(): Promise<void> {
-  if (saving.value) return // 防并发：手动保存与自动保存互斥
+async function save(): Promise<boolean> {
+  if (saving.value) return false // 防并发：手动保存与自动保存互斥
   issues.value = []
   successMessage.value = ''
   let resume: Resume
@@ -316,7 +352,7 @@ async function save(): Promise<void> {
       resume = JSON.parse(jsonText.value) as Resume
     } catch (err) {
       jsonError.value = `JSON 解析失败：${String(err)}`
-      return
+      return false
     }
   } else {
     // 新建基准简历默认名：姓名-基准简历（ADR-0009）
@@ -332,7 +368,7 @@ async function save(): Promise<void> {
       targetId !== null && targetId !== ''
         ? await window.api.resumes.update(targetId, resume)
         : await window.api.resumes.create(resume)
-    if (closed) return // 已关闭：不回填表单、不重新打开编辑器
+    if (closed) return false // 已关闭：不回填表单、不重新打开编辑器
     successMessage.value = `已保存「${stored.meta.title ?? stored.meta.id}」`
     loadingForm = true
     // 回填保留空行：自动保存/手动保存不会清掉用户刚添加的空表单（keepEmptyRows）
@@ -342,6 +378,7 @@ async function save(): Promise<void> {
     if (jsonMode.value) jsonText.value = JSON.stringify(stored, null, 2)
     editingId.value = stored.meta.id
     await load()
+    return true
   } catch (err) {
     const anyErr = err as { issues?: Array<{ instancePath: string; message?: string }> }
     if (Array.isArray(anyErr.issues) && anyErr.issues.length > 0) {
@@ -352,6 +389,7 @@ async function save(): Promise<void> {
     } else {
       issues.value = [{ path: '保存失败', detail: String(err) }]
     }
+    return false
   } finally {
     saving.value = false
   }
@@ -530,7 +568,13 @@ onMounted(() => {
         <div class="res-actions">
           <button class="icon-btn" type="button" title="编辑" @click.stop="openEditor(r)"><Icon name="edit" /></button>
           <button class="icon-btn" type="button" title="A4 预览" @click.stop="openPreview(r)"><Icon name="file" /></button>
-          <button class="icon-btn" type="button" title="导出 PDF" @click.stop="exportPdfFromRow(r)"><Icon name="download" /></button>
+          <div class="export-menu-wrap">
+            <button class="icon-btn" type="button" title="导出" @click.stop="exportMenuTarget = exportMenuTarget === (r.meta.id as string) ? null : (r.meta.id as string)"><Icon name="download" /></button>
+            <div v-if="exportMenuTarget === (r.meta.id as string)" class="export-menu" @click.stop>
+              <button type="button" @click="exportFromRow(r, 'pdf')">导出 PDF</button>
+              <button type="button" @click="exportFromRow(r, 'docx')">导出 DOCX</button>
+            </div>
+          </div>
           <button class="icon-btn" type="button" title="删除" @click.stop="deleteTarget = r"><Icon name="trash" /></button>
         </div>
       </div>
@@ -569,7 +613,13 @@ onMounted(() => {
         <div class="res-actions">
           <button class="icon-btn" type="button" title="编辑" @click.stop="openEditor(r)"><Icon name="edit" /></button>
           <button class="icon-btn" type="button" title="A4 预览" @click.stop="openPreview(r)"><Icon name="file" /></button>
-          <button class="icon-btn" type="button" title="导出 PDF" @click.stop="exportPdfFromRow(r)"><Icon name="download" /></button>
+          <div class="export-menu-wrap">
+            <button class="icon-btn" type="button" title="导出" @click.stop="exportMenuTarget = exportMenuTarget === (r.meta.id as string) ? null : (r.meta.id as string)"><Icon name="download" /></button>
+            <div v-if="exportMenuTarget === (r.meta.id as string)" class="export-menu" @click.stop>
+              <button type="button" @click="exportFromRow(r, 'pdf')">导出 PDF</button>
+              <button type="button" @click="exportFromRow(r, 'docx')">导出 DOCX</button>
+            </div>
+          </div>
           <button class="icon-btn" type="button" title="删除" @click.stop="deleteTarget = r"><Icon name="trash" /></button>
         </div>
       </div>
@@ -855,8 +905,11 @@ onMounted(() => {
       <button class="btn" type="button" @click="zoomPreviewBy(-0.1)">−</button>
       <button class="btn" type="button" @click="previewZoom = 1">100%</button>
       <button class="btn" type="button" @click="zoomPreviewBy(0.1)">＋</button>
-      <button class="btn" type="button" :disabled="exporting" @click="exportPdf">
+      <button class="btn" type="button" :disabled="exporting" @click="exportResume('pdf')">
         {{ exporting ? '导出中…' : '导出 PDF' }}
+      </button>
+      <button class="btn" type="button" :disabled="exporting" @click="exportResume('docx')">
+        {{ exporting ? '导出中…' : '导出 DOCX' }}
       </button>
     </template>
     <p v-if="exportMessage" class="hint" :style="{ color: exportMessage.startsWith('已导出') ? '#059669' : '#dc2626' }">
@@ -1088,6 +1141,42 @@ onMounted(() => {
 .res-actions .icon-btn .ic {
   width: 13px;
   height: 13px;
+}
+
+/* 列表行导出菜单（#74：PDF/DOCX 轻量选择） */
+.export-menu-wrap {
+  position: relative;
+}
+
+.export-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  min-width: 108px;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px color-mix(in srgb, #000 14%, transparent);
+}
+
+.export-menu button {
+  border: none;
+  background: transparent;
+  text-align: left;
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 12.5px;
+  color: var(--fg);
+  cursor: pointer;
+}
+
+.export-menu button:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent);
 }
 
 /* 编辑器 */
