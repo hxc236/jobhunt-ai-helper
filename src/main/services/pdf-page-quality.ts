@@ -92,7 +92,8 @@ export function analyzePageQuality(input: PageQualityInput): PageQualityResult {
     hard.push('replacement-or-nul')
   }
   if (text.length > 0) {
-    const controlPrivate = text.match(/[\x00-\x1F\uE000-\uF8FF]/g) ?? []
+    // 排除 \t \n \r（正常空白控制符）：仅统计非空白控制字符与私用区字符
+    const controlPrivate = text.match(/[\x00-\x08\x0B\x0C\x0E-\x1F\uE000-\uF8FF]/g) ?? []
     if (controlPrivate.length / text.length >= HARD_CONTROL_RATIO) {
       hard.push('control-or-private-ratio')
     }

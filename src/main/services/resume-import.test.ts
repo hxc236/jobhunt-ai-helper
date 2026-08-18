@@ -241,7 +241,7 @@ describe('ResumeImportService（#75 DOCX 本地导入）', () => {
     expect(h.events.some((e) => e.type === 'done' && e.token === token)).toBe(false)
   })
 
-  it('#78：扫描型 PDF → done 携带 scanned 草稿（UI 走「需要 OCR」路径，不建空草稿）', async () => {
+  it('#82：扫描型 PDF（无 OCR adapter）→ done 携带 ocr-needed 页风险，不建空草稿', async () => {
     const h = makeHarness()
     const file = writeFixture(h.dir, 'scan.pdf', await makePdf([]))
     const token = h.svc.start(file)
@@ -249,8 +249,9 @@ describe('ResumeImportService（#75 DOCX 本地导入）', () => {
     const done = h.events.find((e) => e.type === 'done' && e.token === token)
     expect(done).toBeDefined()
     if (done?.type !== 'done') return
-    expect(done.draft.scanned).toBe(true)
-    expect(done.draft.text).toBe('')
+    // 逐页路由：无 adapter → 硬异常页标记 ocr-needed（可区分结果，不建空草稿）
+    expect(done.draft.pageRisks?.every((r) => r.risk === 'ocr-needed')).toBe(true)
+    expect(done.draft.parsePath).toBe('text')
   })
 
   it('#78：加密/损坏 PDF → error 事件（明确原因），不产生 done', async () => {

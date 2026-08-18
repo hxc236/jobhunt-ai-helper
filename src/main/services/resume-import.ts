@@ -3,10 +3,12 @@ import { statSync } from 'node:fs'
 import { basename, extname } from 'node:path'
 import type { Resume, ResumeImportProvenance, StoredResume } from '../../shared/types/resume'
 import type { ResumeDraft, ResumeFieldStatus } from '../../shared/types'
-import { parseUploadFile, buildDraft, ResumeParseError } from './resume-parse'
+import { parseUploadFile, extractPdfPages, buildDraft, ResumeParseError } from './resume-parse'
 import type { ResumeService } from './resume'
 import type { AgentService, AgentSession, AgentSettingsStore } from './agent'
 import type { PdfOcrAdapter } from './ocr-import'
+import { analyzePageQuality, SOFT_OCR_THRESHOLD } from './pdf-page-quality'
+import { normalizeExtractedText, reflowTwoColumn } from './pdf-routing'
 import { extractJson } from './optimize'
 import { assertValidResume, ResumeValidationError } from './resume-schema'
 
@@ -213,12 +215,11 @@ export class ResumeImportService {
       this.emit('progress', token, 'read')
       if (entry.cancelled) return this.finishCancelled(entry)
       this.emit('progress', token, 'parse')
-      // #78：PDF 逐页提取（页码/坐标/来源），页数上限由导入边界控制（20MB 已同步校验）
-      const parsed = await parseUploadFile(entry.filePath, { maxPdfPages: MAX_PDF_PAGES })
-      if (entry.cancelled) return this.finishCancelled(entry)
-      // #81：扫描型 PDF（无文本层）→ 逐页栅格化 + Windows OCR，结果进入同一草稿/确认流程
+      // #82：PDF 逐页智能路由（文本/双栏重排/OCR）；DOCX 直接文本提取
       const draft =
-        parsed.scanned && this.deps.ocrAdapter !== undefined ? await this.ocrPdfDraft(entry) : parsed
+        extname(entry.filePath).toLowerCase() === '.pdf'
+          ? await this.routePdfPages(entry)
+          : await parseUploadFile(entry.filePath, { maxPdfPages: MAX_PDF_PAGES })
       if (entry.cancelled) return this.finishCancelled(entry)
       this.emit('progress', token, 'map')
       const localResume = draftToResume(draft)
@@ -374,25 +375,67 @@ export class ResumeImportService {
   }
 
   /**
-   * #81：扫描型 PDF → 逐页 OCR（进度 ocr 第 N/M 页；可取消；结果合并为带页码标记的草稿）。
-   * OCR 全部为空 → 明确错误（不建空草稿）；单页失败/引擎缺失 → 错误透传（UI 给重试/换文件/手动新建）。
+   * #82 逐页智能路由：每页提取文本 + 坐标 → analyzePageQuality →
+   * - 硬异常或软分 ≥ 40：双栏优先坐标重排（不可靠再 OCR）；其余直接 OCR；
+   * - 15–39：保留文本并标记 pending；<15：正常文本；
+   * - OCR 后复检（空结果失败、仍异常标记 low-confidence）；
+   * - 合并保持原页序与跨页上下文；parsePath = 全部文本 text / 全 OCR ocr / 混合 mixed。
    */
-  private async ocrPdfDraft(entry: DraftEntry): Promise<ResumeDraft> {
+  private async routePdfPages(entry: DraftEntry): Promise<ResumeDraft> {
+    const pages = await extractPdfPages(entry.filePath, MAX_PDF_PAGES) // 加密/损坏/超页数 → 明确错误
     const adapter = this.deps.ocrAdapter
-    if (adapter === undefined) throw new Error('OCR adapter 未注入')
-    const { numPages } = await adapter.open(entry.filePath)
+    if (adapter !== undefined) await adapter.open(entry.filePath)
+    const routed: Array<{ pageNo: number; text: string; source: 'text' | 'ocr'; risk?: string }> = []
     try {
-      const pageTexts: string[] = []
-      for (let pageNo = 1; pageNo <= numPages; pageNo++) {
+      for (const page of pages) {
         if (entry.cancelled) throw new ImportCancelledError()
-        this.deps.emit({ type: 'progress', token: entry.token, phase: 'ocr', detail: `第 ${pageNo}/${numPages} 页` })
-        const text = await adapter.ocrPage(entry.filePath, pageNo, () => entry.cancelled)
-        if (entry.cancelled) throw new ImportCancelledError()
-        pageTexts.push(text)
+        const normalized = normalizeExtractedText(page.text)
+        // 无文本层页按「有视觉内容」处理（扫描/照片页），有文本页不臆断视觉失配
+        const hasVisual = normalized.trim() === ''
+        const quality = analyzePageQuality({ text: normalized, hasVisualContent: hasVisual, items: page.items })
+
+        // 双栏页优先坐标重排（#82：不能可靠恢复时才 OCR）
+        const hasTwoColumn = quality.soft.some((s) => s.type === 'two-column-order')
+        let reflowedOk = false
+        if (hasTwoColumn && page.items.length >= 8) {
+          const reflowed = normalizeExtractedText(reflowTwoColumn(page.items))
+          const recheck = analyzePageQuality({ text: reflowed, hasVisualContent: false })
+          reflowedOk = recheck.hard.length === 0 && recheck.softScore < SOFT_OCR_THRESHOLD
+          if (reflowedOk) {
+            routed.push({ pageNo: page.pageNo, text: reflowed, source: 'text', risk: 'reflowed' })
+            continue
+          }
+        }
+
+        if (quality.hard.length > 0 || quality.softScore >= SOFT_OCR_THRESHOLD) {
+          if (adapter === undefined) {
+            // 无 OCR adapter：硬异常页保留文本并标记需要 OCR（不建空草稿）
+            routed.push({ pageNo: page.pageNo, text: normalized, source: 'text', risk: 'ocr-needed' })
+            continue
+          }
+          this.deps.emit({ type: 'progress', token: entry.token, phase: 'ocr', detail: `第 ${page.pageNo}/${pages.length} 页` })
+          const ocrText = normalizeExtractedText(await adapter.ocrPage(entry.filePath, page.pageNo, () => entry.cancelled))
+          if (entry.cancelled) throw new ImportCancelledError()
+          if (ocrText === '') {
+            throw new Error(`OCR 第 ${page.pageNo} 页结果为空——请确认 PDF 清晰、方向正常，或换用清晰文件重试`)
+          }
+          // OCR 后复检：仍异常 → 低置信度标记
+          const after = analyzePageQuality({ text: ocrText, hasVisualContent: false })
+          routed.push({
+            pageNo: page.pageNo,
+            text: ocrText,
+            source: 'ocr',
+            risk: after.hard.length > 0 || after.softScore >= SOFT_OCR_THRESHOLD ? 'low-confidence' : undefined
+          })
+        } else if (quality.decision === 'pending') {
+          routed.push({ pageNo: page.pageNo, text: normalized, source: 'text', risk: 'pending' })
+        } else {
+          routed.push({ pageNo: page.pageNo, text: normalized, source: 'text' })
+        }
       }
-      return buildOcrDraft(entry.filePath, pageTexts)
+      return buildRoutedDraft(entry.filePath, routed)
     } finally {
-      void adapter.dispose()
+      if (adapter !== undefined) void adapter.dispose()
     }
   }
 
@@ -475,24 +518,29 @@ export function isTransientAgentError(err: unknown): boolean {
 }
 
 /**
- * OCR 逐页文本 → 草稿（#81）：带页码标记（Agent 理解跨页上下文 + 核对展示），parsePath=ocr；
- * 全部页 OCR 为空 → 抛错（明确原因，UI 提供重试/换文件/手动新建，不建空草稿）。
+ * 逐页路由结果 → 草稿（#82）：带页码标记（Agent 理解跨页上下文 + 核对展示）、
+ * 逐页来源与风险（pageRisks）、parsePath（全文本 text / 全 OCR ocr / 混合 mixed）。
  */
-export function buildOcrDraft(filePath: string, pageTexts: string[]): ResumeDraft {
-  const trimmed = pageTexts.map((t) => t.trim())
-  const hasAnyText = trimmed.some((t) => t !== '')
-  if (!hasAnyText) {
-    throw new Error('OCR 识别结果为空——请确认 PDF 清晰、方向正常，或换用清晰文件重试')
-  }
-  const ruleText = trimmed.filter((t) => t !== '').join('\n')
+export function buildRoutedDraft(
+  filePath: string,
+  routed: Array<{ pageNo: number; text: string; source: 'text' | 'ocr'; risk?: string }>
+): ResumeDraft {
+  const ruleText = routed
+    .filter((r) => r.text !== '')
+    .map((r) => r.text)
+    .join('\n')
   const draft = buildDraft(basename(filePath), ruleText)
-  const markedText = trimmed.map((t, i) => `===== 第 ${i + 1} 页 =====\n${t}`).join('\n')
+  const markedText = routed.map((r) => `===== 第 ${r.pageNo} 页 =====\n${r.text}`).join('\n')
+  const hasOcr = routed.some((r) => r.source === 'ocr')
+  const allOcr = routed.every((r) => r.source === 'ocr')
   return {
     ...draft,
     text: markedText,
-    pages: trimmed.map((text, i) => ({ pageNo: i + 1, text })),
-    parsePath: 'ocr',
-    scanned: false
+    pages: routed.map((r) => ({ pageNo: r.pageNo, text: r.text })),
+    pageRisks: routed.map((r) => ({ pageNo: r.pageNo, source: r.source, risk: r.risk })),
+    parsePath: allOcr ? 'ocr' : hasOcr ? 'mixed' : 'text',
+    // 全文为空（如无 adapter 的全扫描页）→ 保持 scanned（UI 走「无法提取文本」路径，不建空草稿）
+    scanned: ruleText === ''
   }
 }
 

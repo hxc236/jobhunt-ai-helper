@@ -78,6 +78,13 @@ const FIELD_LABEL: Record<string, string> = {
 const FIELD_STATUS_LABEL: Record<string, string> = {
   text: '文本提取', ocr: 'OCR 提取', agent: 'Agent 映射', suspected: '疑似修正', missing: '缺失', unmapped: '未映射'
 }
+/** 逐页路由风险文案（#82）。 */
+const PAGE_RISK_LABEL: Record<string, string> = {
+  pending: '待确认',
+  'low-confidence': '低置信度（请重点核对）',
+  reflowed: '双栏已按坐标重排',
+  'ocr-needed': '无文本层（需要 OCR）'
+}
 
 /** 核对面板：某字段的解析值预览（教育/技能为拼接展示）。 */
 function fieldPreview(key: string): string {
@@ -913,6 +920,14 @@ onMounted(() => {
                   以下必填项未解析到，请在表单中补齐后才能保存：
                   {{ importDraft.draft.missingFields.map((m) => FIELD_LABEL[m] ?? m).join('、') }}
                 </p>
+              </template>
+              <template v-if="(importDraft.draft.pageRisks ?? []).length > 0">
+                <h4>逐页解析（#82 路由）</h4>
+                <ul class="audit-unmapped">
+                  <li v-for="(r, i) in importDraft.draft.pageRisks ?? []" :key="i">
+                    第 {{ r.pageNo }} 页：{{ r.source === 'ocr' ? 'OCR' : '文本提取' }}<template v-if="r.risk !== undefined"> · {{ PAGE_RISK_LABEL[r.risk] ?? r.risk }}</template>
+                  </li>
+                </ul>
               </template>
               <template v-if="importDraft.draft.unmappedText.length > 0">
                 <h4>未映射内容</h4>

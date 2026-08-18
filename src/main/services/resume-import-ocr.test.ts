@@ -149,7 +149,7 @@ describe('ResumeImportService 扫描型 PDF OCR（#81）', () => {
 
     const err = h.events.find((e) => e.type === 'error' && e.token === token)
     expect(err).toBeDefined()
-    expect((err as { message: string }).message).toContain('OCR 识别结果为空')
+    expect((err as { message: string }).message).toContain('结果为空')
     expect(h.events.some((e) => e.type === 'done' && e.token === token)).toBe(false)
   })
 

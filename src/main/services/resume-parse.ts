@@ -67,7 +67,7 @@ async function extractDocxText(filePath: string): Promise<string> {
  * pdf → 逐页文本（pdfjs getTextContent，仅文本层）：保留页码与字符坐标，
  * 跨页内容按原顺序返回；加密/损坏/超页数 → 明确的 ResumeParseError。
  */
-async function extractPdfPages(filePath: string, maxPages?: number): Promise<PdfPageText[]> {
+export async function extractPdfPages(filePath: string, maxPages?: number): Promise<PdfPageText[]> {
   try {
     const data = new Uint8Array(await readFile(filePath))
     const loadingTask = getDocument({ data })
