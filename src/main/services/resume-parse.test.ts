@@ -62,6 +62,11 @@ ${lines.map((line) => `    <w:p><w:r><w:t xml:space="preserve">${line}</w:t></w:
  * pdfjs 经嵌入字体的 ToUnicode 正常提取。扫描件 = 无文本操作的空白页（提取为空 → 降级标记）。
  */
 function buildPdf(textLines: string[]): Promise<Buffer> {
+  return buildMultiPagePdf([textLines])
+}
+
+/** 多页 PDF：每组文本占一页（#78 跨页/页数上限测试用）。 */
+function buildMultiPagePdf(pageGroups: string[][]): Promise<Buffer> {
   const cjkFont = 'C:/Windows/Fonts/simhei.ttf'
   if (!existsSync(cjkFont)) {
     throw new Error(`fixture 需要中文字体：${cjkFont}（Windows 自带；测试环境要求）`)
@@ -73,9 +78,12 @@ function buildPdf(textLines: string[]): Promise<Buffer> {
     doc.on('end', () => resolve(Buffer.concat(chunks)))
     doc.on('error', reject)
     // 行距 60pt：触发 pdfjs 行分隔判定（hasEOL），文本按行提取（行距过小会合并为单行）
-    for (let i = 0; i < textLines.length; i++) {
-      doc.font(cjkFont).fontSize(12).text(textLines[i], 72, 720 - i * 60)
-    }
+    pageGroups.forEach((textLines, pageIndex) => {
+      if (pageIndex > 0) doc.addPage()
+      for (let i = 0; i < textLines.length; i++) {
+        doc.font(cjkFont).fontSize(12).text(textLines[i], 72, 720 - i * 60)
+      }
+    })
     doc.end()
   })
 }
@@ -190,6 +198,83 @@ describe('parseUploadFile 简历上传解析（F-14/#26）', () => {
     expect(draft.unmappedText).toContain('校园经历：校学生会干事，组织校园技术分享会')
     // 不自动把证书行塞进技能/荣誉
     expect(draft.fields.skills).not.toContain('CET-6')
+  })
+
+  it('#78：文本型 PDF 逐页提取——保留页码标记与逐页文本，跨页内容按原顺序合并', async () => {
+    const file = tempFile(
+      'multi.pdf',
+      await buildMultiPagePdf([
+        ['张伟', '电话：138-0000-1234', '第一页项目：校园二手交易平台'],
+        ['第二页内容', '北京理工大学 本科 计算机科学与技术 2022-09 ~ 2026-06']
+      ])
+    )
+    const draft = await parseUploadFile(file)
+
+    // 页码标记 + 原页序合并
+    expect(draft.text).toContain('===== 第 1 页 =====')
+    expect(draft.text).toContain('===== 第 2 页 =====')
+    const page1 = draft.text.indexOf('第一页项目')
+    const page2 = draft.text.indexOf('第二页内容')
+    expect(page1).toBeGreaterThan(-1)
+    expect(page2).toBeGreaterThan(page1) // 跨页内容按原顺序
+    // 逐页文本结构
+    expect(draft.pages).toHaveLength(2)
+    expect(draft.pages?.[0]?.pageNo).toBe(1)
+    expect(draft.pages?.[1]?.text).toContain('第二页内容')
+    // 本地规则解析用无标记文本：姓名仍能从首行提取
+    expect(draft.fields.name).toBe('张伟')
+  })
+
+  it('#78：扫描型 PDF（无文本层）→ scanned 标记且不建空草稿', async () => {
+    const file = tempFile('scan.pdf', await buildPdf([]))
+    const draft = await parseUploadFile(file)
+    expect(draft.scanned).toBe(true)
+    expect(draft.text).toBe('')
+    expect(draft.missingFields).toEqual(['name', 'phone', 'email', 'education'])
+  })
+
+  it('#78：加密 PDF → ResumeParseError(encrypted)；损坏 PDF → read-failed', async () => {
+    const encrypted = tempFile(
+      'locked.pdf',
+      Buffer.from(
+        '%PDF-1.7\n1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n2 0 obj << /Type /Pages /Kids [] /Count 0 >> endobj\n3 0 obj << /Type /Encrypt /Filter /Standard /V 2 /R 3 /Length 40 /O (aaaaaaaaaaaaaaaa) /U (bbbbbbbbbbbbbbbb) /P -44 >> endobj\ntrailer << /Size 4 /Root 1 0 R /Encrypt 3 0 R >>\n%%EOF'
+      )
+    )
+    await expect(parseUploadFile(encrypted)).rejects.toThrowError(/密码保护/)
+    await expect(parseUploadFile(encrypted)).rejects.toThrowError(ResumeParseError)
+    try {
+      await parseUploadFile(encrypted)
+      expect.unreachable('应抛 encrypted')
+    } catch (err) {
+      expect((err as ResumeParseError).code).toBe('encrypted')
+    }
+
+    const broken = tempFile('broken.pdf', Buffer.from('%PDF-1.7\ngarbage not a pdf'))
+    await expect(parseUploadFile(broken)).rejects.toThrowError(ResumeParseError)
+  })
+
+  it('#78：超过 maxPdfPages 上限 → ResumeParseError(too-many-pages)', async () => {
+    const lines: string[][] = []
+    for (let i = 0; i < 11; i++) lines.push([`第 ${i + 1} 页内容`])
+    const file = tempFile('many.pdf', await buildMultiPagePdf(lines))
+    await expect(parseUploadFile(file, { maxPdfPages: 10 })).rejects.toThrowError(/超过 10 页/)
+    try {
+      await parseUploadFile(file, { maxPdfPages: 10 })
+      expect.unreachable('应抛 too-many-pages')
+    } catch (err) {
+      expect((err as ResumeParseError).code).toBe('too-many-pages')
+    }
+    // 不传上限 → 正常解析
+    const ok = await parseUploadFile(file)
+    expect(ok.pages).toHaveLength(11)
+  })
+
+  it('#78：PDF 字符坐标随逐页提取保留（双栏重排依据）', async () => {
+    const file = tempFile('coord.pdf', await buildPdf(['左栏文字：第一行较长的测试内容', '右栏文字：第二行较长的测试内容']))
+    const draft = await parseUploadFile(file)
+    // pages 携带页码与逐页文本；字符坐标保留在底层提取（resume-parse 内部，#82 校验）
+    expect(draft.pages?.[0]?.text).toContain('左栏文字')
+    expect(draft.pages?.[0]?.text).toContain('右栏文字')
   })
 
   it('#76：本地规则不静默猜改事实——姓名不在首行不猜、日期无标签不提取、学校无大学/学院词不提取', () => {

@@ -25,6 +25,9 @@ import { assertValidResume, ResumeValidationError } from './resume-schema'
 /** 单文件上限：20 MB（规格 #73 Upload boundaries）。 */
 export const MAX_IMPORT_BYTES = 20 * 1024 * 1024
 
+/** PDF 页数上限（规格 #73 Upload boundaries）。 */
+export const MAX_PDF_PAGES = 10
+
 /** 导入阶段（UI 进度展示；后续 ticket 扩展 OCR 第 N/M 页等阶段）。 */
 export type ImportPhase = 'read' | 'parse' | 'map' | 'agent'
 
@@ -127,8 +130,8 @@ export class ResumeImportService {
    */
   start(filePath: string): string {
     const ext = extname(filePath).toLowerCase()
-    if (ext !== '.docx') {
-      throw new ImportFileError('unsupported', `不支持的文件类型：${ext === '' ? '无扩展名' : ext}（当前仅支持 .docx）`)
+    if (ext !== '.docx' && ext !== '.pdf') {
+      throw new ImportFileError('unsupported', `不支持的文件类型：${ext === '' ? '无扩展名' : ext}（支持 .docx / .pdf）`)
     }
     let size: number
     try {
@@ -173,7 +176,7 @@ export class ResumeImportService {
     if (entry.draft === undefined) throw new Error('导入尚未完成，无法确认')
     const provenance: ResumeImportProvenance = {
       fileName: basename(entry.filePath),
-      fileType: 'docx',
+      fileType: extname(entry.filePath).toLowerCase() === '.pdf' ? 'pdf' : 'docx',
       parsePath: 'text',
       importedAt: new Date().toISOString()
     }
@@ -207,7 +210,8 @@ export class ResumeImportService {
       this.emit('progress', token, 'read')
       if (entry.cancelled) return this.finishCancelled(entry)
       this.emit('progress', token, 'parse')
-      const draft = await parseUploadFile(entry.filePath)
+      // #78：PDF 逐页提取（页码/坐标/来源），页数上限由导入边界控制（20MB 已同步校验）
+      const draft = await parseUploadFile(entry.filePath, { maxPdfPages: MAX_PDF_PAGES })
       if (entry.cancelled) return this.finishCancelled(entry)
       this.emit('progress', token, 'map')
       const localResume = draftToResume(draft)

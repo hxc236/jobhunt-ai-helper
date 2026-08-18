@@ -190,6 +190,17 @@ function subscribeImportEvents(): () => void {
     window.api.on(IpcEvent.ResumesImportDone, (payload) => {
       const state = importState.value
       if (state === null || state.token !== payload.token) return
+      if (payload.draft.scanned) {
+        // #78：扫描型 PDF（无文本层）→ 不建空草稿，引导 OCR 路径（#81 提供）或换文件/手动新建
+        importState.value = {
+          token: '',
+          phase: 'read',
+          error: '该 PDF 无法提取文本（扫描件/无文本层）。OCR 导入将在后续版本提供；可改用 DOCX 文件、重试或手动新建简历。',
+          pendingKind: null
+        }
+        void window.api.resumes.importDocx.dispose(payload.token)
+        return
+      }
       importState.value = null
       openImportEditor(payload.resume, {
         token: payload.token,
@@ -718,10 +729,10 @@ onMounted(() => {
           <div class="col-count">基准 {{ bases.length }} · 优化稿 {{ derived.length }}</div>
         </div>
         <div class="head-actions">
-          <button class="btn" type="button" @click="pickImportFile" title="导入已有 DOCX 简历">
+          <button class="btn" type="button" @click="pickImportFile" title="导入已有 DOCX/PDF 简历">
             <Icon name="upload" />上传解析
           </button>
-          <input ref="importFileInput" type="file" accept=".docx" hidden @change="onImportFilePicked" />
+          <input ref="importFileInput" type="file" accept=".docx,.pdf" hidden @change="onImportFilePicked" />
           <button class="btn primary" type="button" @click="openEditor()">
             <Icon name="plus" />新建
           </button>

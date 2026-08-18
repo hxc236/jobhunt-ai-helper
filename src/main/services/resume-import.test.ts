@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import JSZip from 'jszip'
+import PDFDocument from 'pdfkit'
 import { openDatabase } from '../db/database'
 import { ResumeService } from './resume'
 import { ImportFileError, ResumeImportService, type ImportEvent } from './resume-import'
@@ -14,6 +15,33 @@ import type { Resume } from '../../shared/types/resume'
  */
 
 const MAX = 20 * 1024 * 1024
+
+/** 单页 PDF fixture（pdfkit + 中文字体；与 resume-parse.test 同约定）。 */
+function makePdf(textLines: string[]): Promise<Buffer> {
+  return makePdfMulti([textLines])
+}
+
+/** 多页 PDF fixture：每组占一页。 */
+function makePdfMulti(pageGroups: string[][]): Promise<Buffer> {
+  const cjkFont = 'C:/Windows/Fonts/simhei.ttf'
+  if (!existsSync(cjkFont)) {
+    throw new Error(`fixture 需要中文字体：${cjkFont}（Windows 自带；测试环境要求）`)
+  }
+  return new Promise<Buffer>((resolve, reject) => {
+    const doc = new PDFDocument({ size: 'A4', margin: 72 })
+    const chunks: Buffer[] = []
+    doc.on('data', (chunk: Buffer) => chunks.push(chunk))
+    doc.on('end', () => resolve(Buffer.concat(chunks)))
+    doc.on('error', reject)
+    pageGroups.forEach((textLines, pageIndex) => {
+      if (pageIndex > 0) doc.addPage()
+      for (let i = 0; i < textLines.length; i++) {
+        doc.font(cjkFont).fontSize(12).text(textLines[i], 72, 720 - i * 60)
+      }
+    })
+    doc.end()
+  })
+}
 
 /** 生成含给定文本的最小合法 DOCX。 */
 async function makeDocx(text: string): Promise<Buffer> {
@@ -78,10 +106,10 @@ async function settle(svc: ResumeImportService, token: string, timeoutMs = 5000)
 describe('ResumeImportService（#75 DOCX 本地导入）', () => {
   it('start 同步拒绝不支持的类型与超 20 MB 文件', () => {
     const h = makeHarness()
-    const pdf = writeFixture(h.dir, 'a.pdf', Buffer.from('%PDF-1.4'))
-    expect(() => h.svc.start(pdf)).toThrowError(ImportFileError)
+    const txt = writeFixture(h.dir, 'a.txt', Buffer.from('hello'))
+    expect(() => h.svc.start(txt)).toThrowError(ImportFileError)
     try {
-      h.svc.start(pdf)
+      h.svc.start(txt)
     } catch (err) {
       expect((err as ImportFileError).code).toBe('unsupported')
     }
@@ -179,6 +207,72 @@ describe('ResumeImportService（#75 DOCX 本地导入）', () => {
     await settle(h.svc, token2)
     const done2 = h.events.find((e) => e.type === 'done' && e.token === token2)
     expect((done2 as { resume: Resume }).resume.meta.title).toBe('')
+  })
+
+  it('#78：文本型 PDF 导入闭环——逐页提取、确认后建基准简历且溯源 fileType=pdf', async () => {
+    const h = makeHarness()
+    const pdf = await makePdf(['张伟', '电话：138-0000-1234', '教育经历', '北京理工大学 本科 计算机科学与技术 2022-09 ~ 2026-06'])
+    const file = writeFixture(h.dir, 'resume-zhang.pdf', pdf)
+    const token = h.svc.start(file)
+    await settle(h.svc, token)
+
+    const done = h.events.find((e) => e.type === 'done' && e.token === token)
+    expect(done).toBeDefined()
+    if (done?.type !== 'done') return
+    expect(done.draft.pages).toBeDefined()
+    expect(done.draft.text).toContain('===== 第 1 页 =====')
+    expect(done.draft.fields.name).toBe('张伟')
+
+    const stored = h.svc.confirm(token, { meta: {}, basics: { name: '张伟' }, education: [{ school: '北京理工大学', degree: '本科', major: '计算机' }] })
+    expect(stored.meta.importedFrom?.fileType).toBe('pdf')
+    expect(stored.meta.importedFrom?.parsePath).toBe('text')
+  })
+
+  it('#78：PDF 超过 10 页 → error 事件（too-many-pages），不产生 done', async () => {
+    const h = makeHarness()
+    const groups: string[][] = []
+    for (let i = 0; i < 11; i++) groups.push([`第 ${i + 1} 页内容`])
+    const file = writeFixture(h.dir, 'many.pdf', await makePdfMulti(groups))
+    const token = h.svc.start(file)
+    await settle(h.svc, token)
+    const err = h.events.find((e) => e.type === 'error' && e.token === token)
+    expect(err).toBeDefined()
+    expect((err as { message: string }).message).toContain('超过 10 页')
+    expect(h.events.some((e) => e.type === 'done' && e.token === token)).toBe(false)
+  })
+
+  it('#78：扫描型 PDF → done 携带 scanned 草稿（UI 走「需要 OCR」路径，不建空草稿）', async () => {
+    const h = makeHarness()
+    const file = writeFixture(h.dir, 'scan.pdf', await makePdf([]))
+    const token = h.svc.start(file)
+    await settle(h.svc, token)
+    const done = h.events.find((e) => e.type === 'done' && e.token === token)
+    expect(done).toBeDefined()
+    if (done?.type !== 'done') return
+    expect(done.draft.scanned).toBe(true)
+    expect(done.draft.text).toBe('')
+  })
+
+  it('#78：加密/损坏 PDF → error 事件（明确原因），不产生 done', async () => {
+    const h = makeHarness()
+    const encrypted = writeFixture(
+      h.dir,
+      'locked.pdf',
+      Buffer.from(
+        '%PDF-1.7\n1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n2 0 obj << /Type /Pages /Kids [] /Count 0 >> endobj\n3 0 obj << /Type /Encrypt /Filter /Standard /V 2 /R 3 /Length 40 /O (aaaaaaaaaaaaaaaa) /U (bbbbbbbbbbbbbbbb) /P -44 >> endobj\ntrailer << /Size 4 /Root 1 0 R /Encrypt 3 0 R >>\n%%EOF'
+      )
+    )
+    const token = h.svc.start(encrypted)
+    await settle(h.svc, token)
+    const err = h.events.find((e) => e.type === 'error' && e.token === token)
+    expect((err as { message: string }).message).toContain('密码保护')
+
+    const broken = writeFixture(h.dir, 'broken.pdf', Buffer.from('%PDF-1.7\ngarbage'))
+    const token2 = h.svc.start(broken)
+    await settle(h.svc, token2)
+    const err2 = h.events.find((e) => e.type === 'error' && e.token === token2)
+    expect(err2).toBeDefined()
+    expect(h.events.some((e) => e.type === 'done' && e.token === token2)).toBe(false)
   })
 
   it('#76：正式保存后不保留提取全文/字段诊断/置信度（仅溯源）', async () => {

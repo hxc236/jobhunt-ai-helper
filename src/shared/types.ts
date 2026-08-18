@@ -398,6 +398,8 @@ export interface ResumeDraft {
   }
   /** 字段级来源状态（key：name/phone/email/birthday/gender/education/skills）。 */
   fieldStatus: Record<string, ResumeFieldStatus>
+  /** 逐页文本（仅 PDF：#78 页码来源标记 + 跨页合并；无标记纯文本）。 */
+  pages?: Array<{ pageNo: number; text: string }>
   /** 缺失关键字段（UI 提示用户补全）。 */
   missingFields: string[]
   /** Schema 无法表示、保留的未映射原文（证书/语言成绩/校园经历等；不静默丢弃或塞错字段）。 */

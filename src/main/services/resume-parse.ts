@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import mammoth from 'mammoth'
-import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
+import { getDocument, type PDFDocumentProxy } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import type { ResumeDraft, ResumeFieldStatus } from '../../shared/types'
 
 /**
@@ -16,7 +16,7 @@ import type { ResumeDraft, ResumeFieldStatus } from '../../shared/types'
 /** 解析错误：code 供渲染层区分「不支持的类型」与「读取/解析失败」。 */
 export class ResumeParseError extends Error {
   constructor(
-    readonly code: 'unsupported' | 'read-failed',
+    readonly code: 'unsupported' | 'read-failed' | 'encrypted' | 'too-many-pages',
     message: string
   ) {
     super(message)
@@ -24,21 +24,33 @@ export class ResumeParseError extends Error {
   }
 }
 
+/** 单页提取结果（#78：页码 + 行文本 + 字符坐标，坐标供 #82 双栏重排）。 */
+export interface PdfPageText {
+  pageNo: number
+  text: string
+  /** 字符级坐标（pdfjs transform 平移量，pt；#82 阅读顺序恢复依据）。 */
+  items: Array<{ str: string; x: number; y: number }>
+}
+
 /** 解析文件为结构化草稿（按扩展名分派；.docx mammoth / .pdf pdfjs）。 */
-export async function parseUploadFile(filePath: string): Promise<ResumeDraft> {
+export async function parseUploadFile(
+  filePath: string,
+  options: { maxPdfPages?: number } = {}
+): Promise<ResumeDraft> {
   const fileName = path.basename(filePath)
   const ext = path.extname(filePath).toLowerCase()
 
-  let text: string
+  let draft: ResumeDraft
   if (ext === '.docx') {
-    text = await extractDocxText(filePath)
+    const text = await extractDocxText(filePath)
+    draft = buildDraft(fileName, text)
   } else if (ext === '.pdf') {
-    text = await extractPdfText(filePath)
+    const pages = await extractPdfPages(filePath, options.maxPdfPages)
+    draft = buildPdfDraft(fileName, pages)
   } else {
     throw new ResumeParseError('unsupported', `不支持的文件类型：${ext === '' ? '无扩展名' : ext}（支持 .docx / .pdf）`)
   }
-
-  return buildDraft(fileName, text)
+  return draft
 }
 
 /** docx → 纯文本（mammoth.extractRawText）。 */
@@ -51,33 +63,77 @@ async function extractDocxText(filePath: string): Promise<string> {
   }
 }
 
-/** pdf → 纯文本（pdfjs 逐页 getTextContent；仅文本层，无需渲染）。 */
-async function extractPdfText(filePath: string): Promise<string> {
+/**
+ * pdf → 逐页文本（pdfjs getTextContent，仅文本层）：保留页码与字符坐标，
+ * 跨页内容按原顺序返回；加密/损坏/超页数 → 明确的 ResumeParseError。
+ */
+async function extractPdfPages(filePath: string, maxPages?: number): Promise<PdfPageText[]> {
   try {
     const data = new Uint8Array(await readFile(filePath))
     const loadingTask = getDocument({ data })
-    const doc = await loadingTask.promise
+    let doc: PDFDocumentProxy
     try {
-      const pages: string[] = []
+      doc = await loadingTask.promise
+    } catch (err) {
+      throw toPdfError(err)
+    }
+    try {
+      if (maxPages !== undefined && doc.numPages > maxPages) {
+        throw new ResumeParseError('too-many-pages', `PDF 共 ${doc.numPages} 页，超过 ${maxPages} 页上限，请拆分为多个文件后重试`)
+      }
+      const pages: PdfPageText[] = []
       for (let pageNo = 1; pageNo <= doc.numPages; pageNo++) {
         const page = await doc.getPage(pageNo)
         const content = await page.getTextContent()
         // 逐 item 拼接：hasEOL 换行（pdfjs 行分隔判定），否则空格——保留行结构
         let pageText = ''
+        const items: PdfPageText['items'] = []
         for (const item of content.items) {
-          pageText += 'str' in item ? item.str : ''
+          if (!('str' in item)) continue
+          pageText += item.str
           if ('hasEOL' in item && item.hasEOL) pageText += '\n'
           else pageText += ' '
+          if (Array.isArray(item.transform) && item.transform.length >= 6) {
+            items.push({ str: item.str, x: item.transform[4], y: item.transform[5] })
+          }
         }
-        pages.push(pageText.trim())
+        pages.push({ pageNo, text: pageText.trim(), items })
       }
-      return pages.join('\n')
+      return pages
     } finally {
       await loadingTask.destroy()
     }
   } catch (err) {
+    if (err instanceof ResumeParseError) throw err
     throw new ResumeParseError('read-failed', `pdf 解析失败：${errMessage(err)}`)
   }
+}
+
+/** pdfjs 加载失败归一：加密 / 损坏。 */
+function toPdfError(err: unknown): ResumeParseError {
+  const message = errMessage(err)
+  if ((err instanceof Error && err.name === 'PasswordException') || /password|密码/i.test(message)) {
+    return new ResumeParseError('encrypted', 'PDF 受密码保护，无法解析（不尝试绕过密码）')
+  }
+  return new ResumeParseError('read-failed', `pdf 解析失败：${message}`)
+}
+
+/**
+ * 逐页文本 → 草稿（#78）：draft.text 带页码标记（Agent 理解跨页上下文 + 核对展示），
+ * 本地规则解析用无标记文本；扫描件（无文本层）保持 text 为空并标记 scanned。
+ */
+export function buildPdfDraft(fileName: string, pages: PdfPageText[]): ResumeDraft {
+  const ruleText = pages
+    .map((p) => p.text)
+    .join('\n')
+    .trim()
+  const draft = buildDraft(fileName, ruleText)
+  if (draft.scanned) {
+    // 无可提取文本 → 保持空文本（UI 走「需要 OCR」降级路径，不建空草稿）
+    return { ...draft, text: '' }
+  }
+  const markedText = pages.map((p) => `===== 第 ${p.pageNo} 页 =====\n${p.text}`).join('\n')
+  return { ...draft, text: markedText, pages: pages.map(({ pageNo, text }) => ({ pageNo, text })) }
 }
 
 /** 文本 → 草稿（规则提取 + 字段级来源状态；扫描件降级）。 */
