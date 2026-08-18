@@ -68,6 +68,7 @@ export const IpcChannel = {
   ResumesImportCancel: 'resumes:import-cancel',
   ResumesImportConfirm: 'resumes:import-confirm',
   ResumesImportDispose: 'resumes:import-dispose',
+  ResumesImportAgentDecide: 'resumes:import-agent-decide',
   ResumesRenderHtml: 'resumes:render-html',
   ResumesRenderFromResume: 'resumes:render-from-resume',
   ResumesImportPhoto: 'resumes:import-photo',
@@ -201,6 +202,11 @@ export interface IpcProtocol {
   [IpcChannel.ResumesImportCancel]: { request: { token: string }; response: void }
   [IpcChannel.ResumesImportConfirm]: { request: { token: string; resume: Resume }; response: StoredResume }
   [IpcChannel.ResumesImportDispose]: { request: { token: string }; response: void }
+  // #77：答复 Agent 决策（consent: agree/decline；timeout: continue/local）
+  [IpcChannel.ResumesImportAgentDecide]: {
+    request: { token: string; kind: 'consent' | 'timeout'; choice: 'agree' | 'decline' | 'continue' | 'local' }
+    response: void
+  }
   // #74：简历 PDF/DOCX 双格式导出 —— 按已保存 id 导出（编辑器内导出先保存/校验）；
   // export 经保存对话框写盘（取消 → null）；PDF 走 printToPDF，DOCX 走 WordprocessingML 生成。
   [IpcChannel.ResumesRenderHtml]: { request: { id: string }; response: string }
@@ -302,7 +308,8 @@ export const IpcEvent = {
   ResumesImportProgress: 'resumes:import-progress', // #75：导入阶段进度
   ResumesImportDone: 'resumes:import-done', // #75：导入完成（草稿 + 保底 Resume）
   ResumesImportError: 'resumes:import-error', // #75：导入失败（明确错误）
-  ResumesImportCancelled: 'resumes:import-cancelled' // #75：取消（UI 静默关闭）
+  ResumesImportCancelled: 'resumes:import-cancelled', // #75：取消（UI 静默关闭）
+  ResumesImportAgentPending: 'resumes:import-agent-pending' // #77：Agent 决策（隐私同意/超时）
 } as const
 
 /** agent 会话状态（agent:status 载荷）。 */
@@ -319,9 +326,16 @@ export interface IpcEventMap {
   [IpcEvent.BossPageExtracted]: BossPageExtractResult
   // #75：简历导入异步流程事件（token 关联 start 返回；cancelled 为静默取消）
   [IpcEvent.ResumesImportProgress]: { token: string; phase: string }
-  [IpcEvent.ResumesImportDone]: { token: string; draft: ResumeDraft; resume: Resume }
+  [IpcEvent.ResumesImportDone]: {
+    token: string
+    draft: ResumeDraft
+    resume: Resume
+    agent: { used: boolean; failedReason?: string }
+  }
   [IpcEvent.ResumesImportError]: { token: string; code: string; message: string }
   [IpcEvent.ResumesImportCancelled]: { token: string }
+  // #77：Agent 决策请求——consent（首次隐私告知）/ timeout（等待超 30s）
+  [IpcEvent.ResumesImportAgentPending]: { token: string; kind: 'consent' | 'timeout' }
 }
 
 export type IpcEventName = keyof IpcEventMap
@@ -470,6 +484,12 @@ export interface ResumeApi {
     cancel: (token: string) => Promise<void>
     confirm: (token: string, resume: Resume) => Promise<StoredResume>
     dispose: (token: string) => Promise<void>
+    /** #77：答复导入中的 Agent 决策（隐私同意 / 超时继续等待或本地草稿）。 */
+    decide: (
+      token: string,
+      kind: 'consent' | 'timeout',
+      choice: 'agree' | 'decline' | 'continue' | 'local'
+    ) => Promise<void>
   }
 }
 

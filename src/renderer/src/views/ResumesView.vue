@@ -49,10 +49,26 @@ interface ImportState {
   token: string
   phase: string
   error: string | null
+  /** #77：待用户决策的 Agent 环节（隐私同意 / 超时）。 */
+  pendingKind: 'consent' | 'timeout' | null
 }
 const importState = ref<ImportState | null>(null)
 /** 编辑器导入草稿模式：非 null 时保存 = 确认创建基准简历；携带完整草稿供核对面板展示。 */
-const importDraft = ref<{ token: string; fileName: string; draft: ResumeDraft } | null>(null)
+const importDraft = ref<{
+  token: string
+  fileName: string
+  draft: ResumeDraft
+  agent: { used: boolean; failedReason?: string }
+} | null>(null)
+/** Agent 未使用原因文案（#77 降级展示）。 */
+const AGENT_FAILED_LABEL: Record<string, string> = {
+  'agent-not-configured': '未配置模型（可到设置中配置）',
+  'agent-disabled': '设置中已关闭 Agent 导入增强',
+  'consent-declined': '未同意发送简历内容',
+  'user-local': '已选择使用本地草稿',
+  'agent-failed': 'Agent 调用失败，已用本地草稿',
+  'invalid-output': 'Agent 输出连续非法，已用本地草稿'
+}
 /** 字段显示名与来源状态文案（#76：替代单一整体置信度）。 */
 const FIELD_LABEL: Record<string, string> = {
   name: '姓名', phone: '电话', email: '邮箱', birthday: '生日', gender: '性别', education: '教育经历', skills: '技能'
@@ -81,7 +97,8 @@ function fieldPreview(key: string): string {
 const IMPORT_PHASE_LABEL: Record<string, string> = {
   read: '读取文件',
   parse: '解析文本',
-  map: '生成草稿'
+  map: '生成草稿',
+  agent: 'Agent 结构化'
 }
 /** 离开导入流程前的取消确认弹窗。 */
 const importCancelConfirm = ref(false)
@@ -104,10 +121,10 @@ async function onImportFilePicked(event: Event): Promise<void> {
   }
   try {
     const { token } = await window.api.resumes.importDocx.start(filePath)
-    importState.value = { token, phase: 'read', error: null }
+    importState.value = { token, phase: 'read', error: null, pendingKind: null }
   } catch (err) {
     // start 同步校验失败（类型/大小/不可读）：弹窗展示错误与替代入口
-    importState.value = { token: '', phase: 'read', error: String(err) }
+    importState.value = { token: '', phase: 'read', error: String(err), pendingKind: null }
   }
 }
 
@@ -136,8 +153,19 @@ async function abandonImportDraft(): Promise<void> {
   importDraft.value = null
 }
 
+/** #77：答复 Agent 决策（同意/拒绝、继续等待/本地草稿）。 */
+async function decideAgent(kind: 'consent' | 'timeout', choice: 'agree' | 'decline' | 'continue' | 'local'): Promise<void> {
+  const state = importState.value
+  if (state === null || state.token === '') return
+  state.pendingKind = null
+  await window.api.resumes.importDocx.decide(state.token, kind, choice)
+}
+
 /** 导入完成 → 打开完整编辑器（草稿模式：确认后创建新基准简历）。 */
-function openImportEditor(mapped: Resume, draft: { token: string; fileName: string; draft: ResumeDraft }): void {
+function openImportEditor(
+  mapped: Resume,
+  draft: { token: string; fileName: string; draft: ResumeDraft; agent: { used: boolean; failedReason?: string } }
+): void {
   errorMessage.value = ''
   successMessage.value = ''
   issues.value = []
@@ -163,7 +191,17 @@ function subscribeImportEvents(): () => void {
       const state = importState.value
       if (state === null || state.token !== payload.token) return
       importState.value = null
-      openImportEditor(payload.resume, { token: payload.token, fileName: payload.draft.fileName, draft: payload.draft })
+      openImportEditor(payload.resume, {
+        token: payload.token,
+        fileName: payload.draft.fileName,
+        draft: payload.draft,
+        agent: payload.agent
+      })
+    }),
+    window.api.on(IpcEvent.ResumesImportAgentPending, (payload) => {
+      const state = importState.value
+      if (state === null || state.token !== payload.token) return
+      state.pendingKind = payload.kind
     }),
     window.api.on(IpcEvent.ResumesImportError, (payload) => {
       const state = importState.value
@@ -835,6 +873,10 @@ onMounted(() => {
             <span>导入核对 · {{ importDraft.fileName }}</span>
             <span class="hint">下方为本地解析结果，请逐项核对后在表单中补齐</span>
           </div>
+          <p v-if="importDraft.agent.used" class="hint audit-agent-ok">已使用 Agent 自动结构化（字段标记「Agent 映射」）</p>
+          <p v-else-if="importDraft.agent.failedReason !== undefined" class="hint audit-agent-warn">
+            Agent 未使用：{{ AGENT_FAILED_LABEL[importDraft.agent.failedReason] ?? importDraft.agent.failedReason }}（已用本地草稿，可人工补齐）
+          </p>
           <div class="audit-grid">
             <div class="audit-col">
               <h4>提取全文</h4>
@@ -1132,16 +1174,38 @@ onMounted(() => {
     </div>
   </Modal>
 
-  <!-- ===== 弹窗：简历导入（#75 DOCX）——阶段进度 / 错误与替代入口 ===== -->
+  <!-- ===== 弹窗：简历导入（#75 DOCX）——阶段进度 / Agent 决策 / 错误与替代入口 ===== -->
   <Modal :open="importState !== null" title="导入简历" @close="importCancelConfirm = true">
-    <template v-if="importState !== null && importState.error !== null">
+    <!-- Agent 隐私告知（#77 首次使用） -->
+    <template v-if="importState?.pendingKind === 'consent'">
+      <p class="hint">
+        为使解析结果更完整，简历文本将发送给您已配置的模型用于结构化整理。发送内容仅限文本（不含照片/文件本体），
+        不会用于其他用途。可在「设置 → Agent 导入增强」中随时关闭。
+      </p>
+    </template>
+    <!-- Agent 等待超时（#77：继续等待 / 本地草稿 / 取消） -->
+    <template v-else-if="importState?.pendingKind === 'timeout'">
+      <p class="hint">Agent 结构化已等待超过 30 秒，请选择：</p>
+    </template>
+    <!-- 错误与替代入口 -->
+    <template v-else-if="importState !== null && importState.error !== null">
       <p class="hint" style="color: #dc2626">{{ importState.error }}</p>
     </template>
+    <!-- 进度阶段 -->
     <template v-else-if="importState !== null">
       <p class="hint">{{ IMPORT_PHASE_LABEL[importState.phase] ?? importState.phase }}…（解析期间可继续使用其他功能）</p>
     </template>
     <template #foot>
-      <template v-if="importState?.error !== null">
+      <template v-if="importState?.pendingKind === 'consent'">
+        <button class="btn" type="button" @click="decideAgent('consent', 'decline')">不使用 Agent</button>
+        <button class="btn primary" type="button" @click="decideAgent('consent', 'agree')">同意并继续</button>
+      </template>
+      <template v-else-if="importState?.pendingKind === 'timeout'">
+        <button class="btn" type="button" @click="importCancelConfirm = true">取消导入</button>
+        <button class="btn" type="button" @click="decideAgent('timeout', 'local')">使用本地草稿</button>
+        <button class="btn primary" type="button" @click="decideAgent('timeout', 'continue')">继续等待</button>
+      </template>
+      <template v-else-if="importState?.error !== null">
         <button class="btn" type="button" @click="closeImportError">关闭</button>
         <button class="btn" type="button" @click="pickImportFile">重试 / 换文件</button>
         <button class="btn primary" type="button" @click="closeImportError; openEditor()">手动新建</button>
@@ -1602,6 +1666,16 @@ onMounted(() => {
   padding-left: 18px;
   font-size: 12.5px;
   line-height: 1.8;
+}
+
+.audit-agent-ok {
+  color: #047857;
+  margin: 0 0 8px;
+}
+
+.audit-agent-warn {
+  color: #b45309;
+  margin: 0 0 8px;
 }
 
 .json-textarea {

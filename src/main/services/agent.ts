@@ -19,7 +19,7 @@ export interface AgentSettingsStore {
 }
 
 /** agent 任务类型：决定会话策略（cwd / sessionManager / tools / 首条提示）。 */
-export type AgentTaskType = 'optimize' | 'interview' | 'learn' | 'company_type' | 'agent_channel'
+export type AgentTaskType = 'optimize' | 'interview' | 'learn' | 'company_type' | 'agent_channel' | 'resume_import'
 
 /** 归一化 agent 事件（SDK 事件面 → 业务/IPC 事件面）。 */
 export type AgentEvent =

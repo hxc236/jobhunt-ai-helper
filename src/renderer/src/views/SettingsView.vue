@@ -28,6 +28,23 @@ const apiKey = ref('')
 const saving = ref(false)
 const saveMessage = ref('')
 
+// #77：Agent 导入增强开关（设置中可关闭；缺省开启）
+const AGENT_IMPORT_ENABLED_KEY = 'agent.importEnabled'
+const agentImportEnabled = ref(true)
+
+async function loadAgentImportSetting(): Promise<void> {
+  try {
+    const value = await window.api.settings.get(AGENT_IMPORT_ENABLED_KEY)
+    agentImportEnabled.value = value !== false // 缺省开启
+  } catch {
+    agentImportEnabled.value = true
+  }
+}
+
+async function onAgentImportToggle(): Promise<void> {
+  await window.api.settings.set(AGENT_IMPORT_ENABLED_KEY, agentImportEnabled.value)
+}
+
 async function loadStatus(): Promise<void> {
   statusLoading.value = true
   try {
@@ -44,7 +61,10 @@ async function loadStatus(): Promise<void> {
   }
 }
 
-onMounted(() => void loadStatus())
+onMounted(() => {
+  void loadStatus()
+  void loadAgentImportSetting()
+})
 
 async function save(): Promise<void> {
   saveMessage.value = ''
@@ -121,6 +141,15 @@ async function save(): Promise<void> {
         </div>
       </div>
 
+      <!-- #77：Agent 导入增强（简历导入时自动结构化；可关闭 → 恒本地草稿） -->
+      <div class="card surface">
+        <div class="sec-head"><h2>Agent 导入增强</h2></div>
+        <label class="s-toggle">
+          <input type="checkbox" v-model="agentImportEnabled" @change="onAgentImportToggle" />
+          <span>导入简历时自动用已配置模型结构化（首次使用前会征得同意；关闭后仅用本地解析草稿）</span>
+        </label>
+      </div>
+
       <!-- 状态与降级说明 -->
       <div class="card surface">
         <div class="sec-head"><h2>当前状态</h2></div>
@@ -169,6 +198,20 @@ async function save(): Promise<void> {
   margin-top: 12px;
 }
 
+.s-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--fg);
+  cursor: pointer;
+}
+
+.s-toggle input {
+  margin-top: 3px;
+  accent-color: #2b5ca8;
+}
 .s-msg.ok {
   color: #059669;
 }

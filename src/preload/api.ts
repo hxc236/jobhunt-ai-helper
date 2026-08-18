@@ -51,7 +51,8 @@ export function createRendererApi(bridge: IpcBridge): Omit<RendererApi, 'getPath
         start: (filePath) => bridge.invoke(IpcChannel.ResumesImportStart, { filePath }),
         cancel: (token) => bridge.invoke(IpcChannel.ResumesImportCancel, { token }),
         confirm: (token, resume) => bridge.invoke(IpcChannel.ResumesImportConfirm, { token, resume }),
-        dispose: (token) => bridge.invoke(IpcChannel.ResumesImportDispose, { token })
+        dispose: (token) => bridge.invoke(IpcChannel.ResumesImportDispose, { token }),
+        decide: (token, kind, choice) => bridge.invoke(IpcChannel.ResumesImportAgentDecide, { token, kind, choice })
       },
       renderHtml: (id) => bridge.invoke(IpcChannel.ResumesRenderHtml, { id }),
       renderFromResume: (resume) => bridge.invoke(IpcChannel.ResumesRenderFromResume, { resume }),

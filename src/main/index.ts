@@ -174,22 +174,36 @@ app.whenReady().then(() => {
   const asr = new AsrService(
     new SherpaAsrProvider(join(app.getAppPath(), 'resources', 'sherpa-onnx'))
   )
-  // #75：简历导入（DOCX 本地导入闭环）——token 化异步流程，事件推送阶段/结果
+  // #75/#77：简历导入（DOCX 本地导入闭环 + Agent 自动结构化）——token 化异步流程，事件推送阶段/结果
   const resumeImport = new ResumeImportService({
     resumeService: resumes,
+    // #77：Agent 结构化（未配置/关闭/失败自动降级本地草稿）；settings 存开关与隐私同意
+    agent,
+    settings,
     emit: (event) => {
       switch (event.type) {
         case 'progress':
           pushEvent(IpcEvent.ResumesImportProgress, { token: event.token, phase: event.phase })
           break
         case 'done':
-          pushEvent(IpcEvent.ResumesImportDone, { token: event.token, draft: event.draft, resume: event.resume })
+          pushEvent(IpcEvent.ResumesImportDone, {
+            token: event.token,
+            draft: event.draft,
+            resume: event.resume,
+            agent: { used: event.agent.used, failedReason: event.agent.failedReason }
+          })
           break
         case 'error':
           pushEvent(IpcEvent.ResumesImportError, { token: event.token, code: event.code, message: event.message })
           break
         case 'cancelled':
           pushEvent(IpcEvent.ResumesImportCancelled, { token: event.token })
+          break
+        case 'agent_pending':
+          pushEvent(IpcEvent.ResumesImportAgentPending, { token: event.token, kind: event.kind })
+          break
+        case 'agent_pending':
+          pushEvent(IpcEvent.ResumesImportAgentPending, { token: event.token, kind: event.kind })
           break
       }
     }

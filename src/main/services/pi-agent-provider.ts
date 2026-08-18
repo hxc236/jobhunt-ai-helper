@@ -55,7 +55,9 @@ const TASK_STRATEGIES: Record<AgentTaskType, TaskStrategy> = {
   // 企业性质推断（issue #54）：inMemory 单次会话，无工具（联网搜索由服务层编排，不扩 agent 工具面）
   company_type: { continueRecent: false },
   // Agent 通道（issue #59）：决策循环单次会话，无工具（只输出动作 JSON，driver 执行）
-  agent_channel: { continueRecent: false }
+  agent_channel: { continueRecent: false },
+  // 简历导入（#77）：独立无工具内存态会话，只接收文本（不开放文件系统/工具）
+  resume_import: { continueRecent: false }
 }
 
 /** auth.json 里 api_key 凭据的最小形状（与 pi 的 Credential 兼容）。 */
