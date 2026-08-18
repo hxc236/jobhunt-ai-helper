@@ -2,14 +2,15 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import mammoth from 'mammoth'
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
-import type { ResumeDraft } from '../../shared/types'
+import type { ResumeDraft, ResumeFieldStatus } from '../../shared/types'
 
 /**
  * 简历上传解析（F-14/#26）：docx（mammoth）与 pdf（pdfjs-dist）→ 文本 →
  * 结构化草稿（规则提取 + 置信度 + 待确认标记）。
  * - 解析与抓取无关的纯服务：字段提取为规则函数（可测），mammoth/pdfjs 为唯一 IO；
  * - 扫描件（无可提取文本）→ scanned 降级标记（UI 提示手动录入，spec 降级策略）；
- * - 置信度 = 关键字段（姓名/电话/邮箱/教育）命中比例，缺失项列入 missingFields。
+ * - 字段级来源状态（#76）：有值→text，无值→missing；无单一整体置信度；
+ *   证书/语言成绩/校园经历等 Schema 外内容保留为 unmappedText（不静默丢失）。
  */
 
 /** 解析错误：code 供渲染层区分「不支持的类型」与「读取/解析失败」。 */
@@ -79,20 +80,65 @@ async function extractPdfText(filePath: string): Promise<string> {
   }
 }
 
-/** 文本 → 草稿（规则提取 + 置信度；扫描件降级）。 */
+/** 文本 → 草稿（规则提取 + 字段级来源状态；扫描件降级）。 */
 export function buildDraft(fileName: string, rawText: string): ResumeDraft {
   const text = rawText.replace(/\r\n?/g, '\n').trim()
+  const lines = text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '')
   const fields = parseResumeText(text)
   // 扫描件：pdf 无文本层（如拍照/扫描）→ 降级提示手动录入
   const scanned = text.length < 20
+  // 字段级来源状态（#76：无单一整体置信度）：有值 → 文本提取；无值 → 缺失
+  const fieldStatus: Record<string, ResumeFieldStatus> = {
+    name: fields.name === undefined ? 'missing' : 'text',
+    phone: fields.phone === undefined ? 'missing' : 'text',
+    email: fields.email === undefined ? 'missing' : 'text',
+    birthday: fields.birthday === undefined ? 'missing' : 'text',
+    gender: fields.gender === undefined ? 'missing' : 'text',
+    education: fields.education.length === 0 ? 'missing' : 'text',
+    skills: fields.skills.length === 0 ? 'missing' : 'text'
+  }
   const missingFields: string[] = []
   if (fields.name === undefined) missingFields.push('name')
   if (fields.phone === undefined) missingFields.push('phone')
   if (fields.email === undefined) missingFields.push('email')
   if (fields.education.length === 0) missingFields.push('education')
-  const confidence = scanned ? 0 : 1 - missingFields.length / 4
 
-  return { fileName, text, fields, confidence, missingFields, scanned }
+  return {
+    fileName,
+    text,
+    fields,
+    fieldStatus,
+    missingFields,
+    unmappedText: extractUnmappedLines(lines),
+    scanned
+  }
+}
+
+/**
+ * 未映射原文（#76）：证书/语言成绩/校园经历等 Schema 无法表示的条目原样保留，
+ * 供人工并入荣誉/能力/自我评价或舍弃；不静默丢弃、不自动塞入错误字段。
+ */
+export function extractUnmappedLines(lines: string[]): string[] {
+  const UNMAPPED_PATTERNS = [
+    /证书/,
+    /资格证/,
+    /CET/,
+    /四六级/,
+    /雅思/,
+    /托福/,
+    /普通话/,
+    /驾驶证/,
+    /校园经历/,
+    /学生工作/,
+    /社团/,
+    /学生会/,
+    /语言能力/,
+    /语言水平/
+  ]
+  return lines.filter((line) => UNMAPPED_PATTERNS.some((pattern) => pattern.test(line)))
 }
 
 /** 规则提取：姓名/电话/邮箱/性别/生日/教育/技能（确定性正则，弱启发优先保真）。 */

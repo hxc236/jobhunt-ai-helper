@@ -181,6 +181,20 @@ describe('ResumeImportService（#75 DOCX 本地导入）', () => {
     expect((done2 as { resume: Resume }).resume.meta.title).toBe('')
   })
 
+  it('#76：正式保存后不保留提取全文/字段诊断/置信度（仅溯源）', async () => {
+    const h = makeHarness()
+    const file = writeFixture(h.dir, 'e.docx', await makeDocx(SAMPLE_TEXT))
+    const token = h.svc.start(file)
+    await settle(h.svc, token)
+    const stored = h.svc.confirm(token, { meta: {}, basics: { name: '张伟' }, education: [{ school: '北京理工大学', degree: '本科', major: '计算机' }] })
+    const json = JSON.stringify(stored)
+    expect(json).not.toContain('fieldStatus')
+    expect(json).not.toContain('unmappedText')
+    expect(json).not.toContain('confidence')
+    expect(json).not.toContain('电话：138-0000-1234') // 无提取全文
+    expect(stored.meta.importedFrom?.fileName).toBe('e.docx') // 仅简要溯源
+  })
+
   it('源文件不被复制或长期保留（仅临时读取；确认后草稿释放）', async () => {
     const h = makeHarness()
     const file = writeFixture(h.dir, 's.docx', await makeDocx(SAMPLE_TEXT))

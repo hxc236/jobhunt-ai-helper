@@ -374,9 +374,12 @@ export interface TopicGenerateInput {
   techStack?: string[]
 }
 
+/** 字段级解析来源与风险状态（#76：替代单一整体置信度）。 */
+export type ResumeFieldStatus = 'text' | 'ocr' | 'agent' | 'suspected' | 'missing' | 'unmapped'
+
 /**
- * 上传解析草稿（F-14/#26：docx/pdf → 文本 → 结构化字段 + 置信度）。
- * 渲染层（#31 上传草稿确认 UI）据此展示待确认字段；扫描件走降级提示。
+ * 上传解析草稿（#76：字段级证据——提取全文 + 字段状态 + 未映射内容；无单一整体置信度）。
+ * 渲染层（导入确认 UI）据此展示待确认字段；扫描件走降级提示。
  */
 export interface ResumeDraft {
   /** 原始文件名。 */
@@ -393,10 +396,12 @@ export interface ResumeDraft {
     education: Array<{ school?: string; degree?: string; major?: string; period?: string }>
     skills: string[]
   }
-  /** 0-1：关键字段（姓名/电话/邮箱/教育）命中比例；扫描件恒 0。 */
-  confidence: number
+  /** 字段级来源状态（key：name/phone/email/birthday/gender/education/skills）。 */
+  fieldStatus: Record<string, ResumeFieldStatus>
   /** 缺失关键字段（UI 提示用户补全）。 */
   missingFields: string[]
+  /** Schema 无法表示、保留的未映射原文（证书/语言成绩/校园经历等；不静默丢弃或塞错字段）。 */
+  unmappedText: string[]
   /** 扫描件（无可提取文本）→ UI 降级提示手动录入。 */
   scanned: boolean
 }

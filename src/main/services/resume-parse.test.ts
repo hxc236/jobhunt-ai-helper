@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import JSZip from 'jszip'
 import PDFDocument from 'pdfkit'
-import { parseUploadFile, ResumeParseError } from './resume-parse'
+import { buildDraft, parseUploadFile, ResumeParseError } from './resume-parse'
 
 /** 简历样例文本（docx/pdf 共用内容）。 */
 const SAMPLE_TEXT = `张伟
@@ -113,8 +113,11 @@ describe('parseUploadFile 简历上传解析（F-14/#26）', () => {
     })
     expect(draft.fields.skills).toEqual(expect.arrayContaining(['Java', 'Python', 'TypeScript']))
     expect(draft.scanned).toBe(false)
-    expect(draft.confidence).toBe(1)
     expect(draft.missingFields).toEqual([])
+    // #76：字段级来源状态（替代单一整体置信度）——有值 → 文本提取
+    expect("confidence" in draft).toBe(false)
+    expect(draft.fieldStatus).toMatchObject({ name: 'text', phone: 'text', email: 'text', education: 'text' })
+    expect(draft.unmappedText).toEqual([])
   })
 
   it('样例 pdf 解析：文本提取 + 字段映射与 docx 一致', async () => {
@@ -144,17 +147,18 @@ describe('parseUploadFile 简历上传解析（F-14/#26）', () => {
     expect(draft.scanned).toBe(false)
   })
 
-  it('扫描件 pdf（无可提取文本）→ scanned=true、confidence=0、缺失字段提示（降级）', async () => {
+  it('扫描件 pdf（无可提取文本）→ scanned=true、全字段缺失提示（降级）', async () => {
     const file = tempFile('scan.pdf', await buildPdf([]))
     const draft = await parseUploadFile(file)
 
     expect(draft.scanned).toBe(true)
     expect(draft.text).toBe('')
-    expect(draft.confidence).toBe(0)
+    expect("confidence" in draft).toBe(false)
+    expect(draft.fieldStatus.name).toBe('missing')
     expect(draft.missingFields).toEqual(['name', 'phone', 'email', 'education'])
   })
 
-  it('字段缺失场景：confidence 按命中比例降级，missingFields 列出缺失项', async () => {
+  it('字段缺失场景：missingFields 列出缺失项，fieldStatus 标记 missing', async () => {
     const lines = ['李娜', '教育经历', '电子科技大学 硕士 软件工程 2022-09 ~ 2026-06']
     const file = tempFile('partial.docx', await buildDocx(lines))
     const draft = await parseUploadFile(file)
@@ -164,7 +168,47 @@ describe('parseUploadFile 简历上传解析（F-14/#26）', () => {
     expect(draft.fields.email).toBeUndefined()
     expect(draft.fields.education).toHaveLength(1)
     expect(draft.missingFields).toEqual(['phone', 'email'])
-    expect(draft.confidence).toBe(0.5) // 命中 2/4（姓名+教育）
+    expect(draft.fieldStatus).toMatchObject({ name: 'text', phone: 'missing', email: 'missing', education: 'text' })
+  })
+
+  it('#76：证书/语言成绩/校园经历等 Schema 外内容保留为未映射原文，不静默丢弃', async () => {
+    const lines = [
+      '王芳',
+      '教育经历',
+      '中山大学 本科 软件工程 2022-09 ~ 2026-06',
+      '技能',
+      'Java、Python',
+      '证书：大学英语六级（CET-6）583 分、普通话二级甲等',
+      '校园经历：校学生会干事，组织校园技术分享会',
+      '荣誉：国家励志奖学金'
+    ]
+    const file = tempFile('cert.docx', await buildDocx(lines))
+    const draft = await parseUploadFile(file)
+
+    // 未映射行原样保留（不丢、不塞入错误字段）
+    expect(draft.unmappedText).toContain('证书：大学英语六级（CET-6）583 分、普通话二级甲等')
+    expect(draft.unmappedText).toContain('校园经历：校学生会干事，组织校园技术分享会')
+    // 不自动把证书行塞进技能/荣誉
+    expect(draft.fields.skills).not.toContain('CET-6')
+  })
+
+  it('#76：本地规则不静默猜改事实——姓名不在首行不猜、日期无标签不提取、学校无大学/学院词不提取', () => {
+    const draft = buildDraft(
+      'resume.docx',
+      [
+        '后端开发实习生（2026）',
+        '2022-09 ~ 2026-06',
+        '某实验室 本科 计算机',
+        'Java、Python'
+      ].join('\n')
+    )
+    // 首行是职位名不是姓名 → 不猜
+    expect(draft.fields.name).toBeUndefined()
+    expect(draft.fieldStatus.name).toBe('missing')
+    // 裸日期无「出生日期/生日」标签 → 不提取为生日
+    expect(draft.fields.birthday).toBeUndefined()
+    // 无 大学/学院 词 → 不猜学校
+    expect(draft.fields.education[0]?.school).toBeUndefined()
   })
 
   it('不支持的文件类型 → ResumeParseError(unsupported)', async () => {

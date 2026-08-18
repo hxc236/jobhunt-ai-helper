@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import type { Resume, StoredResume } from '@shared/types/resume'
+import type { ResumeDraft } from '@shared/types'
 import { IpcEvent } from '@shared/protocol'
 import { defaultBaseTitle, emptyResumeForm, formToResume, issueSection, keepEmptyRows, resumeToForm, SKILL_CATEGORIES, type ResumeForm } from '../resume-form'
 import Modal from '../components/Modal.vue'
@@ -50,8 +51,32 @@ interface ImportState {
   error: string | null
 }
 const importState = ref<ImportState | null>(null)
-/** 编辑器导入草稿模式：非 null 时保存 = 确认创建基准简历。 */
-const importDraft = ref<{ token: string; fileName: string } | null>(null)
+/** 编辑器导入草稿模式：非 null 时保存 = 确认创建基准简历；携带完整草稿供核对面板展示。 */
+const importDraft = ref<{ token: string; fileName: string; draft: ResumeDraft } | null>(null)
+/** 字段显示名与来源状态文案（#76：替代单一整体置信度）。 */
+const FIELD_LABEL: Record<string, string> = {
+  name: '姓名', phone: '电话', email: '邮箱', birthday: '生日', gender: '性别', education: '教育经历', skills: '技能'
+}
+const FIELD_STATUS_LABEL: Record<string, string> = {
+  text: '文本提取', ocr: 'OCR 提取', agent: 'Agent 映射', suspected: '疑似修正', missing: '缺失', unmapped: '未映射'
+}
+
+/** 核对面板：某字段的解析值预览（教育/技能为拼接展示）。 */
+function fieldPreview(key: string): string {
+  const f = importDraft.value?.draft.fields
+  if (f === undefined) return ''
+  switch (key) {
+    case 'name': return f.name ?? ''
+    case 'phone': return f.phone ?? ''
+    case 'email': return f.email ?? ''
+    case 'birthday': return f.birthday ?? ''
+    case 'gender': return f.gender ?? ''
+    case 'education':
+      return f.education.map((e) => [e.school, e.degree, e.major].filter((v) => v !== undefined && v !== '').join(' ')).join('；')
+    case 'skills': return f.skills.join('、')
+    default: return ''
+  }
+}
 /** 导入进度阶段文案（主进程 phase 码 → 展示）。 */
 const IMPORT_PHASE_LABEL: Record<string, string> = {
   read: '读取文件',
@@ -112,7 +137,7 @@ async function abandonImportDraft(): Promise<void> {
 }
 
 /** 导入完成 → 打开完整编辑器（草稿模式：确认后创建新基准简历）。 */
-function openImportEditor(mapped: Resume, draft: { token: string; fileName: string }): void {
+function openImportEditor(mapped: Resume, draft: { token: string; fileName: string; draft: ResumeDraft }): void {
   errorMessage.value = ''
   successMessage.value = ''
   issues.value = []
@@ -138,7 +163,7 @@ function subscribeImportEvents(): () => void {
       const state = importState.value
       if (state === null || state.token !== payload.token) return
       importState.value = null
-      openImportEditor(payload.resume, { token: payload.token, fileName: payload.draft.fileName })
+      openImportEditor(payload.resume, { token: payload.token, fileName: payload.draft.fileName, draft: payload.draft })
     }),
     window.api.on(IpcEvent.ResumesImportError, (payload) => {
       const state = importState.value
@@ -804,6 +829,46 @@ onMounted(() => {
           </ul>
         </div>
 
+        <!-- 导入核对（#76）：提取全文 + 字段来源 + 待确认 + 未映射内容；无单一整体置信度 -->
+        <div v-if="importDraft !== null" class="import-audit">
+          <div class="audit-head">
+            <span>导入核对 · {{ importDraft.fileName }}</span>
+            <span class="hint">下方为本地解析结果，请逐项核对后在表单中补齐</span>
+          </div>
+          <div class="audit-grid">
+            <div class="audit-col">
+              <h4>提取全文</h4>
+              <pre class="audit-text">{{ importDraft.draft.text }}</pre>
+            </div>
+            <div class="audit-col">
+              <h4>字段来源</h4>
+              <table class="audit-table">
+                <tr v-for="(status, key) in importDraft.draft.fieldStatus" :key="key">
+                  <td class="audit-key">{{ FIELD_LABEL[key] ?? key }}</td>
+                  <td><span class="pill ghost">{{ FIELD_STATUS_LABEL[status] ?? status }}</span></td>
+                  <td class="audit-value">{{ fieldPreview(key) }}</td>
+                </tr>
+              </table>
+              <template v-if="importDraft.draft.missingFields.length > 0">
+                <h4>待确认</h4>
+                <p class="hint">
+                  以下必填项未解析到，请在表单中补齐后才能保存：
+                  {{ importDraft.draft.missingFields.map((m) => FIELD_LABEL[m] ?? m).join('、') }}
+                </p>
+              </template>
+              <template v-if="importDraft.draft.unmappedText.length > 0">
+                <h4>未映射内容</h4>
+                <ul class="audit-unmapped">
+                  <li v-for="(line, i) in importDraft.draft.unmappedText" :key="i">{{ line }}</li>
+                </ul>
+                <p class="hint">
+                  Schema 无法表示的原文（证书/语言成绩/校园经历等）：可并入「竞赛荣誉 / 能力 / 自我评价」或舍弃，不会自动写入错误字段。
+                </p>
+              </template>
+            </div>
+          </div>
+        </div>
+
         <div v-if="jsonMode" class="editor-sec" @focusout="scheduleAutosave">
           <h3>JSON 模式</h3>
           <p class="hint">直接编辑 resume.schema.json 结构；切换到表单模式或保存时解析校验。</p>
@@ -1459,6 +1524,84 @@ onMounted(() => {
 
 .issue-detail {
   margin-left: 8px;
+}
+
+/* 导入核对面板（#76）：提取全文 / 字段来源 / 待确认 / 未映射内容 */
+.import-audit {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin-top: 12px;
+  background: color-mix(in srgb, var(--accent) 4%, var(--bg));
+}
+
+.audit-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+
+.audit-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+}
+
+.audit-col h4 {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 0 0 6px;
+}
+
+.audit-col h4:not(:first-child) {
+  margin-top: 12px;
+}
+
+.audit-text {
+  max-height: 220px;
+  overflow: auto;
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.audit-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.audit-table td {
+  padding: 3px 8px 3px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+}
+
+.audit-key {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.audit-value {
+  color: var(--fg);
+  word-break: break-all;
+}
+
+.audit-unmapped {
+  margin: 0 0 6px;
+  padding-left: 18px;
+  font-size: 12.5px;
+  line-height: 1.8;
 }
 
 .json-textarea {
