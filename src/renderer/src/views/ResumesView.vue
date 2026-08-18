@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import type { Resume, StoredResume } from '@shared/types/resume'
+import { IpcEvent } from '@shared/protocol'
 import { defaultBaseTitle, emptyResumeForm, formToResume, issueSection, keepEmptyRows, resumeToForm, SKILL_CATEGORIES, type ResumeForm } from '../resume-form'
 import Modal from '../components/Modal.vue'
 import Resizer from '../components/Resizer.vue'
@@ -40,6 +41,125 @@ const exportMenuTarget = ref<string | null>(null)
 
 function closeExportMenu(): void {
   exportMenuTarget.value = null
+}
+
+/** 导入流程（#75 DOCX）：null = 无进行中导入；token '' = start 同步校验失败（仅错误展示）。 */
+interface ImportState {
+  token: string
+  phase: string
+  error: string | null
+}
+const importState = ref<ImportState | null>(null)
+/** 编辑器导入草稿模式：非 null 时保存 = 确认创建基准简历。 */
+const importDraft = ref<{ token: string; fileName: string } | null>(null)
+/** 导入进度阶段文案（主进程 phase 码 → 展示）。 */
+const IMPORT_PHASE_LABEL: Record<string, string> = {
+  read: '读取文件',
+  parse: '解析文本',
+  map: '生成草稿'
+}
+/** 离开导入流程前的取消确认弹窗。 */
+const importCancelConfirm = ref(false)
+
+const importFileInput = ref<HTMLInputElement | null>(null)
+
+function pickImportFile(): void {
+  importFileInput.value?.click()
+}
+
+async function onImportFilePicked(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (file === undefined) return
+  const filePath = window.api.getPathForFile(file)
+  if (filePath === '') {
+    errorMessage.value = '无法获取文件路径'
+    return
+  }
+  try {
+    const { token } = await window.api.resumes.importDocx.start(filePath)
+    importState.value = { token, phase: 'read', error: null }
+  } catch (err) {
+    // start 同步校验失败（类型/大小/不可读）：弹窗展示错误与替代入口
+    importState.value = { token: '', phase: 'read', error: String(err) }
+  }
+}
+
+/** 取消进行中的导入（静默：cancelled 事件关闭弹窗，不当作错误）。 */
+async function cancelImport(): Promise<void> {
+  const state = importState.value
+  importCancelConfirm.value = false
+  if (state === null || state.token === '') return
+  await window.api.resumes.importDocx.cancel(state.token)
+}
+
+/** 关闭导入错误弹窗：有 token 时释放主进程草稿（不写库）。 */
+function closeImportError(): void {
+  const state = importState.value
+  if (state !== null && state.token !== '') {
+    void window.api.resumes.importDocx.dispose(state.token)
+  }
+  importState.value = null
+}
+
+/** 放弃导入草稿（离开编辑器/切换列表）：不写库。 */
+async function abandonImportDraft(): Promise<void> {
+  const draft = importDraft.value
+  if (draft === null) return
+  await window.api.resumes.importDocx.dispose(draft.token)
+  importDraft.value = null
+}
+
+/** 导入完成 → 打开完整编辑器（草稿模式：确认后创建新基准简历）。 */
+function openImportEditor(mapped: Resume, draft: { token: string; fileName: string }): void {
+  errorMessage.value = ''
+  successMessage.value = ''
+  issues.value = []
+  jsonError.value = ''
+  loadingForm = true
+  Object.assign(form, resumeToForm(mapped))
+  loadingForm = false
+  formDirty = false
+  editingId.value = ''
+  jsonMode.value = false
+  importDraft.value = draft
+}
+
+/** 导入事件订阅（onMounted 注册 / onUnmounted 注销；按 token 过滤）。 */
+function subscribeImportEvents(): () => void {
+  const offs = [
+    window.api.on(IpcEvent.ResumesImportProgress, (payload) => {
+      const state = importState.value
+      if (state === null || state.token !== payload.token) return
+      state.phase = payload.phase
+    }),
+    window.api.on(IpcEvent.ResumesImportDone, (payload) => {
+      const state = importState.value
+      if (state === null || state.token !== payload.token) return
+      importState.value = null
+      openImportEditor(payload.resume, { token: payload.token, fileName: payload.draft.fileName })
+    }),
+    window.api.on(IpcEvent.ResumesImportError, (payload) => {
+      const state = importState.value
+      if (state === null || state.token !== payload.token) return
+      state.error = payload.message
+    }),
+    window.api.on(IpcEvent.ResumesImportCancelled, (payload) => {
+      const state = importState.value
+      if (state === null || state.token !== payload.token) return
+      importState.value = null
+    })
+  ]
+  return () => {
+    offs.forEach((off) => off())
+    // 离开本视图：释放进行中的导入与草稿（不写库；本规格不建设跨页面继续任务）
+    const st = importState.value
+    if (st !== null && st.token !== '') void window.api.resumes.importDocx.dispose(st.token)
+    if (importDraft.value !== null) void window.api.resumes.importDocx.dispose(importDraft.value.token)
+    importState.value = null
+    importDraft.value = null
+  }
 }
 
 async function openPreview(resume: StoredResume): Promise<void> {
@@ -283,8 +403,13 @@ async function closeEditor(): Promise<void> {
     clearTimeout(autosaveTimer)
     autosaveTimer = undefined
   }
-  // 自动保存兜底：返回列表前仍有未保存改动 → 先存
-  if (formDirty && !saving.value) await save()
+  if (importDraft.value !== null) {
+    // 导入草稿：离开即放弃（确认必须显式点击「确认并创建基准简历」，不自动保存/不入库）
+    await abandonImportDraft()
+  } else if (formDirty && !saving.value) {
+    // 自动保存兜底：返回列表前仍有未保存改动 → 先存
+    await save()
+  }
   editingId.value = null
   issues.value = []
 }
@@ -512,6 +637,11 @@ onMounted(() => {
   window.addEventListener('blur', onWindowBlur)
   document.addEventListener('visibilitychange', onWindowBlur)
   document.addEventListener('wheel', onDocWheel, { passive: false })
+  // 点击任意处关闭列表行导出菜单（菜单内点击已 @click.stop）
+  document.addEventListener('click', closeExportMenu)
+  // #75：导入异步流程事件订阅（onUnmounted 注销）
+  const offImportEvents = subscribeImportEvents()
+  onUnmounted(() => offImportEvents())
 })
 </script>
 
@@ -525,9 +655,10 @@ onMounted(() => {
           <div class="col-count">基准 {{ bases.length }} · 优化稿 {{ derived.length }}</div>
         </div>
         <div class="head-actions">
-          <button class="btn" type="button" disabled title="后续版本支持（当前版本解析不可用）">
+          <button class="btn" type="button" @click="pickImportFile" title="导入已有 DOCX 简历">
             <Icon name="upload" />上传解析
           </button>
+          <input ref="importFileInput" type="file" accept=".docx" hidden @change="onImportFilePicked" />
           <button class="btn primary" type="button" @click="openEditor()">
             <Icon name="plus" />新建
           </button>
@@ -645,14 +776,15 @@ onMounted(() => {
               @blur="scheduleAutosave"
             />
             <div class="ws-sub">
-              <Pill v-if="editingExisting" tone="tint">派生稿</Pill>
+              <Pill v-if="importDraft !== null" tone="solid">导入草稿（确认后创建基准简历）</Pill>
+              <Pill v-else-if="editingExisting" tone="tint">派生稿</Pill>
               <Pill v-else>基准</Pill>
               <span style="margin-left: 6px">分节表单 ⇄ JSON 模式</span>
             </div>
           </div>
           <div class="head-actions">
             <button class="btn primary" type="button" :disabled="saving" @click="save">
-              {{ saving ? '保存中…' : '保存' }}
+              {{ saving ? '保存中…' : importDraft !== null ? '确认并创建基准简历' : '保存' }}
             </button>
             <button class="btn" type="button" :disabled="saving" @click="previewCurrent">生成 A4 预览</button>
             <button class="btn" type="button" :disabled="saving" @click="jsonMode ? switchToForm() : switchToJson()">
@@ -933,6 +1065,35 @@ onMounted(() => {
         />
       </div>
     </div>
+  </Modal>
+
+  <!-- ===== 弹窗：简历导入（#75 DOCX）——阶段进度 / 错误与替代入口 ===== -->
+  <Modal :open="importState !== null" title="导入简历" @close="importCancelConfirm = true">
+    <template v-if="importState !== null && importState.error !== null">
+      <p class="hint" style="color: #dc2626">{{ importState.error }}</p>
+    </template>
+    <template v-else-if="importState !== null">
+      <p class="hint">{{ IMPORT_PHASE_LABEL[importState.phase] ?? importState.phase }}…（解析期间可继续使用其他功能）</p>
+    </template>
+    <template #foot>
+      <template v-if="importState?.error !== null">
+        <button class="btn" type="button" @click="closeImportError">关闭</button>
+        <button class="btn" type="button" @click="pickImportFile">重试 / 换文件</button>
+        <button class="btn primary" type="button" @click="closeImportError; openEditor()">手动新建</button>
+      </template>
+      <template v-else>
+        <button class="btn" type="button" :disabled="importState?.token === ''" @click="importCancelConfirm = true">取消</button>
+      </template>
+    </template>
+  </Modal>
+
+  <!-- ===== 弹窗：离开导入流程前的取消确认（#75：避免误以为后台继续） ===== -->
+  <Modal :open="importCancelConfirm" title="取消导入" @close="importCancelConfirm = false">
+    <p class="hint">导入尚未完成，取消后本次解析结果将被丢弃，不会创建任何简历。确认取消？</p>
+    <template #foot>
+      <button class="btn" type="button" @click="importCancelConfirm = false">继续等待</button>
+      <button class="btn primary" type="button" @click="cancelImport">确认取消</button>
+    </template>
   </Modal>
 </template>
 

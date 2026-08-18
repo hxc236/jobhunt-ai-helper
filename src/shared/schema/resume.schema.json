@@ -13,7 +13,19 @@
         "title": { "type": "string", "description": "简历名，如「基准简历」/「华为-软件开发-优化稿」" },
         "baseResumeId": { "type": ["string", "null"], "description": "派生自哪个基准简历（优化稿填写；基准简历为 null）" },
         "targetJobId": { "type": ["string", "null"], "description": "针对哪个职位卡优化（优化稿填写；基准简历为 null）" },
-        "updatedAt": { "type": "string", "format": "date-time" }
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "importedFrom": {
+          "type": "object",
+          "description": "导入溯源（#75）：仅导入创建的基准简历有；服务端确认时写入，不保存源文件/全文/诊断",
+          "properties": {
+            "fileName": { "type": "string" },
+            "fileType": { "type": "string", "enum": ["docx", "pdf"] },
+            "importedAt": { "type": "string", "format": "date-time" },
+            "parsePath": { "type": "string", "enum": ["text", "ocr", "mixed"] }
+          },
+          "required": ["fileName", "fileType", "importedAt", "parsePath"],
+          "additionalProperties": false
+        }
       }
     },
     "basics": {

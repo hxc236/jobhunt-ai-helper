@@ -19,6 +19,7 @@ import { TopicService } from './services/topic'
 import { LearnService } from './services/learn'
 import { InterviewService } from './services/interview'
 import { AsrService, SherpaAsrProvider } from './services/asr'
+import { ResumeImportService } from './services/resume-import'
 import { NowcoderParser } from './services/parsers/nowcoder'
 import { LiepinParser } from './services/parsers/liepin'
 import { BossParser } from './services/parsers/boss'
@@ -173,8 +174,28 @@ app.whenReady().then(() => {
   const asr = new AsrService(
     new SherpaAsrProvider(join(app.getAppPath(), 'resources', 'sherpa-onnx'))
   )
+  // #75：简历导入（DOCX 本地导入闭环）——token 化异步流程，事件推送阶段/结果
+  const resumeImport = new ResumeImportService({
+    resumeService: resumes,
+    emit: (event) => {
+      switch (event.type) {
+        case 'progress':
+          pushEvent(IpcEvent.ResumesImportProgress, { token: event.token, phase: event.phase })
+          break
+        case 'done':
+          pushEvent(IpcEvent.ResumesImportDone, { token: event.token, draft: event.draft, resume: event.resume })
+          break
+        case 'error':
+          pushEvent(IpcEvent.ResumesImportError, { token: event.token, code: event.code, message: event.message })
+          break
+        case 'cancelled':
+          pushEvent(IpcEvent.ResumesImportCancelled, { token: event.token })
+          break
+      }
+    }
+  })
 
-  registerIpcHandlers({ settings, agent, positions, resumes, crawls, bossLogin, crawlPresets, optimize, topics, learn, interview, asr, csvImport })
+  registerIpcHandlers({ settings, agent, positions, resumes, resumeImport, crawls, bossLogin, crawlPresets, optimize, topics, learn, interview, asr, csvImport })
   createWindow()
 
   app.on('activate', () => {

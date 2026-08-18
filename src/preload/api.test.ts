@@ -198,12 +198,19 @@ describe('createRendererApi（渲染侧 api 客户端）', () => {
     expect(fake.invocations).toEqual([{ channel: IpcChannel.CsvImportTemplate, args: [] }])
   })
 
-  it('resumes.uploadParse 映射到 resumes:upload-parse 并传 { filePath }', async () => {
+  it('resumes.importDocx 映射 start/cancel/confirm/dispose 四个通道', async () => {
     const fake = makeFakeBridge()
     const api = createRendererApi(fake.bridge)
-    await api.resumes.uploadParse('C:/tmp/resume.docx')
+    await api.resumes.importDocx.start('C:/tmp/resume.docx')
+    await api.resumes.importDocx.cancel('tok-1')
+    const resume = { meta: {}, basics: { name: '张伟' }, education: [] }
+    await api.resumes.importDocx.confirm('tok-1', resume)
+    await api.resumes.importDocx.dispose('tok-1')
     expect(fake.invocations).toEqual([
-      { channel: IpcChannel.ResumesUploadParse, args: [{ filePath: 'C:/tmp/resume.docx' }] }
+      { channel: IpcChannel.ResumesImportStart, args: [{ filePath: 'C:/tmp/resume.docx' }] },
+      { channel: IpcChannel.ResumesImportCancel, args: [{ token: 'tok-1' }] },
+      { channel: IpcChannel.ResumesImportConfirm, args: [{ token: 'tok-1', resume }] },
+      { channel: IpcChannel.ResumesImportDispose, args: [{ token: 'tok-1' }] }
     ])
   })
 

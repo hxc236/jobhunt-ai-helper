@@ -1,10 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import type { Db } from '../db/migrations'
-import type { Resume, StoredResume } from '../../shared/types/resume'
-import type { ResumeDraft } from '../../shared/types'
+import type { Resume, ResumeImportProvenance, StoredResume } from '../../shared/types/resume'
 import { PhotoStoreError, type PhotoStore } from './photo-store'
 import { assertValidResume } from './resume-schema'
-import { parseUploadFile } from './resume-parse'
 import { renderResumeHtml } from './resume-render'
 
 const LIST = 'SELECT json FROM resumes ORDER BY created_at, id'
@@ -88,6 +86,31 @@ export class ResumeService {
       ...input,
       meta: { ...input.meta, id: `res-${randomUUID()}`, updatedAt: new Date().toISOString() }
     }
+    return this.insert(stored)
+  }
+
+  /**
+   * 导入确认（#75）：总是创建新的基准简历——强制 baseResumeId / targetJobId 为空
+   * （不覆盖、不按姓名合并、不去重），并写入简要导入溯源（不含源文件/全文/诊断）。
+   */
+  createImported(input: Resume, provenance: ResumeImportProvenance): StoredResume {
+    assertValidResume(input)
+    const stored: StoredResume = {
+      ...input,
+      meta: {
+        ...input.meta,
+        id: `res-${randomUUID()}`,
+        updatedAt: new Date().toISOString(),
+        baseResumeId: null,
+        targetJobId: null,
+        importedFrom: provenance
+      }
+    }
+    return this.insert(stored)
+  }
+
+  /** 入库（schema 已由调用方校验）。 */
+  private insert(stored: StoredResume): StoredResume {
     this.db.prepare(INSERT).run(toRowParams(stored))
     return stored
   }
@@ -114,14 +137,6 @@ export class ResumeService {
     const resume = parseStored(row.json)
     if (this.photos !== undefined) this.photos.remove(resume.basics?.photo)
     this.db.prepare(DELETE).run(id)
-  }
-
-  /**
-   * 上传解析（F-14/#26）：docx（mammoth）/ pdf（pdfjs）→ 文本 → 结构化草稿
-   * （带置信度/待确认标记；扫描件 scanned 降级提示，UI 引导手动录入）。
-   */
-  parseUpload(filePath: string): Promise<ResumeDraft> {
-    return parseUploadFile(filePath)
   }
 
   /** 照片导入（IPC）：复制到照片目录，返回文件名。 */

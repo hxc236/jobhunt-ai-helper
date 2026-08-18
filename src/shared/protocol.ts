@@ -64,6 +64,10 @@ export const IpcChannel = {
   ResumesUpdate: 'resumes:update',
   ResumesDelete: 'resumes:delete',
   ResumesUploadParse: 'resumes:upload-parse',
+  ResumesImportStart: 'resumes:import-start',
+  ResumesImportCancel: 'resumes:import-cancel',
+  ResumesImportConfirm: 'resumes:import-confirm',
+  ResumesImportDispose: 'resumes:import-dispose',
   ResumesRenderHtml: 'resumes:render-html',
   ResumesRenderFromResume: 'resumes:render-from-resume',
   ResumesImportPhoto: 'resumes:import-photo',
@@ -191,8 +195,12 @@ export interface IpcProtocol {
     response: CrawlPreset
   }
   [IpcChannel.CrawlPresetsDelete]: { request: { id: number }; response: void }
-  // F-14（#26）：简历上传解析 —— docx/pdf → 文本 → 结构化草稿（置信度/待确认标记；扫描件降级）
-  [IpcChannel.ResumesUploadParse]: { request: { filePath: string }; response: ResumeDraft }
+  // #75：简历导入（DOCX 本地导入闭环）——start 同步校验并返回 token；阶段/结果经事件推送；
+  // confirm 创建新基准简历 + 溯源；dispose 放弃草稿（不写库）。
+  [IpcChannel.ResumesImportStart]: { request: { filePath: string }; response: { token: string } }
+  [IpcChannel.ResumesImportCancel]: { request: { token: string }; response: void }
+  [IpcChannel.ResumesImportConfirm]: { request: { token: string; resume: Resume }; response: StoredResume }
+  [IpcChannel.ResumesImportDispose]: { request: { token: string }; response: void }
   // #74：简历 PDF/DOCX 双格式导出 —— 按已保存 id 导出（编辑器内导出先保存/校验）；
   // export 经保存对话框写盘（取消 → null）；PDF 走 printToPDF，DOCX 走 WordprocessingML 生成。
   [IpcChannel.ResumesRenderHtml]: { request: { id: string }; response: string }
@@ -290,7 +298,11 @@ export const IpcEvent = {
   OptimizeProgress: 'optimize:progress', // #32：优化三轮进度
   InterviewTurnEnd: 'interview:turn-end',
   CrawlProgress: 'crawl:progress',
-  BossPageExtracted: 'boss:page-extracted' // #62：F8 只读提取详情页 → 预填录入表单
+  BossPageExtracted: 'boss:page-extracted', // #62：F8 只读提取详情页 → 预填录入表单
+  ResumesImportProgress: 'resumes:import-progress', // #75：导入阶段进度
+  ResumesImportDone: 'resumes:import-done', // #75：导入完成（草稿 + 保底 Resume）
+  ResumesImportError: 'resumes:import-error', // #75：导入失败（明确错误）
+  ResumesImportCancelled: 'resumes:import-cancelled' // #75：取消（UI 静默关闭）
 } as const
 
 /** agent 会话状态（agent:status 载荷）。 */
@@ -305,6 +317,11 @@ export interface IpcEventMap {
   [IpcEvent.InterviewTurnEnd]: { sessionId: string }
   [IpcEvent.CrawlProgress]: { runId: number; done: number; total: number }
   [IpcEvent.BossPageExtracted]: BossPageExtractResult
+  // #75：简历导入异步流程事件（token 关联 start 返回；cancelled 为静默取消）
+  [IpcEvent.ResumesImportProgress]: { token: string; phase: string }
+  [IpcEvent.ResumesImportDone]: { token: string; draft: ResumeDraft; resume: Resume }
+  [IpcEvent.ResumesImportError]: { token: string; code: string; message: string }
+  [IpcEvent.ResumesImportCancelled]: { token: string }
 }
 
 export type IpcEventName = keyof IpcEventMap
@@ -435,8 +452,6 @@ export interface ResumeApi {
   create: (resume: Resume) => Promise<StoredResume>
   update: (id: string, resume: Resume) => Promise<StoredResume>
   delete: (id: string) => Promise<void>
-  /** 上传解析（F-14/#26）：docx/pdf → 草稿（扫描件 scanned 降级提示）。 */
-  uploadParse: (filePath: string) => Promise<ResumeDraft>
   /** A4 渲染（F-15/#30）：完整 HTML 文档（含打印样式），iframe 预览。 */
   renderHtml: (id: string) => Promise<string>
   /** A4 渲染任意简历对象（未保存表单预览用；照片 data URI 内嵌）。 */
@@ -449,6 +464,13 @@ export interface ResumeApi {
   photoDataUri: (fileName: string) => Promise<string | null>
   /** 导出简历（#74：PDF/DOCX 双格式；保存对话框；取消返回 null）。按已保存 id 或未保存对象导出。 */
   export: (id: string, format: 'pdf' | 'docx') => Promise<string | null>
+  /** 简历导入（#75）：start 同步校验并返回 token；结果经 resumes:import-* 事件推送。 */
+  importDocx: {
+    start: (filePath: string) => Promise<{ token: string }>
+    cancel: (token: string) => Promise<void>
+    confirm: (token: string, resume: Resume) => Promise<StoredResume>
+    dispose: (token: string) => Promise<void>
+  }
 }
 
 /** 渲染进程可见的 csv 导入 api 表面（#68/T3：CSV 批量导入弹窗）。 */

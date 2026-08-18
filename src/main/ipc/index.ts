@@ -22,6 +22,7 @@ import type { PositionService } from '../services/position'
 import { exportResumeDocx, exportResumePdf } from '../services/resume-export'
 import { buildResumeDocx, type DocxPhoto } from '../services/resume-docx'
 import { ResumeNotFoundError, type ResumeService } from '../services/resume'
+import type { ResumeImportService } from '../services/resume-import'
 import type { SettingsService } from '../services/settings'
 import { pushEvent } from './events'
 import { ocrImage } from '../services/ocr'
@@ -47,6 +48,7 @@ export interface IpcDeps {
   positions: PositionService
   csvImport: CsvImportService
   resumes: ResumeService
+  resumeImport: ResumeImportService
   crawls: CrawlService
   bossLogin: BossLoginService
   crawlPresets: CrawlPresetService
@@ -61,7 +63,7 @@ export interface IpcDeps {
  * 注册全部 IPC handler（薄层：仅参数校验 + 转调服务）。
  * 主进程启动时调用一次；后续通道（EF-04 起）在此追加。
  */
-export function registerIpcHandlers({ settings, agent, positions, resumes, crawls, bossLogin, crawlPresets, optimize, topics, learn, interview, asr, csvImport }: IpcDeps): void {
+export function registerIpcHandlers({ settings, agent, positions, resumes, resumeImport, crawls, bossLogin, crawlPresets, optimize, topics, learn, interview, asr, csvImport }: IpcDeps): void {
   handleRequest(IpcChannel.Ping, (): PingResponse => ping())
 
   handleRequest(IpcChannel.SettingsGet, (request) => settings.get(request.key))
@@ -188,8 +190,11 @@ export function registerIpcHandlers({ settings, agent, positions, resumes, crawl
   handleRequest(IpcChannel.ResumesCreate, (request) => resumes.create(request.resume))
   handleRequest(IpcChannel.ResumesUpdate, (request) => resumes.update(request.id, request.resume))
   handleRequest(IpcChannel.ResumesDelete, (request) => resumes.delete(request.id))
-  // F-14（#26）：简历上传解析（docx/pdf → 草稿；不支持类型/解析失败错误 message 透传）
-  handleRequest(IpcChannel.ResumesUploadParse, (request) => resumes.parseUpload(request.filePath))
+  // #75：简历导入（DOCX）——start 同步校验并返回 token；阶段/结果经事件推送；confirm 建新基准 + 溯源
+  handleRequest(IpcChannel.ResumesImportStart, (request) => ({ token: resumeImport.start(request.filePath) }))
+  handleRequest(IpcChannel.ResumesImportCancel, (request) => resumeImport.cancel(request.token))
+  handleRequest(IpcChannel.ResumesImportConfirm, (request) => resumeImport.confirm(request.token, request.resume))
+  handleRequest(IpcChannel.ResumesImportDispose, (request) => resumeImport.dispose(request.token))
   // F-15（#30）：A4 渲染（纯函数）与 PDF 导出（printToPDF + 保存对话框）
   handleRequest(IpcChannel.ResumesRenderHtml, (request) => resumes.renderHtml(request.id))
   handleRequest(IpcChannel.ResumesRenderFromResume, (request) => resumes.renderFromResume(request.resume))

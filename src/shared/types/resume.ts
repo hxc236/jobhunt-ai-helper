@@ -4,6 +4,18 @@
  * 运行时校验以 resume.schema.json 为准（主进程 ajv 校验），本文件仅供类型安全。
  */
 
+/** 导入溯源（#75：正式简历只保留简要溯源，不保存源文件/全文/诊断）。 */
+export interface ResumeImportProvenance {
+  /** 原文件名（不含路径）。 */
+  fileName: string
+  /** 源文件类型：docx / pdf。 */
+  fileType: 'docx' | 'pdf'
+  /** 导入时间（ISO 8601 date-time）。 */
+  importedAt: string
+  /** 解析路径：text（文本提取）/ ocr / mixed（混合）。 */
+  parsePath: 'text' | 'ocr' | 'mixed'
+}
+
 export interface ResumeMeta {
   /** 简历 id（服务端生成；入库后必有，schema 层为可选） */
   id?: string
@@ -15,6 +27,8 @@ export interface ResumeMeta {
   targetJobId?: string | null
   /** 最近更新时间（ISO 8601 date-time；服务端写入） */
   updatedAt?: string
+  /** 导入溯源（仅导入创建的基准简历有；确认时服务端写入） */
+  importedFrom?: ResumeImportProvenance
 }
 
 export interface ResumeJobIntention {

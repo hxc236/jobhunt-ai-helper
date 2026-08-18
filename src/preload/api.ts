@@ -47,7 +47,12 @@ export function createRendererApi(bridge: IpcBridge): Omit<RendererApi, 'getPath
       create: (resume) => bridge.invoke(IpcChannel.ResumesCreate, { resume }),
       update: (id, resume) => bridge.invoke(IpcChannel.ResumesUpdate, { id, resume }),
       delete: (id) => bridge.invoke(IpcChannel.ResumesDelete, { id }),
-      uploadParse: (filePath) => bridge.invoke(IpcChannel.ResumesUploadParse, { filePath }),
+      importDocx: {
+        start: (filePath) => bridge.invoke(IpcChannel.ResumesImportStart, { filePath }),
+        cancel: (token) => bridge.invoke(IpcChannel.ResumesImportCancel, { token }),
+        confirm: (token, resume) => bridge.invoke(IpcChannel.ResumesImportConfirm, { token, resume }),
+        dispose: (token) => bridge.invoke(IpcChannel.ResumesImportDispose, { token })
+      },
       renderHtml: (id) => bridge.invoke(IpcChannel.ResumesRenderHtml, { id }),
       renderFromResume: (resume) => bridge.invoke(IpcChannel.ResumesRenderFromResume, { resume }),
       importPhoto: (filePath) => bridge.invoke(IpcChannel.ResumesImportPhoto, { filePath }),
