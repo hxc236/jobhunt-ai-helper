@@ -543,3 +543,114 @@ export interface PositionPatch {
   status?: PositionStatus
   notes?: string
 }
+
+/**
+ * 简历内容优化任务（#90 业务① / T02）：与按 JD 优化（OptimizeService）完全独立的异步任务。
+ * 状态机：created → diagnosing → awaiting_answers → rewriting → ready_for_review → confirmed；
+ * failed 可手动重试回对应阶段；cancelled 可续接或作废（决策编码自 #90 设计会话）。
+ * 任务记录（诊断/追问/回答/确认）存独立任务存储（content_optimize_tasks 表），支持中断续接。
+ */
+
+/** 内容优化任务状态。 */
+export const CONTENT_OPTIMIZE_STATUSES = [
+  'created',
+  'diagnosing',
+  'awaiting_answers',
+  'rewriting',
+  'ready_for_review',
+  'confirmed',
+  'failed',
+  'cancelled'
+] as const
+export type ContentOptimizeStatus = (typeof CONTENT_OPTIMIZE_STATUSES)[number]
+
+/** 任务状态中文标签（服务端进度文案与 Resumes 视图任务卡片共用，单一来源）。 */
+export const CONTENT_STATUS_LABELS: Record<ContentOptimizeStatus, string> = {
+  created: '已创建',
+  diagnosing: '诊断中',
+  awaiting_answers: '等待回答',
+  rewriting: '改写中',
+  ready_for_review: '可确认',
+  confirmed: '已确认',
+  failed: '失败',
+  cancelled: '已取消'
+}
+
+/** 规则判定状态（每维度：通过 / 需改进 / 信息不足 / 不适用）。 */
+export type ContentRuleStatus = 'pass' | 'improve' | 'insufficient' | 'na'
+
+/** 项目级判定：保持 / 可直接改写 / 需要补充信息。 */
+export type ContentProjectVerdict = 'keep' | 'rewrite' | 'needs-info'
+
+/** 单条规则判定（规则 ID / 作用对象 / 状态 / 原文证据 / 问题说明 / 建议动作 / 事实来源）。 */
+export interface ContentRuleVerdict {
+  ruleId: string
+  /** 作用对象（如 project:proj-xxx / 全局）。 */
+  target: string
+  status: ContentRuleStatus
+  /** 原文证据。 */
+  evidence: string
+  /** 问题说明。 */
+  issue: string
+  /** 建议动作。 */
+  suggestion: string
+  /** 事实来源（原文 / 用户回答 / 推断-待确认）。 */
+  factSource: 'original' | 'user-answer' | 'inferred'
+}
+
+/** 单个项目的追问问题（按项目分组；候选可编辑 + 四选一 + 自由输入）。 */
+export interface ContentQuestion {
+  projectId: string
+  /** 所属维度：简介 / 难点 / 个人工作量 / 结果 / 技术栈。 */
+  field: string
+  question: string
+  /** 原文证据（候选基于真实线索）。 */
+  evidence: string
+  /** 候选答案（可编辑）。 */
+  candidates: string[]
+}
+
+/** 诊断输出（规则判定 + 项目判定 + 追问问题）。 */
+export interface ContentDiagnosis {
+  rules: ContentRuleVerdict[]
+  projects: Array<{ projectId: string; verdict: ContentProjectVerdict }>
+  questions: ContentQuestion[]
+}
+
+/** 逐处改动说明（含来源，防幻觉依据）。 */
+export interface ContentOptimizeChange {
+  projectId?: string
+  section: string
+  before: string
+  after: string
+  reason: string
+  /** 改动来源：原文 / 用户回答 / 推断-待确认。 */
+  source: 'original' | 'user-answer' | 'inferred'
+}
+
+/** 改写结果（T05 填充；T02 空诊断垂直切片不产出）。 */
+export interface ContentRewrite {
+  resume: Resume
+  changes: ContentOptimizeChange[]
+}
+
+/** 内容优化任务（渲染层 IPC 载荷 = 服务层快照）。 */
+export interface ContentOptimizeTask {
+  id: string
+  resumeId: string
+  status: ContentOptimizeStatus
+  /** 诊断结果（T03 起填充；T02 空诊断垂直切片 = 全部「保持」）。 */
+  diagnosis: ContentDiagnosis | null
+  /** 用户回答（T04 追问表单；按 question id → 文本）。 */
+  answers: Record<string, string> | null
+  /** 改写结果（T05 填充）。 */
+  rewrite: ContentRewrite | null
+  /** 阶段进度文案（如「诊断中：规则 R1 判定」）。 */
+  progress: string
+  /** 失败原因（status=failed 时）。 */
+  error: string | null
+  /** 无改动（空诊断路径：全部保持 → 无需修改，不创建新版本）。 */
+  noChanges: boolean
+  createdAt: string
+  updatedAt: string
+}

@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import type { Resume, StoredResume } from '@shared/types/resume'
-import type { ResumeDraft } from '@shared/types'
+import type { ResumeDraft, ContentOptimizeTask } from '@shared/types'
+import { CONTENT_STATUS_LABELS } from '@shared/types'
 import { IpcEvent } from '@shared/protocol'
 import { defaultBaseTitle, emptyResumeForm, formToResume, issueSection, keepEmptyRows, resumeToForm, SKILL_CATEGORIES, type ResumeForm } from '../resume-form'
 import Modal from '../components/Modal.vue'
@@ -464,6 +465,90 @@ const bases = computed(() => resumes.value.filter((r) => r.meta.baseResumeId == 
 const derived = computed(() => resumes.value.filter((r) => r.meta.baseResumeId != null))
 const editingExisting = computed(() => editingId.value !== null && editingId.value !== '')
 
+/** 内容优化任务（#90/T02）：任务卡片列表（按创建时间倒序）。 */
+const contentTasks = ref<ContentOptimizeTask[]>([])
+const contentTaskError = ref('')
+
+/** 某任务关联的简历标题（任务卡片展示）。 */
+function contentResumeTitle(task: ContentOptimizeTask): string {
+  const resume = resumes.value.find((r) => r.meta.id === task.resumeId)
+  return resume?.meta.title ?? '（简历已删除）'
+}
+
+async function loadContentTasks(): Promise<void> {
+  try {
+    contentTasks.value = await window.api.contentOptimize.list()
+  } catch (err) {
+    contentTaskError.value = `加载内容优化任务失败：${String(err)}`
+  }
+}
+
+/** 触发内容优化（基准简历行按钮）。 */
+async function startContentOptimize(resume: StoredResume): Promise<void> {
+  contentTaskError.value = ''
+  try {
+    await window.api.contentOptimize.start(resume.meta.id as string)
+    await loadContentTasks()
+  } catch (err) {
+    contentTaskError.value = String(err)
+  }
+}
+
+/** 确认任务（可确认 / 无需修改均走确认；返回新简历 id 或 null）。 */
+async function confirmContentTask(task: ContentOptimizeTask): Promise<void> {
+  contentTaskError.value = ''
+  try {
+    const { createdResumeId } = await window.api.contentOptimize.confirm(task.id)
+    await Promise.all([loadContentTasks(), load()])
+    successMessage.value =
+      createdResumeId === null
+        ? '内容优化确认完成：无需修改，未创建新版本'
+        : '内容优化确认完成：已生成新的基准简历'
+  } catch (err) {
+    contentTaskError.value = String(err)
+  }
+}
+
+async function cancelContentTask(task: ContentOptimizeTask): Promise<void> {
+  contentTaskError.value = ''
+  try {
+    await window.api.contentOptimize.cancel(task.id)
+    await loadContentTasks()
+  } catch (err) {
+    contentTaskError.value = String(err)
+  }
+}
+
+async function retryContentTask(task: ContentOptimizeTask): Promise<void> {
+  contentTaskError.value = ''
+  try {
+    await window.api.contentOptimize.retry(task.id)
+    await loadContentTasks()
+  } catch (err) {
+    contentTaskError.value = String(err)
+  }
+}
+
+async function resumeContentTask(task: ContentOptimizeTask): Promise<void> {
+  contentTaskError.value = ''
+  try {
+    await window.api.contentOptimize.resume(task.id)
+    await loadContentTasks()
+  } catch (err) {
+    contentTaskError.value = String(err)
+  }
+}
+
+async function voidContentTask(task: ContentOptimizeTask): Promise<void> {
+  contentTaskError.value = ''
+  try {
+    await window.api.contentOptimize.void(task.id)
+    await loadContentTasks()
+  } catch (err) {
+    contentTaskError.value = String(err)
+  }
+}
+
 async function load(): Promise<void> {
   loading.value = true
   try {
@@ -731,6 +816,7 @@ function onRowKeydown(e: KeyboardEvent, resume: StoredResume): void {
 
 onMounted(() => {
   void load()
+  void loadContentTasks()
   window.addEventListener('blur', onWindowBlur)
   document.addEventListener('visibilitychange', onWindowBlur)
   document.addEventListener('wheel', onDocWheel, { passive: false })
@@ -739,6 +825,11 @@ onMounted(() => {
   // #75：导入异步流程事件订阅（onUnmounted 注销）
   const offImportEvents = subscribeImportEvents()
   onUnmounted(() => offImportEvents())
+  // #90/T02：内容优化任务变更实时推送（阶段流转/进度/失败/取消）
+  const offContentTasks = window.api.on(IpcEvent.ContentOptimizeChanged, () => {
+    void loadContentTasks()
+  })
+  onUnmounted(() => offContentTasks())
 })
 </script>
 
@@ -796,6 +887,7 @@ onMounted(() => {
         <div class="res-actions">
           <button class="icon-btn" type="button" title="编辑" @click.stop="openEditor(r)"><Icon name="edit" /></button>
           <button class="icon-btn" type="button" title="A4 预览" @click.stop="openPreview(r)"><Icon name="file" /></button>
+          <button class="btn ghost" type="button" title="内容优化（无 JD 通用质量优化）" @click.stop="startContentOptimize(r)">内容优化</button>
           <div class="export-menu-wrap">
             <button class="icon-btn" type="button" title="导出" @click.stop="exportMenuTarget = exportMenuTarget === (r.meta.id as string) ? null : (r.meta.id as string)"><Icon name="download" /></button>
             <div v-if="exportMenuTarget === (r.meta.id as string)" class="export-menu" @click.stop>
@@ -804,6 +896,50 @@ onMounted(() => {
             </div>
           </div>
           <button class="icon-btn" type="button" title="删除" @click.stop="deleteTarget = r"><Icon name="trash" /></button>
+        </div>
+      </div>
+
+      <!-- 内容优化任务卡片（#90/T02）：阶段流转 / 进度 / 失败重试 / 取消续接 -->
+      <div class="rgroup-title"><span>内容优化任务</span><span>{{ contentTasks.length }} 项</span></div>
+      <p v-if="contentTaskError" class="empty" style="color:#dc2626">{{ contentTaskError }}</p>
+      <div v-if="contentTasks.length === 0 && !loading" class="empty">
+        暂无内容优化任务——在基准简历行点击「内容优化」触发（无 JD 通用质量优化）。
+      </div>
+      <div
+        v-for="t in contentTasks"
+        :key="t.id"
+        class="opt-task-card"
+        :class="{ failed: t.status === 'failed', ready: t.status === 'ready_for_review' }"
+      >
+        <div class="opt-task-head">
+          <span class="opt-task-title">内容优化 · {{ contentResumeTitle(t) }}</span>
+          <Pill :tone="t.status === 'failed' || t.status === 'cancelled' ? 'ghost' : 'tint'">
+            {{ CONTENT_STATUS_LABELS[t.status] }}
+          </Pill>
+        </div>
+        <div class="opt-task-progress">{{ t.progress }}</div>
+        <p v-if="t.error" class="opt-task-error">{{ t.error }}</p>
+        <div v-if="t.status === 'ready_for_review' && t.noChanges" class="opt-task-note">
+          无需修改——确认后不创建新版本。
+        </div>
+        <div v-if="t.status === 'confirmed'" class="opt-task-note">已完成。</div>
+        <div class="opt-task-actions">
+          <template v-if="t.status === 'diagnosing' || t.status === 'created' || t.status === 'rewriting'">
+            <button class="btn" type="button" @click="cancelContentTask(t)">取消</button>
+          </template>
+          <template v-else-if="t.status === 'awaiting_answers'">
+            <button class="btn" type="button" @click="cancelContentTask(t)">取消</button>
+          </template>
+          <template v-else-if="t.status === 'failed'">
+            <button class="btn" type="button" @click="retryContentTask(t)">重试</button>
+          </template>
+          <template v-else-if="t.status === 'cancelled'">
+            <button class="btn" type="button" @click="resumeContentTask(t)">续接</button>
+            <button class="btn" type="button" @click="voidContentTask(t)">作废</button>
+          </template>
+          <template v-else-if="t.status === 'ready_for_review'">
+            <button class="btn primary" type="button" @click="confirmContentTask(t)">确认{{ t.noChanges ? '（无需修改）' : '' }}</button>
+          </template>
         </div>
       </div>
 
@@ -1791,5 +1927,60 @@ onMounted(() => {
   font-size: 11.5px;
   color: var(--muted);
   margin-right: 4px;
+}
+
+/* 内容优化任务卡片（#90/T02） */
+.opt-task-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  background: var(--bg);
+}
+
+.opt-task-card.failed {
+  border-color: #dc2626;
+}
+
+.opt-task-card.ready {
+  border-color: #059669;
+}
+
+.opt-task-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.opt-task-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.opt-task-progress {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.opt-task-error {
+  font-size: 11.5px;
+  color: #dc2626;
+  margin: 4px 0 0;
+}
+
+.opt-task-note {
+  font-size: 12px;
+  color: #059669;
+  margin-top: 4px;
+}
+
+.opt-task-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+  flex-wrap: wrap;
 }
 </style>

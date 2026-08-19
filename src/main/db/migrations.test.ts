@@ -203,4 +203,53 @@ describe('applyMigrations', () => {
       upgraded.close()
     })
   })
+
+  describe('v11：内容优化任务表 content_optimize_tasks（#90/T02）', () => {
+    const INSERT_TASK = `INSERT INTO content_optimize_tasks
+      (id, resume_id, status, diagnosis_json, answers_json, rewrite_json, progress, error, no_changes, resume_to, created_at, updated_at)
+      VALUES (?, ?, ?, 'null', 'null', 'null', '', '', 0, NULL, 'now', 'now')`
+
+    it('新库迁移后：表可用、状态 CHECK 覆盖全部 8 个合法值、非法状态与非法 JSON 拒绝', () => {
+      const db = new Database(':memory:')
+      migrate(db)
+
+      // 全部 8 个合法状态可写入
+      const statuses = [
+        'created', 'diagnosing', 'awaiting_answers', 'rewriting',
+        'ready_for_review', 'confirmed', 'failed', 'cancelled'
+      ]
+      statuses.forEach((status, index) => {
+        db.prepare(INSERT_TASK).run(`t${index}`, 'r1', status)
+      })
+      const rows = db.prepare('SELECT status FROM content_optimize_tasks ORDER BY id').all() as Array<{ status: string }>
+      expect(rows.map((r) => r.status)).toEqual(statuses)
+
+      // 非法状态被 CHECK 拒绝
+      expect(() => db.prepare(INSERT_TASK).run('bad', 'r1', 'bogus')).toThrow()
+      // JSON 列约束：非 JSON 文本拒绝
+      expect(() =>
+        db
+          .prepare(
+            `INSERT INTO content_optimize_tasks (id, resume_id, status, diagnosis_json, answers_json, rewrite_json, progress, error, no_changes, resume_to, created_at, updated_at)
+             VALUES ('bad2', 'r1', 'created', 'not json', 'null', 'null', '', '', 0, NULL, 'now', 'now')`
+          )
+          .run()
+      ).toThrow()
+
+      // 既有 v10 库升级：表可新建，旧数据不受影响
+      const file = openTempFile()
+      tempDirs.add(join(file, '..'))
+      const old = new Database(file)
+      applyMigrations(old, MIGRATIONS.slice(0, 10))
+      old.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run('k', 'v10')
+      old.close()
+      const upgraded = new Database(file)
+      migrate(upgraded)
+      expect(userVersion(upgraded)).toBe(MIGRATIONS.length)
+      expect(upgraded.prepare('SELECT value FROM settings WHERE key = ?').get('k')).toEqual({ value: 'v10' })
+      upgraded.prepare(INSERT_TASK).run('t-v11', 'r1', 'created')
+      expect(upgraded.prepare('SELECT id FROM content_optimize_tasks').get()).toEqual({ id: 't-v11' })
+      upgraded.close()
+    })
+  })
 })

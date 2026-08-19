@@ -38,7 +38,8 @@ import type {
   TopicGenerateInput,
   TopicInput,
   TopicStatus,
-  ResumeDraft
+  ResumeDraft,
+  ContentOptimizeTask
 } from './types'
 import type { Resume, StoredResume } from './types/resume'
 
@@ -110,7 +111,17 @@ export const IpcChannel = {
   CsvImportConfirm: 'csv-import:confirm',
   CsvImportTemplate: 'csv-import:template',
   AsrStart: 'asr:start',
-  AsrStop: 'asr:stop'
+  AsrStop: 'asr:stop',
+  // #90 业务①（T02）：简历内容优化异步任务
+  ContentOptimizeStart: 'content-optimize:start',
+  ContentOptimizeList: 'content-optimize:list',
+  ContentOptimizeGet: 'content-optimize:get',
+  ContentOptimizeSubmitAnswers: 'content-optimize:submit-answers',
+  ContentOptimizeConfirm: 'content-optimize:confirm',
+  ContentOptimizeCancel: 'content-optimize:cancel',
+  ContentOptimizeRetry: 'content-optimize:retry',
+  ContentOptimizeResume: 'content-optimize:resume',
+  ContentOptimizeVoid: 'content-optimize:void'
 } as const
 
 /** ping 响应类型：渲染进程调用主进程 ping 的返回。 */
@@ -218,6 +229,24 @@ export interface IpcProtocol {
     request: { id: string; format: 'pdf' | 'docx' }
     response: string | null
   }
+  // #90 业务①（T02）：内容优化异步任务 —— start 触发（校验基准简历+单基准单草稿）；
+  // submitAnswers 提交追问（awaiting_answers → rewriting）；confirm 确认（空诊断不建版本）；
+  // cancel 取消（当前 LLM 轮结束后停止）；retry 失败重试；resume 取消后续接；void 作废。
+  [IpcChannel.ContentOptimizeStart]: { request: { resumeId: string }; response: ContentOptimizeTask }
+  [IpcChannel.ContentOptimizeList]: { request: void; response: ContentOptimizeTask[] }
+  [IpcChannel.ContentOptimizeGet]: { request: { taskId: string }; response: ContentOptimizeTask | null }
+  [IpcChannel.ContentOptimizeSubmitAnswers]: {
+    request: { taskId: string; answers: Record<string, string> }
+    response: ContentOptimizeTask
+  }
+  [IpcChannel.ContentOptimizeConfirm]: {
+    request: { taskId: string }
+    response: { task: ContentOptimizeTask; createdResumeId: string | null }
+  }
+  [IpcChannel.ContentOptimizeCancel]: { request: { taskId: string }; response: ContentOptimizeTask }
+  [IpcChannel.ContentOptimizeRetry]: { request: { taskId: string }; response: ContentOptimizeTask }
+  [IpcChannel.ContentOptimizeResume]: { request: { taskId: string }; response: ContentOptimizeTask }
+  [IpcChannel.ContentOptimizeVoid]: { request: { taskId: string }; response: void }
   // F-07/#32：优化流程 —— run 三轮编排（进度经 optimize:progress 事件推送；结果含优化稿+changes）
   [IpcChannel.OptimizeRun]: {
     request: { jobId: string; resumeId: string; mode: OptimizationMode }
@@ -309,7 +338,8 @@ export const IpcEvent = {
   ResumesImportDone: 'resumes:import-done', // #75：导入完成（草稿 + 保底 Resume）
   ResumesImportError: 'resumes:import-error', // #75：导入失败（明确错误）
   ResumesImportCancelled: 'resumes:import-cancelled', // #75：取消（UI 静默关闭）
-  ResumesImportAgentPending: 'resumes:import-agent-pending' // #77：Agent 决策（隐私同意/超时）
+  ResumesImportAgentPending: 'resumes:import-agent-pending', // #77：Agent 决策（隐私同意/超时）
+  ContentOptimizeChanged: 'content-optimize:changed' // #90/T02：内容优化任务变更（状态/进度/失败/取消推送）
 } as const
 
 /** agent 会话状态（agent:status 载荷）。 */
@@ -336,6 +366,8 @@ export interface IpcEventMap {
   [IpcEvent.ResumesImportCancelled]: { token: string }
   // #77：Agent 决策请求——consent（首次隐私告知）/ timeout（等待超 30s）
   [IpcEvent.ResumesImportAgentPending]: { token: string; kind: 'consent' | 'timeout' }
+  // #90/T02：内容优化任务变更（任务卡片实时刷新阶段/进度/失败/取消）
+  [IpcEvent.ContentOptimizeChanged]: { task: ContentOptimizeTask }
 }
 
 export type IpcEventName = keyof IpcEventMap
@@ -430,6 +462,28 @@ export interface OptimizeApi {
   run: (jobId: string, resumeId: string, mode: OptimizationMode) => Promise<OptimizeResult>
 }
 
+/** 渲染进程可见的内容优化 api 表面（#90 业务①/T02：异步任务生命周期）。 */
+export interface ContentOptimizeApi {
+  /** 触发内容优化（校验基准简历 + 单基准单草稿；失败抛 ContentOptimizeError message）。 */
+  start: (resumeId: string) => Promise<ContentOptimizeTask>
+  /** 全部任务（任务卡片列表）。 */
+  list: () => Promise<ContentOptimizeTask[]>
+  /** 单任务。 */
+  get: (taskId: string) => Promise<ContentOptimizeTask | null>
+  /** 提交追问回答（awaiting_answers → rewriting）。 */
+  submitAnswers: (taskId: string, answers: Record<string, string>) => Promise<ContentOptimizeTask>
+  /** 确认内容优化稿（空诊断不创建新版本；返回 createdResumeId）。 */
+  confirm: (taskId: string) => Promise<{ task: ContentOptimizeTask; createdResumeId: string | null }>
+  /** 取消（当前 LLM 轮结束后停止）。 */
+  cancel: (taskId: string) => Promise<ContentOptimizeTask>
+  /** 失败重试（回到失败阶段）。 */
+  retry: (taskId: string) => Promise<ContentOptimizeTask>
+  /** 取消后续接（回到取消前阶段）。 */
+  resume: (taskId: string) => Promise<ContentOptimizeTask>
+  /** 作废（取消后放弃任务，释放单基准单草稿约束）。 */
+  void: (taskId: string) => Promise<void>
+}
+
 /** 渲染进程可见的 crawls api 表面（F-08/#22：执行框架 + 留痕；F-11/#29：预览 + 确认导入）。 */export interface CrawlApi {
   /** 执行一次采集（节流/重试/上限框架内完成；返回留痕 + 候选，供预览）。 */
   run: (source: PositionSource, options: CrawlRunOptions) => Promise<CrawlRunResult>
@@ -515,6 +569,7 @@ export interface RendererApi {
   crawls: CrawlApi
   csvImport: CsvImportApi
   optimize: OptimizeApi
+  contentOptimize: ContentOptimizeApi
   topics: TopicsApi
   learn: LearnApi
   interview: InterviewApi

@@ -359,4 +359,31 @@ describe('createRendererApi（渲染侧 api 客户端）', () => {
       expect(fake.subscribed.has(event)).toBe(true)
     }
   })
+
+  it('contentOptimize.start 映射到 content-optimize:start 并传 { resumeId }', async () => {
+    const fake = makeFakeBridge()
+    const api = createRendererApi(fake.bridge)
+    await api.contentOptimize.start('res-1')
+    expect(fake.invocations).toEqual([
+      { channel: IpcChannel.ContentOptimizeStart, args: [{ resumeId: 'res-1' }] }
+    ])
+  })
+
+  it('contentOptimize.confirm 映射到 content-optimize:confirm 并传 { taskId }', async () => {
+    const fake = makeFakeBridge()
+    const api = createRendererApi(fake.bridge)
+    await api.contentOptimize.confirm('cot-1')
+    expect(fake.invocations).toEqual([
+      { channel: IpcChannel.ContentOptimizeConfirm, args: [{ taskId: 'cot-1' }] }
+    ])
+  })
+
+  it('contentOptimize.void 映射到 content-optimize:void 并传 { taskId }', async () => {
+    const fake = makeFakeBridge()
+    const api = createRendererApi(fake.bridge)
+    await api.contentOptimize.void('cot-1')
+    expect(fake.invocations).toEqual([
+      { channel: IpcChannel.ContentOptimizeVoid, args: [{ taskId: 'cot-1' }] }
+    ])
+  })
 })

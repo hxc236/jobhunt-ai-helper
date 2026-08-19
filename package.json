@@ -17,6 +17,7 @@
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "test": "node scripts/test.mjs run",
     "test:watch": "node scripts/test.mjs",
+    "e2e:content-optimize": "node scripts/e2e-run.mjs",
     "postinstall": "node node_modules/electron/install.js"
   },
   "dependencies": {

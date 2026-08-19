@@ -220,7 +220,30 @@ export const MIGRATIONS: readonly string[] = [
   `,
   // v10: crawl_runs 增 conditions_json（issue #55 结构化采集条件留痕快照；
   // hire_type/keyword/city；旧行 NULL）。
-  `ALTER TABLE crawl_runs ADD COLUMN conditions_json TEXT`
+  `ALTER TABLE crawl_runs ADD COLUMN conditions_json TEXT`,
+  // v11: content_optimize_tasks 表（#90 业务① / T02）—— 内容优化异步任务独立存储。
+  // - 与 resumes 无外键（删除基准简历不级联删任务；任务保留历史供续接/复盘）；
+  // - status 状态机：created → diagnosing → awaiting_answers → rewriting →
+  //   ready_for_review → confirmed；failed 可重试、cancelled 可续接或作废；
+  // - diagnosis/answers/rewrite 为 JSON 列（任务记录不进简历 JSON，见 ADR-0003 边界）；
+  // - no_changes：空诊断路径（全部「保持」→ 无需修改，不创建新版本）。
+  `
+  CREATE TABLE content_optimize_tasks (
+    id TEXT PRIMARY KEY,
+    resume_id TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('created','diagnosing','awaiting_answers','rewriting','ready_for_review','confirmed','failed','cancelled')),
+    diagnosis_json TEXT NOT NULL DEFAULT 'null' CHECK (json_valid(diagnosis_json)),
+    answers_json TEXT NOT NULL DEFAULT 'null' CHECK (json_valid(answers_json)),
+    rewrite_json TEXT NOT NULL DEFAULT 'null' CHECK (json_valid(rewrite_json)),
+    progress TEXT NOT NULL DEFAULT '',
+    error TEXT NOT NULL DEFAULT '',
+    no_changes INTEGER NOT NULL DEFAULT 0,
+    resume_to TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX idx_content_optimize_tasks_resume ON content_optimize_tasks(resume_id);
+  `
 ]
 
 /**

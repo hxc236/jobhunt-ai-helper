@@ -14,6 +14,7 @@ import type { AgentService } from '../services/agent'
 import type { CrawlService } from '../services/crawl'
 import type { CsvImportService } from '../services/csv-import'
 import type { OptimizeService } from '../services/optimize'
+import type { ContentOptimizeService } from '../services/content-optimize'
 import type { TopicService } from '../services/topic'
 import type { LearnService } from '../services/learn'
 import type { InterviewService } from '../services/interview'
@@ -53,6 +54,7 @@ export interface IpcDeps {
   bossLogin: BossLoginService
   crawlPresets: CrawlPresetService
   optimize: OptimizeService
+  contentOptimize: ContentOptimizeService
   topics: TopicService
   learn: LearnService
   interview: InterviewService
@@ -63,7 +65,7 @@ export interface IpcDeps {
  * 注册全部 IPC handler（薄层：仅参数校验 + 转调服务）。
  * 主进程启动时调用一次；后续通道（EF-04 起）在此追加。
  */
-export function registerIpcHandlers({ settings, agent, positions, resumes, resumeImport, crawls, bossLogin, crawlPresets, optimize, topics, learn, interview, asr, csvImport }: IpcDeps): void {
+export function registerIpcHandlers({ settings, agent, positions, resumes, resumeImport, crawls, bossLogin, crawlPresets, optimize, contentOptimize, topics, learn, interview, asr, csvImport }: IpcDeps): void {
   handleRequest(IpcChannel.Ping, (): PingResponse => ping())
 
   handleRequest(IpcChannel.SettingsGet, (request) => settings.get(request.key))
@@ -156,6 +158,18 @@ export function registerIpcHandlers({ settings, agent, positions, resumes, resum
   handleRequest(IpcChannel.OptimizeRun, (request) =>
     optimize.run(request.jobId, request.resumeId, request.mode)
   )
+  // #90 业务①（T02）：内容优化异步任务 —— 阶段流转经 contentOptimize:changed 事件推送
+  handleRequest(IpcChannel.ContentOptimizeStart, (request) => contentOptimize.start(request.resumeId))
+  handleRequest(IpcChannel.ContentOptimizeList, () => contentOptimize.list())
+  handleRequest(IpcChannel.ContentOptimizeGet, (request) => contentOptimize.get(request.taskId) ?? null)
+  handleRequest(IpcChannel.ContentOptimizeSubmitAnswers, (request) =>
+    contentOptimize.submitAnswers(request.taskId, request.answers)
+  )
+  handleRequest(IpcChannel.ContentOptimizeConfirm, (request) => contentOptimize.confirm(request.taskId))
+  handleRequest(IpcChannel.ContentOptimizeCancel, (request) => contentOptimize.cancel(request.taskId))
+  handleRequest(IpcChannel.ContentOptimizeRetry, (request) => contentOptimize.retry(request.taskId))
+  handleRequest(IpcChannel.ContentOptimizeResume, (request) => contentOptimize.resume(request.taskId))
+  handleRequest(IpcChannel.ContentOptimizeVoid, (request) => contentOptimize.voidTask(request.taskId))
   // F-19（#33）：学习清单生成与人工 CRUD
   handleRequest(IpcChannel.TopicsList, (request) => topics.list(request))
   handleRequest(IpcChannel.TopicsGenerate, (request) =>

@@ -96,3 +96,7 @@
 
 **F-34 复盘展示与回填**：行为：复盘视图（总分环/维度/薄弱点/参考折叠/下一步）+ suggestLearn 一键入 topics（source=interview）+ 历史回看（对话+复盘）。验收：回填生成条目；历史列表+详情可用。
 
+### F 简历内容优化（业务①，#90，与按 JD 优化独立）
+
+**F-35 内容优化任务骨架（T02）**：行为：基准简历行「内容优化」入口 → ContentOptimizeService 异步任务（状态机 `created→diagnosing→awaiting_answers→rewriting→ready_for_review→confirmed`；failed 手动重试、cancelled 续接或作废、应用重启自动恢复中断轮次）；LLM 轮次全局串行队列（每轮超时 60s、重试 1 次）；任务记录存 `content_optimize_tasks` 独立存储；首次触发自动补齐项目稳定 ID/≤4 条要点/sectionOrder（#91）；空诊断（全部保持）→「无需修改」不创建新版本；事件 `content-optimize:changed` 实时推送阶段流转。E2E 基建：`JOBHUNT_FAKE_AGENT=1` 假 agent + 真实启动 Electron + CDP 鼠标/键盘驱动 + 截图/无障碍快照断言 + 落库断言。规则：#90-27（只对基准简历开放）、#90-21（确认后成为新基准简历）。验收：状态机/重试/取消续接/单基准单草稿/持久化单测绿；E2E 冒烟（`npm run e2e:content-optimize`）通过。
+
