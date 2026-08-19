@@ -1133,6 +1133,41 @@ describe('大赛提升为项目（T08/#98）', () => {
     ).toThrowError(ContentOptimizeError)
   })
 
+  it('#98 review：honorName 与实际荣誉不符（诊断后简历被改）→ 拒绝提升（invalid-promotion）', async () => {
+    const harness = makeHarness({ diagnosis: PROMOTION_DIAGNOSIS })
+    harness.resumes.update(harness.resumeId, baseWithHonors())
+    const created = harness.service.start(harness.resumeId)
+    const task = await waitForStatus(harness, created.id, (t) => t.status === 'awaiting_answers')
+
+    // 诊断后用户改了荣誉文本（下标仍为 0，但名称不再是大赛）
+    harness.resumes.update(harness.resumeId, { ...baseWithHonors(), honors: ['优秀志愿者', '校三好学生'] })
+    expect(() =>
+      harness.service.confirmPromotion(task.id, task.diagnosis!.promotions[0]!.id, {
+        'promotion-promo-0-startDate': '2023-04'
+      })
+    ).toThrowError(/荣誉名称与提升建议不符/)
+    // 简历未被改动
+    expect(harness.resumes.get(harness.resumeId)!.projects).toHaveLength(1)
+    expect(harness.resumes.get(harness.resumeId)!.honors).toEqual(['优秀志愿者', '校三好学生'])
+  })
+
+  it('#98 review：honorName 宽松匹配（标点/空白差异）不误拒', async () => {
+    const harness = makeHarness({ diagnosis: PROMOTION_DIAGNOSIS })
+    harness.resumes.update(harness.resumeId, baseWithHonors())
+    const created = harness.service.start(harness.resumeId)
+    const task = await waitForStatus(harness, created.id, (t) => t.status === 'awaiting_answers')
+
+    // 荣誉原文带标点/全角空格，与建议名有差异但宽松等价
+    harness.resumes.update(harness.resumeId, {
+      ...baseWithHonors(),
+      honors: ['全国大学生数学建模竞赛省一等奖（2023）', '校三好学生']
+    })
+    // 建议名与原文不完全一致（不同文本）→ 仍拒绝，保证匹配是有意义的
+    expect(() =>
+      harness.service.confirmPromotion(task.id, task.diagnosis!.promotions[0]!.id, {})
+    ).toThrowError(/荣誉名称与提升建议不符/)
+  })
+
   it('AC3：提升后的项目参与规则诊断与改写（重新诊断产出该项目规则 → 改写轮引用）', async () => {
     let diagnosisRound = 0
     const harness = makeHarness({

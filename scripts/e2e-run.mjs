@@ -11,10 +11,13 @@ const electronPath = require('electron') // electron 包导出二进制路径
 const script = fileURLToPath(new URL('./e2e-content-optimize.mjs', import.meta.url))
 
 // npm run e2e:content-optimize:answers → 追问场景（JOBHUNT_E2E_SCENARIO=questions）
+// npm run e2e:content-optimize:promotion → 大赛提升场景（JOBHUNT_E2E_SCENARIO=promotion）
 const args = process.argv.slice(2)
 const env = { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
 if (args.includes('--answers')) {
   env['JOBHUNT_E2E_SCENARIO'] = 'questions'
+} else if (args.includes('--promotion')) {
+  env['JOBHUNT_E2E_SCENARIO'] = 'promotion'
 }
 
 const result = spawnSync(electronPath, [script], {

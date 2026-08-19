@@ -154,10 +154,13 @@ export function parseDiagnosis(reply: string): ContentDiagnosis {
   return { rules, projects, questions, promotions }
 }
 
-/** 解析单条大赛提升建议；字段缺失/下标非法返回 null（跳过）。 */
+/** 解析单条大赛提升建议；字段缺失/下标非法/名称缺失返回 null（跳过）。 */
 function parsePromotion(raw: Record<string, unknown>): ContentPromotionSuggestion | null {
   const honorIndex = typeof raw.honorIndex === 'number' ? raw.honorIndex : Number(raw.honorIndex)
   if (!Number.isInteger(honorIndex) || honorIndex < 0) return null
+  // #98 review：honorName 是提升对象的确认依据（下标+名称双重匹配），缺失/空视为非法建议
+  const honorName = typeof raw.honorName === 'string' ? raw.honorName.trim() : ''
+  if (honorName === '') return null
   const missingFields = Array.isArray(raw.missingFields)
     ? raw.missingFields
         .filter(isPromotionMissingField)
@@ -166,7 +169,7 @@ function parsePromotion(raw: Record<string, unknown>): ContentPromotionSuggestio
   return {
     id: raw.id !== undefined && raw.id !== null && String(raw.id) !== '' ? String(raw.id) : `promo-${honorIndex}`,
     honorIndex,
-    honorName: String(raw.honorName ?? ''),
+    honorName,
     evidence: String(raw.evidence ?? ''),
     missingFields
   }

@@ -36,14 +36,6 @@ export function promotionQuestionKeys(promotion: ContentPromotionSuggestion): st
   return promotion.missingFields.map((field) => promotionQuestionKey(promotion, field))
 }
 
-/** 追问键 → 缺失字段；非提升追问键返回 null。 */
-export function promotionFieldForKey(key: string): ContentPromotionMissingField | null {
-  const idx = key.lastIndexOf('-')
-  if (idx === -1) return null
-  const field = key.slice(idx + 1)
-  return isPromotionMissingField(field) ? field : null
-}
-
 /** 提升追问问题文本（表单展示）。 */
 export function promotionQuestionText(
   promotion: ContentPromotionSuggestion,

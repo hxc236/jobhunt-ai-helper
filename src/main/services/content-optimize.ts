@@ -16,6 +16,7 @@ import {
   type ContentRewrite
 } from '../../shared/types'
 import type { Resume, ResumeProject } from '../../shared/types/resume'
+import { normalizeText } from '../../shared/text-utils'
 import { contentQuestionKeys } from '../../shared/content-answers'
 import {
   isPromotionAnswerSentinel,
@@ -45,6 +46,8 @@ import {
  *   created → diagnosing → awaiting_answers → rewriting → ready_for_review → confirmed
  *   failed：可手动重试回对应阶段（resume_to 记录失败时所在阶段）；
  *   cancelled：可续接（resume_to 记录取消前阶段）或作废（void）。
+ *   #98/T08 大赛提升：awaiting_answers 确认提升（confirmPromotion）→ honors 大赛转项目 →
+ *   回到 diagnosing 重新诊断（提升项目以真实项目 id 参与规则判定），再走正常状态流。
  *
  * 约定：
  * - 每份基准简历同一时间仅一个进行中任务（单基准单草稿约束，服务层拒绝重复 start）；
@@ -56,6 +59,10 @@ import {
  *
  * T02 垂直切片：空诊断（全部「保持」→ 无需修改 → 不创建新版本）打通全链路。
  * 规则诊断引擎（R1–R4）由 T03 填充；改写轮由 T05 填充；本卡实现状态机 + 轮次骨架。
+ *
+ * 公开 API（IPC 接线见 src/main/ipc/index.ts）：
+ *   start / list / get / forResume / submitAnswers / setReview / confirm /
+ *   cancel / retry / resume / voidTask / confirmPromotion（T08） / hasCompletedContentOptimization（T07）。
  */
 
 /** 阶段进度文案（单一来源 shared/types.ts CONTENT_STATUS_LABELS，服务端旧名兼容）。 */
@@ -309,17 +316,7 @@ export class ContentOptimizeService {
       throw new ContentOptimizeError('invalid-state', `当前状态不可提交回答：${task.status}`)
     }
     const questions = task.diagnosis?.questions ?? []
-    const known = new Set(contentQuestionKeys(questions))
-    const unknown = Object.keys(answers).filter((key) => !known.has(key))
-    if (unknown.length > 0) {
-      throw new ContentOptimizeError('invalid-answers', `包含未知问题键：${unknown.join(', ')}`)
-    }
-    const emptyValues = Object.entries(answers)
-      .filter(([, value]) => value.trim() === '')
-      .map(([key]) => key)
-    if (emptyValues.length > 0) {
-      throw new ContentOptimizeError('invalid-answers', `包含空回答值：${emptyValues.join(', ')}`)
-    }
+    this.validateAnswers(contentQuestionKeys(questions), answers, '问题', '回答')
     const next = this.mutate(task, {
       answers,
       status: 'rewriting',
@@ -352,17 +349,7 @@ export class ContentOptimizeService {
       throw new ContentOptimizeError('invalid-promotion', `提升建议不存在：${promotionId}`)
     }
     // 回答键校验：只接受该建议缺失字段的追问键；值非空（哨兵允许）
-    const known = new Set(promotionQuestionKeys(promotion))
-    const unknown = Object.keys(answers).filter((key) => !known.has(key))
-    if (unknown.length > 0) {
-      throw new ContentOptimizeError('invalid-answers', `包含未知回答键：${unknown.join(', ')}`)
-    }
-    const emptyValues = Object.entries(answers)
-      .filter(([, value]) => value.trim() === '')
-      .map(([key]) => key)
-    if (emptyValues.length > 0) {
-      throw new ContentOptimizeError('invalid-answers', `包含空回答值：${emptyValues.join(', ')}`)
-    }
+    this.validateAnswers(promotionQuestionKeys(promotion), answers)
     const resume = this.resumes.get(task.resumeId)
     if (resume === undefined) {
       throw new ContentOptimizeError('resume-not-found', `简历不存在：${task.resumeId}`)
@@ -371,6 +358,14 @@ export class ContentOptimizeService {
     const honor = honors[promotion.honorIndex]
     if (honor === undefined) {
       throw new ContentOptimizeError('invalid-promotion', `荣誉条目不存在：honors[${promotion.honorIndex}]`)
+    }
+    // #98 review：确认对象 = 建议针对的荣誉原文——下标位与实际名称不符（诊断后简历被改）时拒绝
+    // （宽松比较：去标点空白/小写，容忍 LLM 转写差异）。
+    if (normalizeText(honor) !== normalizeText(promotion.honorName)) {
+      throw new ContentOptimizeError(
+        'invalid-promotion',
+        `荣誉名称与提升建议不符："${honor}" ≠ "${promotion.honorName}"`
+      )
     }
     // 应用提升：honors 移除该条目，projects 追加新项目（字段由回答补齐，哨兵不写入）
     const project = buildPromotedProject(promotion, answers)
@@ -768,6 +763,31 @@ export class ContentOptimizeService {
       | { resume_to: string | null }
       | undefined
     return row?.resume_to ?? null
+  }
+
+  /**
+   * 回答校验（T04 追问 / T08 提升追问共用，单一实现）：
+   * 只接受已知键（容忍部分回答——未答项允许缺失；不属实/无法补充用哨兵值），
+   * 值去空白后非空（哨兵值与普通文本均非空）。
+   * keyLabel/valueLabel 用于错误文案（追问=问题/回答，提升追问=回答），保持各调用点历史文案。
+   */
+  private validateAnswers(
+    knownKeys: string[],
+    answers: Record<string, string>,
+    keyLabel = '回答',
+    valueLabel = '回答'
+  ): void {
+    const known = new Set(knownKeys)
+    const unknown = Object.keys(answers).filter((key) => !known.has(key))
+    if (unknown.length > 0) {
+      throw new ContentOptimizeError('invalid-answers', `包含未知${keyLabel}键：${unknown.join(', ')}`)
+    }
+    const emptyValues = Object.entries(answers)
+      .filter(([, value]) => value.trim() === '')
+      .map(([key]) => key)
+    if (emptyValues.length > 0) {
+      throw new ContentOptimizeError('invalid-answers', `包含空${valueLabel}值：${emptyValues.join(', ')}`)
+    }
   }
 
   /** 持久化任务变更 + 推送事件。 */

@@ -8,7 +8,10 @@ import type { AnswerAction } from './content-answers-form'
 
 /**
  * 大赛提升追问表单逻辑（#98/T08：与 content-answers-form 同模式，纯函数模块）。
- *\n * 每张提升建议卡片列出缺失字段（开始时间/结束时间/技术栈/描述），\n * 复用四选一 + 自由输入语义（无候选）：确认属实 = 以当前输入为准；\n * 不属实/无法补充写哨兵（不写入项目字段）；answers 键 = promotion-<id>-<字段>。\n * 确认提升时把各字段草稿编码为提交 answers。
+ * 每张提升建议卡片列出缺失字段（开始时间/结束时间/技术栈/描述），
+ * 复用四选一 + 自由输入语义（无候选）：确认属实 = 以当前输入为准；
+ * 不属实/无法补充写哨兵（不写入项目字段）；answers 键 = promotion-<id>-<字段>。
+ * 确认提升时把各字段草稿编码为提交 answers。
  */
 
 /** 单字段提升回答草稿（复用 AnswerAction；无候选，candidateIndex 恒 0）。 */

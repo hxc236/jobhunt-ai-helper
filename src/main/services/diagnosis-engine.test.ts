@@ -314,6 +314,23 @@ describe('parseDiagnosis 大赛提升建议（T08/#98）', () => {
     expect(d.promotions).toEqual([{ id: 'ok', honorIndex: 1, honorName: '合法', evidence: 'e', missingFields: ['startDate'] }])
   })
 
+  it('#98 review：honorName 缺失/空白的建议被跳过（名称是提升对象的确认依据）', () => {
+    const d = parseDiagnosis(
+      JSON.stringify({
+        rules: [],
+        projects: [],
+        questions: [],
+        promotions: [
+          { id: 'no-name', honorIndex: 0, evidence: 'e' },
+          { id: 'blank-name', honorIndex: 1, honorName: '   ', evidence: 'e' },
+          { id: 'num-name', honorIndex: 2, honorName: 42, evidence: 'e' },
+          { id: 'ok', honorIndex: 3, honorName: '挑战杯', evidence: 'e' }
+        ]
+      })
+    )
+    expect(d.promotions).toEqual([{ id: 'ok', honorIndex: 3, honorName: '挑战杯', evidence: 'e', missingFields: [] }])
+  })
+
   it('非大赛荣誉（无 promotions 字段/空数组）→ 空数组，不破坏空诊断语义', () => {
     const d = parseDiagnosis(JSON.stringify({ rules: [], projects: [{ projectId: 'p1', verdict: 'keep' }], questions: [] }))
     expect(d.promotions).toEqual([])
