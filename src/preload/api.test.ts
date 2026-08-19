@@ -398,4 +398,13 @@ describe('createRendererApi（渲染侧 api 客户端）', () => {
       { channel: IpcChannel.ContentOptimizeVoid, args: [{ taskId: 'cot-1' }] }
     ])
   })
+
+  it('contentOptimize.hasCompleted 映射到 content-optimize:has-completed 并传 { resumeId }（T07）', async () => {
+    const fake = makeFakeBridge()
+    const api = createRendererApi(fake.bridge)
+    await api.contentOptimize.hasCompleted('res-1')
+    expect(fake.invocations).toEqual([
+      { channel: IpcChannel.ContentOptimizeHasCompleted, args: [{ resumeId: 'res-1' }] }
+    ])
+  })
 })

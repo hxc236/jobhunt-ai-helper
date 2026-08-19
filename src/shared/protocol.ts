@@ -123,7 +123,9 @@ export const IpcChannel = {
   ContentOptimizeCancel: 'content-optimize:cancel',
   ContentOptimizeRetry: 'content-optimize:retry',
   ContentOptimizeResume: 'content-optimize:resume',
-  ContentOptimizeVoid: 'content-optimize:void'
+  ContentOptimizeVoid: 'content-optimize:void',
+  // T07/#97：某基准简历是否已完成过内容优化（供「建议先做内容优化」提示）。
+  ContentOptimizeHasCompleted: 'content-optimize:has-completed'
 } as const
 
 /** ping 响应类型：渲染进程调用主进程 ping 的返回。 */
@@ -258,6 +260,8 @@ export interface IpcProtocol {
   [IpcChannel.ContentOptimizeRetry]: { request: { taskId: string }; response: ContentOptimizeTask }
   [IpcChannel.ContentOptimizeResume]: { request: { taskId: string }; response: ContentOptimizeTask }
   [IpcChannel.ContentOptimizeVoid]: { request: { taskId: string }; response: void }
+  // T07/#97：某基准简历是否已完成过内容优化（供「建议先做内容优化」提示）。
+  [IpcChannel.ContentOptimizeHasCompleted]: { request: { resumeId: string }; response: boolean }
   // F-07/#32：优化流程 —— run 三轮编排（进度经 optimize:progress 事件推送；结果含优化稿+changes）
   [IpcChannel.OptimizeRun]: {
     request: { jobId: string; resumeId: string; mode: OptimizationMode }
@@ -499,6 +503,8 @@ export interface ContentOptimizeApi {
   resume: (taskId: string) => Promise<ContentOptimizeTask>
   /** 作废（取消后放弃任务，释放单基准单草稿约束）。 */
   void: (taskId: string) => Promise<void>
+  /** T07/#97：某基准简历是否已完成过内容优化（供「建议先做内容优化」提示）。 */
+  hasCompleted: (resumeId: string) => Promise<boolean>
 }
 
 /** 渲染进程可见的 crawls api 表面（F-08/#22：执行框架 + 留痕；F-11/#29：预览 + 确认导入）。 */export interface CrawlApi {

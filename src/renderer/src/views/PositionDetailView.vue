@@ -48,6 +48,8 @@ const appForm = reactive({ channel: '', appliedDate: '' })
 /* ---------- 匹配度（F-06/#27） ---------- */
 const resumes = ref<StoredResume[]>([])
 const selectedResumeId = ref('')
+/** T07/#97：已完成过内容优化的基准简历 id 集合（用于「建议先做内容优化」提示）。 */
+const contentOptimizedResumeIds = ref<Set<string>>(new Set())
 const fitScore = ref<FitScore | null>(null)
 const scoring = ref(false)
 const scoreError = ref('')
@@ -259,6 +261,17 @@ function daysLeft(endDate: string | null): number | null {
 
 const daysLeftValue = computed(() => daysLeft(position.value?.end_date ?? null))
 
+/**
+ * T07/#97：当前选中基准是否「未做内容优化」（用于按 JD 优化入口的提示）。
+ * 派生稿（baseResumeId != null，按 JD 优化稿）不适用；仅基准简历且无已归档内容优化任务时提示。
+ */
+const selectedBaseLacksContentOpt = computed(() => {
+  const resume = resumes.value.find((r) => r.meta.id === selectedResumeId.value)
+  if (resume === undefined) return false
+  if (resume.meta.baseResumeId != null) return false
+  return !contentOptimizedResumeIds.value.has(resume.meta.id as string)
+})
+
 async function load(): Promise<void> {
   loading.value = true
   errorMessage.value = ''
@@ -266,6 +279,11 @@ async function load(): Promise<void> {
     position.value = await window.api.positions.get(props.positionId)
     application.value = await window.api.positions.getApplication(props.positionId)
     resumes.value = await window.api.resumes.list()
+    // T07/#97：加载已完成内容优化的基准集合（供「建议先做内容优化」提示）。
+    const tasks = await window.api.contentOptimize.list()
+    contentOptimizedResumeIds.value = new Set(
+      tasks.filter((t) => t.archivedAt != null).map((t) => t.resumeId)
+    )
     fillAppForm()
   } catch (err) {
     errorMessage.value = `加载职位详情失败：${String(err)}`
@@ -622,6 +640,11 @@ onMounted(() => void load())
             {{ optimizing ? '优化中…' : '开始优化' }}
           </button>
         </div>
+
+        <!-- T07/#97：未做内容优化的基准 → 建议先做内容优化（不改动业务②行为） -->
+        <p v-if="selectedBaseLacksContentOpt" class="hint opt-content-hint">
+          该基准简历尚未做过内容优化——建议先在「简历」模块执行「内容优化」修复通用质量问题。
+        </p>
 
         <ul v-if="optimizeProgress.length > 0" class="opt-progress">
           <li v-for="p in optimizeProgress" :key="p.round" :class="{ done: p.done }">

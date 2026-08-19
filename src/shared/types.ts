@@ -694,6 +694,10 @@ export interface ContentOptimizeTask {
   inferredConfirmed: string[] | null
   /** 整合汇总（T06：标点/排序自动修复、删除/保留原文警告、仍有未解决项目；确认后保留展示）。 */
   summary: ContentIntegrationSummary | null
+  /** T07：确认后生成的新基准简历 id（血缘记录在任务中，不进简历 JSON；无改动/全部拒绝为 null）。 */
+  createdResumeId: string | null
+  /** T07：归档时间（确认即归档；已归档 = archivedAt != null）。 */
+  archivedAt: string | null
   createdAt: string
   updatedAt: string
 }

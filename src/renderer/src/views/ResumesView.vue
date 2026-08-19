@@ -5,6 +5,7 @@ import type { ResumeDraft, ContentOptimizeTask, ContentQuestion, ContentProjectD
 import { CONTENT_STATUS_LABELS } from '@shared/types'
 import { contentQuestionKey } from '@shared/content-answers'
 import { CHANGE_SOURCE_LABELS, buildIntegrationSummary } from '@shared/content-review'
+import { archiveSummaryFor } from '../content-task-view'
 import { IpcEvent } from '@shared/protocol'
 import { defaultBaseTitle, emptyResumeForm, formToResume, issueSection, keepEmptyRows, resumeToForm, SKILL_CATEGORIES, type ResumeForm } from '../resume-form'
 import { FACT_SOURCE_LABELS, PROJECT_VERDICT_LABELS, RULE_STATUS_LABELS, ruleName } from '../content-diagnosis-view'
@@ -1093,7 +1094,7 @@ onMounted(() => {
         v-for="t in contentTasks"
         :key="t.id"
         class="opt-task-card"
-        :class="{ failed: t.status === 'failed', ready: t.status === 'ready_for_review' }"
+        :class="{ failed: t.status === 'failed', ready: t.status === 'ready_for_review', archived: t.archivedAt != null }"
       >
         <div class="opt-task-head">
           <span class="opt-task-title">内容优化 · {{ contentResumeTitle(t) }}</span>
@@ -1102,6 +1103,7 @@ onMounted(() => {
           </Pill>
         </div>
         <div class="opt-task-progress">{{ t.progress }}</div>
+        <p v-if="archiveSummaryFor(t)" class="opt-task-archived">{{ archiveSummaryFor(t) }}</p>
         <p v-if="t.error" class="opt-task-error">{{ t.error }}</p>
         <!-- #93/T03 规则判定与项目判定展示（证据/问题/建议；R2 全局维度作用对象=global） -->
         <div
@@ -2338,6 +2340,17 @@ onMounted(() => {
   padding: 10px 12px;
   margin-bottom: 8px;
   background: var(--bg);
+}
+
+.opt-task-card.archived {
+  opacity: 0.62;
+  background: var(--bg-muted, var(--bg));
+}
+
+.opt-task-archived {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .opt-task-card.failed {

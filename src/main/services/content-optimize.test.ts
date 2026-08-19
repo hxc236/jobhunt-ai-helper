@@ -859,6 +859,163 @@ describe('确认、对比与整合（T06/#96）', () => {
   })
 })
 
+describe('确认入库与血缘（T07/#97）', () => {
+  /** 改写回复：p1 增加一条 highlights（source=inferred 推断-待确认）。 */
+  function inferredRewriteReply(prompt: string): string {
+    const resume = extractResumeFromPrompt(prompt)
+    const pid = resume?.projects?.[0]?.id ?? 'proj-1'
+    return JSON.stringify({
+      resume: {
+        ...resume,
+        projects: (resume?.projects ?? []).map((p, i) =>
+          i === 0 ? { ...p, highlights: ['高并发秒杀压测优化'] } : p
+        )
+      },
+      changes: [
+        {
+          projectId: pid,
+          section: 'highlights',
+          before: '',
+          after: '高并发秒杀压测优化',
+          reason: 'R1 新增难点',
+          source: 'inferred'
+        }
+      ]
+    })
+  }
+
+  async function runToReview(h: Harness): Promise<string> {
+    const task = h.service.start(h.resumeId)
+    await waitForStatus(h, task.id, (t) => t.status === 'ready_for_review')
+    return task.id
+  }
+
+  it('确认（改写路径）：血缘 createdResumeId + archivedAt 持久化，新基准 baseResumeId=null，重启可读回', async () => {
+    const h = makeHarness({
+      diagnosis: () =>
+        JSON.stringify({
+          rules: [],
+          projects: [{ projectId: 'proj-1', verdict: 'rewrite' }],
+          questions: []
+        }),
+      rewrite: inferredRewriteReply
+    })
+    const taskId = await runToReview(h)
+    h.service.setReview(taskId, { decisions: {}, inferredConfirmed: ['chg-0'] })
+
+    const { createdResumeId } = h.service.confirm(taskId)
+    expect(createdResumeId).not.toBeNull()
+    const confirmed = h.service.get(taskId)!
+    expect(confirmed.status).toBe('confirmed')
+    expect(confirmed.createdResumeId).toBe(createdResumeId)
+    expect(confirmed.archivedAt).not.toBeNull()
+
+    // 血缘不进简历 JSON：新基准是 baseResumeId=null 的普通基准（AC1/AC5）
+    const createdResume = h.resumes.list().find((r) => r.meta.id === createdResumeId)!
+    expect(createdResume.meta.baseResumeId).toBeNull()
+    expect(createdResume.meta.targetJobId).toBeNull()
+    expect(createdResume.meta).not.toHaveProperty('contentOptimizeTaskId')
+
+    // 重启后从 DB 读回（血缘随任务持久化，AC2）
+    const service2 = new ContentOptimizeService(h.db, h.resumes, new AgentService(h.provider), {
+      emit: () => undefined,
+      queue: new LlmRoundQueue()
+    })
+    const restored = service2.get(taskId)!
+    expect(restored.createdResumeId).toBe(createdResumeId)
+    expect(restored.archivedAt).not.toBeNull()
+  })
+
+  it('确认（noChanges 空诊断路径）：归档但不创建新版本，createdResumeId=null', async () => {
+    const h = makeHarness() // 默认空诊断（全部保持）
+    const task = h.service.start(h.resumeId)
+    await waitForStatus(h, task.id, (t) => t.status === 'ready_for_review')
+    const before = h.resumes.list().length
+
+    const { createdResumeId } = h.service.confirm(task.id)
+    expect(createdResumeId).toBeNull()
+    expect(h.resumes.list().length).toBe(before)
+    const confirmed = h.service.get(task.id)!
+    expect(confirmed.status).toBe('confirmed')
+    expect(confirmed.archivedAt).not.toBeNull()
+    expect(confirmed.createdResumeId).toBeNull()
+  })
+
+  it('确认（全部拒绝/无实际改动路径）：归档但不创建新版本，createdResumeId=null', async () => {
+    const h = makeHarness({
+      diagnosis: () =>
+        JSON.stringify({
+          rules: [],
+          projects: [{ projectId: 'proj-1', verdict: 'rewrite' }],
+          questions: []
+        }),
+      rewrite: inferredRewriteReply
+    })
+    const taskId = await runToReview(h)
+    const pid = h.service.get(taskId)!.rewrite!.changes[0]!.projectId!
+    h.service.setReview(taskId, { decisions: { [pid]: 'reject' }, inferredConfirmed: [] })
+
+    const before = h.resumes.list().length
+    const { createdResumeId } = h.service.confirm(taskId)
+    expect(createdResumeId).toBeNull()
+    expect(h.resumes.list().length).toBe(before)
+    const confirmed = h.service.get(taskId)!
+    expect(confirmed.archivedAt).not.toBeNull()
+    expect(confirmed.createdResumeId).toBeNull()
+  })
+
+  it('hasCompletedContentOptimization：确认前 false；两种确认路径后均 true；未知简历 false', async () => {
+    const h = makeHarness()
+    expect(h.service.hasCompletedContentOptimization(h.resumeId)).toBe(false)
+    expect(h.service.hasCompletedContentOptimization('res-missing')).toBe(false)
+
+    // noChanges 路径
+    const task = h.service.start(h.resumeId)
+    await waitForStatus(h, task.id, (t) => t.status === 'ready_for_review')
+    h.service.confirm(task.id)
+    expect(h.service.hasCompletedContentOptimization(h.resumeId)).toBe(true)
+
+    // 改写路径
+    const h2 = makeHarness({
+      diagnosis: () =>
+        JSON.stringify({
+          rules: [],
+          projects: [{ projectId: 'proj-1', verdict: 'rewrite' }],
+          questions: []
+        }),
+      rewrite: inferredRewriteReply
+    })
+    const taskId = await runToReview(h2)
+    h2.service.setReview(taskId, { decisions: {}, inferredConfirmed: ['chg-0'] })
+    const { createdResumeId } = h2.service.confirm(taskId)
+    expect(h2.service.hasCompletedContentOptimization(h2.resumeId)).toBe(true)
+    // 新基准本身尚未做内容优化 → false（AC4 语义：新基准未优化过）
+    expect(h2.service.hasCompletedContentOptimization(createdResumeId!)).toBe(false)
+  })
+
+  it('内容优化生成的新基准可再次作为内容优化输入（baseResumeId=null，单基准单草稿约束收尾）', async () => {
+    const h = makeHarness({
+      diagnosis: () =>
+        JSON.stringify({
+          rules: [],
+          projects: [{ projectId: 'proj-1', verdict: 'rewrite' }],
+          questions: []
+        }),
+      rewrite: inferredRewriteReply
+    })
+    const taskId = await runToReview(h)
+    h.service.setReview(taskId, { decisions: {}, inferredConfirmed: ['chg-0'] })
+    const { createdResumeId } = h.service.confirm(taskId)
+
+    // 新基准可再开内容优化任务（不抛 not-base-resume / active-task-exists）
+    const task2 = h.service.start(createdResumeId!)
+    expect(task2.status).toBe('created')
+    // 旧基准也可以再开新任务（已归档不阻塞）
+    const task3 = h.service.start(h.resumeId)
+    expect(task3.status).toBe('created')
+  })
+})
+
 describe('ContentQuestion 类型约束', () => {
   it('question 结构：projectId/field/question/evidence/candidates', () => {
     const q: ContentQuestion = {
