@@ -85,7 +85,7 @@ export function buildDiagnosisPrompt(resume: Resume): string {
       ],
       projects: [{ projectId: '<项目id>', verdict: 'keep|rewrite|needs-info' }],
       questions: [
-        { projectId: '<项目id>', field: '简介|难点|个人工作量|结果|技术栈', question: '追问问题', evidence: '原文证据', candidates: ['候选1', '候选2'] }
+        { id: '<可选稳定键，如 q1；省略时按序号 q0/q1/…>', projectId: '<项目id>', field: '简介|难点|个人工作量|结果|技术栈', question: '追问问题', evidence: '原文证据', candidates: ['候选1', '候选2'] }
       ]
     }),
     '',
@@ -102,6 +102,8 @@ export function parseDiagnosis(reply: string): ContentDiagnosis {
     : []
   const questions = Array.isArray(parsed.questions)
     ? parsed.questions.filter(isRecord).map((q) => ({
+        // T04：问题稳定键（追问表单 answers 记录用；缺失时渲染层按序号派生）
+        ...(q.id !== undefined && q.id !== null && String(q.id) !== '' ? { id: String(q.id) } : {}),
         projectId: String(q.projectId ?? ''),
         field: String(q.field ?? ''),
         question: String(q.question ?? ''),

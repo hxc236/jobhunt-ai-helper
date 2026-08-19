@@ -1,11 +1,22 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import type { Resume, StoredResume } from '@shared/types/resume'
-import type { ResumeDraft, ContentOptimizeTask } from '@shared/types'
+import type { ResumeDraft, ContentOptimizeTask, ContentQuestion } from '@shared/types'
 import { CONTENT_STATUS_LABELS } from '@shared/types'
+import { contentQuestionKey } from '@shared/content-answers'
 import { IpcEvent } from '@shared/protocol'
 import { defaultBaseTitle, emptyResumeForm, formToResume, issueSection, keepEmptyRows, resumeToForm, SKILL_CATEGORIES, type ResumeForm } from '../resume-form'
 import { FACT_SOURCE_LABELS, PROJECT_VERDICT_LABELS, RULE_STATUS_LABELS, ruleName } from '../content-diagnosis-view'
+import {
+  ANSWER_ACTION_LABELS,
+  answerCounts,
+  applyCandidate,
+  buildAnswersRecord,
+  emptyDrafts,
+  setAnswerAction,
+  type AnswerAction,
+  type AnswerDraft
+} from '../content-answers-form'
 import Modal from '../components/Modal.vue'
 import Resizer from '../components/Resizer.vue'
 import Icon from '../components/Icon.vue'
@@ -470,6 +481,9 @@ const editingExisting = computed(() => editingId.value !== null && editingId.val
 const contentTasks = ref<ContentOptimizeTask[]>([])
 const contentTaskError = ref('')
 
+/** 追问批量回答草稿（#94/T04：按任务 id → 问题键 → 草稿；任务卡存在期间保留）。 */
+const answerDrafts = ref<Record<string, Record<string, AnswerDraft>>>({})
+
 /** 某任务关联的简历标题（任务卡片展示）。 */
 function contentResumeTitle(task: ContentOptimizeTask): string {
   const resume = resumes.value.find((r) => r.meta.id === task.resumeId)
@@ -551,6 +565,78 @@ async function voidContentTask(task: ContentOptimizeTask): Promise<void> {
   contentTaskError.value = ''
   try {
     await window.api.contentOptimize.void(task.id)
+    await loadContentTasks()
+  } catch (err) {
+    contentTaskError.value = String(err)
+  }
+}
+
+// ---- 追问批量回答表单（#94/T04：分组/候选/四选一/自由输入/跳过） ----
+
+/** 任务的问题草稿（懒初始化；任务卡刷新（事件推送）后仍保留，按任务 id 键控）。 */
+function draftsFor(task: ContentOptimizeTask): Record<string, AnswerDraft> {
+  const questions = task.diagnosis?.questions ?? []
+  let drafts = answerDrafts.value[task.id]
+  if (drafts === undefined) {
+    drafts = emptyDrafts(questions)
+    answerDrafts.value[task.id] = drafts
+  }
+  return drafts
+}
+
+/** 已答 X/Y · 未答 N 计数（Y=问题总数；X=有答案或有明确处置）。 */
+function answersCountFor(task: ContentOptimizeTask): { answered: number; total: number; unanswered: number } {
+  return answerCounts(draftsFor(task), task.diagnosis?.questions ?? [])
+}
+
+/** 按项目分组（保留问题出现顺序；key=稳定问题键）。 */
+function answerGroups(
+  task: ContentOptimizeTask
+): Array<{ projectId: string; questions: Array<{ key: string; question: ContentQuestion }> }> {
+  const questions = task.diagnosis?.questions ?? []
+  const groups = new Map<string, Array<{ key: string; question: ContentQuestion }>>()
+  questions.forEach((q, i) => {
+    const key = contentQuestionKey(q, i)
+    const list = groups.get(q.projectId) ?? []
+    list.push({ key, question: q })
+    groups.set(q.projectId, list)
+  })
+  return [...groups.entries()].map(([projectId, list]) => ({ projectId, questions: list }))
+}
+
+/** 选中候选 = 确认属实（答案=候选原文）。 */
+function onCandidatePick(task: ContentOptimizeTask, q: ContentQuestion, key: string, index: number): void {
+  const draft = draftsFor(task)[key]
+  if (draft !== undefined) applyCandidate(draft, q, index)
+}
+
+/** 四选一动作按钮（确认属实/编辑后确认/不属实/无法补充）。 */
+function onAnswerAction(
+  task: ContentOptimizeTask,
+  q: ContentQuestion,
+  key: string,
+  action: Exclude<AnswerAction, 'none'>
+): void {
+  const draft = draftsFor(task)[key]
+  if (draft !== undefined) setAnswerAction(draft, action, q)
+}
+
+/** 输入框编辑：未答→自由输入；确认候选后被改动→编辑后确认。 */
+function onAnswerInput(task: ContentOptimizeTask, key: string, event: Event): void {
+  const draft = draftsFor(task)[key]
+  if (draft === undefined) return
+  draft.text = (event.target as HTMLTextAreaElement).value
+  if (draft.action === 'none' || draft.action === 'confirm') draft.action = 'free'
+}
+
+/** 提交追问回答（手动点击「生成优化稿」；未答项保持缺失，不阻塞）。 */
+async function submitContentAnswers(task: ContentOptimizeTask): Promise<void> {
+  contentTaskError.value = ''
+  const questions = task.diagnosis?.questions ?? []
+  const answers = buildAnswersRecord(questions, draftsFor(task))
+  try {
+    await window.api.contentOptimize.submitAnswers(task.id, answers)
+    delete answerDrafts.value[task.id]
     await loadContentTasks()
   } catch (err) {
     contentTaskError.value = String(err)
@@ -958,6 +1044,59 @@ onMounted(() => {
               </div>
             </div>
           </template>
+        </div>
+        <!-- #94/T04 追问批量回答表单（awaiting_answers：分组/证据/候选/四选一/自由输入/跳过） -->
+        <div
+          v-if="t.status === 'awaiting_answers' && t.diagnosis && t.diagnosis.questions.length > 0"
+          class="opt-answers"
+        >
+          <div class="opt-answers-head">
+            <span class="opt-diag-heading">追问回答</span>
+            <span class="opt-answers-count">
+              已答 {{ answersCountFor(t).answered }}/{{ answersCountFor(t).total }} 项 · 未答
+              {{ answersCountFor(t).unanswered }} 项
+            </span>
+          </div>
+          <div v-for="group in answerGroups(t)" :key="group.projectId" class="opt-answers-group">
+            <div class="opt-answers-group-title">
+              项目：{{ group.projectId === '' ? '（未关联项目）' : projectDisplayName(t, group.projectId) }}
+            </div>
+            <div v-for="item in group.questions" :key="item.key" class="opt-ans-question">
+              <div class="opt-ans-q-head">
+                <span class="opt-diag-rule-id">{{ item.question.field }}</span>
+                <span class="opt-ans-q-text">{{ item.question.question }}</span>
+              </div>
+              <p v-if="item.question.evidence" class="opt-diag-line">原文证据：{{ item.question.evidence }}</p>
+              <div v-if="item.question.candidates.length > 0" class="opt-ans-candidates">
+                <label v-for="(c, ci) in item.question.candidates" :key="ci" class="opt-ans-candidate">
+                  <input
+                    type="radio"
+                    :name="`ans-${t.id}-${item.key}`"
+                    :checked="draftsFor(t)[item.key].action === 'confirm' && draftsFor(t)[item.key].candidateIndex === ci"
+                    @change="onCandidatePick(t, item.question, item.key, ci)"
+                  />
+                  <span>{{ c }}</span>
+                </label>
+              </div>
+              <textarea
+                class="opt-ans-input"
+                :value="draftsFor(t)[item.key].text"
+                :placeholder="item.question.candidates.length > 0 ? '编辑候选或自由输入…' : '自由输入…'"
+                @input="onAnswerInput(t, item.key, $event)"
+              ></textarea>
+              <div class="opt-ans-actions">
+                <button type="button" @click="onAnswerAction(t, item.question, item.key, 'confirm')">{{ ANSWER_ACTION_LABELS.confirm }}</button>
+                <button type="button" @click="onAnswerAction(t, item.question, item.key, 'edit')">{{ ANSWER_ACTION_LABELS.edit }}</button>
+                <button type="button" @click="onAnswerAction(t, item.question, item.key, 'deny')">{{ ANSWER_ACTION_LABELS.deny }}</button>
+                <button type="button" @click="onAnswerAction(t, item.question, item.key, 'cannot')">{{ ANSWER_ACTION_LABELS.cannot }}</button>
+              </div>
+            </div>
+          </div>
+          <div class="opt-answers-submit">
+            <button class="btn primary" type="button" @click="submitContentAnswers(t)">
+              生成优化稿{{ answersCountFor(t).unanswered > 0 ? `（未答 ${answersCountFor(t).unanswered} 项）` : '' }}
+            </button>
+          </div>
         </div>
         <div v-if="t.status === 'ready_for_review' && t.noChanges" class="opt-task-note">
           无需修改——确认后不创建新版本。
@@ -2067,6 +2206,99 @@ onMounted(() => {
   background: rgba(37, 99, 235, 0.1);
   border-radius: 4px;
   padding: 1px 5px;
+}
+
+/* #94/T04 追问批量回答表单 */
+.opt-answers {
+  margin-top: 8px;
+  border-top: 1px dashed var(--border, rgba(128, 128, 128, 0.3));
+  padding-top: 8px;
+}
+.opt-answers-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.opt-answers-count {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #b45309;
+}
+.opt-answers-group {
+  margin-bottom: 8px;
+}
+.opt-answers-group-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.opt-ans-question {
+  padding: 6px 8px;
+  border: 1px solid rgba(128, 128, 128, 0.22);
+  border-radius: 6px;
+  margin-bottom: 6px;
+  background: rgba(128, 128, 128, 0.06);
+}
+.opt-ans-q-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 2px;
+}
+.opt-ans-q-text {
+  font-size: 12px;
+  font-weight: 600;
+}
+.opt-ans-candidates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 4px 0;
+}
+.opt-ans-candidate {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+}
+.opt-ans-input {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 44px;
+  font-size: 12px;
+  font-family: inherit;
+  padding: 4px 6px;
+  border: 1px solid var(--border, rgba(128, 128, 128, 0.4));
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  resize: vertical;
+}
+.opt-ans-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+.opt-ans-actions button {
+  font-size: 11.5px;
+  padding: 2px 8px;
+  border: 1px solid var(--border, rgba(128, 128, 128, 0.4));
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  cursor: pointer;
+}
+.opt-ans-actions button:hover {
+  background: rgba(128, 128, 128, 0.12);
+}
+.opt-answers-submit {
+  margin-top: 6px;
+  text-align: right;
 }
 .opt-diag-rule-name {
   font-size: 12px;

@@ -10,9 +10,16 @@ const require = createRequire(import.meta.url)
 const electronPath = require('electron') // electron 包导出二进制路径
 const script = fileURLToPath(new URL('./e2e-content-optimize.mjs', import.meta.url))
 
-const result = spawnSync(electronPath, [script, ...process.argv.slice(2)], {
+// npm run e2e:content-optimize:answers → 追问场景（JOBHUNT_E2E_SCENARIO=questions）
+const args = process.argv.slice(2)
+const env = { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
+if (args.includes('--answers')) {
+  env['JOBHUNT_E2E_SCENARIO'] = 'questions'
+}
+
+const result = spawnSync(electronPath, [script], {
   stdio: 'inherit',
-  env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
+  env
 })
 
 process.exit(result.status ?? 1)

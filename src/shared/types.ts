@@ -615,6 +615,8 @@ export interface ContentRuleVerdict {
 
 /** 单个项目的追问问题（按项目分组；候选可编辑 + 四选一 + 自由输入）。 */
 export interface ContentQuestion {
+  /** 稳定键（T04 追问表单 answers 记录用；缺失时按诊断内序号派生 q<index>）。 */
+  id?: string
   projectId: string
   /** 所属维度：简介 / 难点 / 个人工作量 / 结果 / 技术栈。 */
   field: string
