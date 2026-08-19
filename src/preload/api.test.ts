@@ -378,6 +378,18 @@ describe('createRendererApi（渲染侧 api 客户端）', () => {
     ])
   })
 
+  it('contentOptimize.setReview 映射到 content-optimize:set-review 并传 { taskId, decisions, inferredConfirmed }（T06）', async () => {
+    const fake = makeFakeBridge()
+    const api = createRendererApi(fake.bridge)
+    await api.contentOptimize.setReview('cot-1', { p1: 'reject' }, ['chg-0'])
+    expect(fake.invocations).toEqual([
+      {
+        channel: IpcChannel.ContentOptimizeSetReview,
+        args: [{ taskId: 'cot-1', decisions: { p1: 'reject' }, inferredConfirmed: ['chg-0'] }]
+      }
+    ])
+  })
+
   it('contentOptimize.void 映射到 content-optimize:void 并传 { taskId }', async () => {
     const fake = makeFakeBridge()
     const api = createRendererApi(fake.bridge)

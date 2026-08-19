@@ -5,11 +5,19 @@ import type { ResumeService } from './resume'
 import {
   CONTENT_STATUS_LABELS,
   type ContentDiagnosis,
+  type ContentIntegrationSummary,
   type ContentOptimizeStatus,
   type ContentOptimizeTask,
+  type ContentProjectDecision,
   type ContentRewrite
 } from '../../shared/types'
 import { contentQuestionKeys } from '../../shared/content-answers'
+import {
+  buildFinalResume,
+  buildIntegrationSummary,
+  pendingInferredChanges,
+  resumesDiffer
+} from '../../shared/content-review'
 import {
   buildDiagnosisPrompt as buildRulesDiagnosisPrompt,
   parseDiagnosis as parseDiagnosisReply
@@ -59,7 +67,9 @@ export class ContentOptimizeError extends Error {
       | 'bad-json'
       | 'invalid-state'
       | 'invalid-answers'
-      | 'no-rewrite',
+      | 'no-rewrite'
+      | 'invalid-decisions'
+      | 'inferred-pending',
     message: string
   ) {
     super(message)
@@ -97,6 +107,9 @@ interface TaskRow {
   error: string
   no_changes: number
   resume_to: string | null
+  decisions_json: string
+  inferred_confirmed_json: string
+  summary_json: string
   created_at: string
   updated_at: string
 }
@@ -112,6 +125,9 @@ function parseRow(row: TaskRow): ContentOptimizeTask {
     progress: row.progress,
     error: row.error === '' ? null : row.error,
     noChanges: row.no_changes === 1,
+    decisions: parseOptionalJson<Record<string, ContentProjectDecision>>(row.decisions_json),
+    inferredConfirmed: parseOptionalJson<string[]>(row.inferred_confirmed_json),
+    summary: parseOptionalJson<ContentIntegrationSummary>(row.summary_json),
     createdAt: row.created_at,
     updatedAt: row.updated_at
   }
@@ -146,6 +162,9 @@ interface TaskMutation {
   error?: string | null
   noChanges?: boolean
   resumeTo?: string | null
+  decisions?: Record<string, ContentProjectDecision> | null
+  inferredConfirmed?: string[] | null
+  summary?: ContentIntegrationSummary | null
 }
 
 export class ContentOptimizeService {
@@ -247,6 +266,9 @@ export class ContentOptimizeService {
       progress: CONTENT_PHASE_LABELS.created,
       error: null,
       noChanges: false,
+      decisions: null,
+      inferredConfirmed: null,
+      summary: null,
       createdAt: now,
       updatedAt: now
     }
@@ -290,8 +312,64 @@ export class ContentOptimizeService {
   }
 
   /**
+   * 保存按项目接受/拒绝决策 + 推断-待确认改动勾选（T06/#96）。
+   * ready_for_review 且已有改写时可用（空诊断路径无改写，无需决策）；
+   * 决策/勾选持久化，中断续接后仍保留（任务卡刷新后由渲染层从任务恢复）。
+   * 校验：决策键必须是已知项目（原文 ∪ 改写稿）；勾选 id 必须是已知改动 id。
+   */
+  setReview(
+    taskId: string,
+    review: { decisions: Record<string, ContentProjectDecision>; inferredConfirmed: string[] }
+  ): ContentOptimizeTask {
+    const task = this.requireTask(taskId)
+    if (task.status !== 'ready_for_review' || task.noChanges || task.rewrite === null) {
+      throw new ContentOptimizeError('invalid-state', `当前状态不可设置确认决策：${task.status}`)
+    }
+    const original = this.resumes.get(task.resumeId)
+    if (original === undefined) {
+      throw new ContentOptimizeError('resume-not-found', `简历不存在：${task.resumeId}`)
+    }
+    const knownIds = new Set<string>([
+      ...(original.projects ?? [])
+        .map((p) => p.id)
+        .filter((id): id is string => id !== undefined),
+      ...(task.rewrite.resume.projects ?? [])
+        .map((p) => p.id)
+        .filter((id): id is string => id !== undefined)
+    ])
+    const unknownProjects = Object.keys(review.decisions).filter((id) => !knownIds.has(id))
+    if (unknownProjects.length > 0) {
+      throw new ContentOptimizeError('invalid-decisions', `包含未知项目：${unknownProjects.join(', ')}`)
+    }
+    const badValues = Object.values(review.decisions).filter(
+      (value) => value !== 'accept' && value !== 'reject'
+    )
+    if (badValues.length > 0) {
+      throw new ContentOptimizeError('invalid-decisions', `包含非法决策值：${badValues.join(', ')}`)
+    }
+    const knownChangeIds = new Set(
+      (task.rewrite.changes ?? [])
+        .map((c) => c.id)
+        .filter((id): id is string => id !== undefined)
+    )
+    const unknownConfirmations = review.inferredConfirmed.filter((id) => !knownChangeIds.has(id))
+    if (unknownConfirmations.length > 0) {
+      throw new ContentOptimizeError('invalid-decisions', `包含未知改动 id：${unknownConfirmations.join(', ')}`)
+    }
+    return this.mutate(task, {
+      decisions: review.decisions,
+      inferredConfirmed: review.inferredConfirmed
+    })
+  }
+
+  /**
    * 确认内容优化稿：ready_for_review → confirmed。
-   * 空诊断路径（noChanges）不创建新版本；有改写时生成新的基准简历（#90-21）。
+   * 空诊断路径（noChanges）不创建新版本；有改写时：
+   * - US17 门禁：未勾选的推断-待确认改动 → 拒绝（inferred-pending，返回需勾选列表）；
+   * - 整合（T06）：按项目决策整合最终稿（接受/拒绝/删除确认），拒绝项目保留原文；
+   * - 标点/排序自动修复与「仍有未解决项目」汇总记入任务（summary），确认后展示；
+   * - 最终稿与原文无差异（如全部拒绝）→ 不创建新版本（US20）；
+   * - 有实际改动 → 生成新的基准简历（#90-21，保留旧基准，血缘记在任务里）。
    */
   confirm(taskId: string): { task: ContentOptimizeTask; createdResumeId: string | null } {
     const task = this.requireTask(taskId)
@@ -306,19 +384,50 @@ export class ContentOptimizeService {
       if (task.rewrite === null) {
         throw new ContentOptimizeError('no-rewrite', '缺少改写结果，无法确认')
       }
-      // #90-10/#90-21：确认后的内容优化稿成为新的基准简历（baseResumeId=null，血缘记录在任务里）
-      const created = this.resumes.create({
-        ...task.rewrite.resume,
-        meta: {
-          ...task.rewrite.resume.meta,
-          id: undefined,
-          baseResumeId: null,
-          targetJobId: null,
-          title: task.rewrite.resume.meta?.title ?? `内容优化稿（${task.resumeId}）`
-        }
-      })
-      createdResumeId = created.meta.id as string
-      this.mutate(task, { status: 'confirmed', progress: CONTENT_PHASE_LABELS.confirmed })
+      const decisions = task.decisions ?? {}
+      const confirmed = task.inferredConfirmed ?? []
+      const pending = pendingInferredChanges(task.rewrite, decisions, confirmed)
+      if (pending.length > 0) {
+        // US17：推断-待确认改动必须显式勾选后才进入最终版（错误码 + 需勾选列表）
+        throw new ContentOptimizeError(
+          'inferred-pending',
+          `存在未勾选的推断-待确认改动：${pending
+            .map((c) => c.id ?? '?')
+            .join('、')}`
+        )
+      }
+      const original = this.resumes.get(task.resumeId)
+      if (original === undefined) {
+        throw new ContentOptimizeError('resume-not-found', `简历不存在：${task.resumeId}`)
+      }
+      const finalResume = buildFinalResume(original, task.rewrite, decisions)
+      const summary = buildIntegrationSummary(original, task.rewrite, decisions)
+      if (!resumesDiffer(original, finalResume)) {
+        // 未应用任何改动（如全部拒绝）：不创建新版本（US20），仍保留「仍有未解决项目」等汇总
+        this.mutate(task, {
+          status: 'confirmed',
+          progress: '已确认（未应用改动）',
+          summary
+        })
+      } else {
+        // #90-10/#90-21：确认后的内容优化稿成为新的基准简历（baseResumeId=null，血缘记录在任务里）
+        const created = this.resumes.create({
+          ...finalResume,
+          meta: {
+            ...finalResume.meta,
+            id: undefined,
+            baseResumeId: null,
+            targetJobId: null,
+            title: finalResume.meta?.title ?? `内容优化稿（${task.resumeId}）`
+          }
+        })
+        createdResumeId = created.meta.id as string
+        this.mutate(task, {
+          status: 'confirmed',
+          progress: CONTENT_PHASE_LABELS.confirmed,
+          summary
+        })
+      }
     }
     const updated = this.requireTask(taskId)
     return { task: updated, createdResumeId }
@@ -422,8 +531,16 @@ export class ContentOptimizeService {
       )
       if (this.isCancelled(taskId)) return this.finishCancelled(taskId)
       const current = this.requireTask(taskId)
+      // T06：为每条改动分配稳定 id（推断-待确认勾选引用；改写轮内索引稳定）
+      const rewriteWithIds: ContentRewrite = {
+        ...rewrite,
+        changes: rewrite.changes.map((change, index) => ({
+          ...change,
+          id: change.id ?? `chg-${index}`
+        }))
+      }
       this.mutate(current, {
-        rewrite,
+        rewrite: rewriteWithIds,
         status: 'ready_for_review',
         noChanges: false,
         progress: CONTENT_PHASE_LABELS.ready_for_review,
@@ -557,6 +674,9 @@ export class ContentOptimizeService {
       ...(patch.progress !== undefined ? { progress: patch.progress } : {}),
       ...(patch.error !== undefined ? { error: patch.error } : {}),
       ...(patch.noChanges !== undefined ? { noChanges: patch.noChanges } : {}),
+      ...(patch.decisions !== undefined ? { decisions: patch.decisions } : {}),
+      ...(patch.inferredConfirmed !== undefined ? { inferredConfirmed: patch.inferredConfirmed } : {}),
+      ...(patch.summary !== undefined ? { summary: patch.summary } : {}),
       updatedAt: new Date().toISOString()
     }
     const row = this.db.prepare(SELECT_BY_ID).get(next.id) as TaskRow | undefined
@@ -568,7 +688,8 @@ export class ContentOptimizeService {
       .prepare(
         `UPDATE content_optimize_tasks
          SET status = ?, diagnosis_json = ?, answers_json = ?, rewrite_json = ?,
-             progress = ?, error = ?, no_changes = ?, resume_to = ?, updated_at = ?
+             progress = ?, error = ?, no_changes = ?, resume_to = ?, updated_at = ?,
+             decisions_json = ?, inferred_confirmed_json = ?, summary_json = ?
          WHERE id = ?`
       )
       .run(
@@ -581,6 +702,9 @@ export class ContentOptimizeService {
         next.noChanges ? 1 : 0,
         patch.resumeTo === undefined ? row.resume_to : patch.resumeTo,
         next.updatedAt,
+        JSON.stringify(next.decisions),
+        JSON.stringify(next.inferredConfirmed),
+        JSON.stringify(next.summary),
         next.id
       )
     this.publish(next)
@@ -645,8 +769,8 @@ export class ContentOptimizeService {
 const SELECT_BY_ID = 'SELECT * FROM content_optimize_tasks WHERE id = ?'
 const SELECT_BY_RESUME = 'SELECT * FROM content_optimize_tasks WHERE resume_id = ?'
 const INSERT = `
-  INSERT INTO content_optimize_tasks (id, resume_id, status, diagnosis_json, answers_json, rewrite_json, progress, error, no_changes, resume_to, created_at, updated_at)
-  VALUES (@id, @resumeId, @status, @diagnosis, @answers, @rewrite, @progress, @error, @noChanges, @resumeTo, @createdAt, @updatedAt)
+  INSERT INTO content_optimize_tasks (id, resume_id, status, diagnosis_json, answers_json, rewrite_json, progress, error, no_changes, resume_to, decisions_json, inferred_confirmed_json, summary_json, created_at, updated_at)
+  VALUES (@id, @resumeId, @status, @diagnosis, @answers, @rewrite, @progress, @error, @noChanges, @resumeTo, @decisions, @inferredConfirmed, @summary, @createdAt, @updatedAt)
 `
 
 function isRoundPhase(status: ContentOptimizeStatus): status is 'diagnosing' | 'rewriting' {
@@ -695,6 +819,9 @@ function rowParams(task: ContentOptimizeTask) {
     error: task.error ?? '',
     noChanges: task.noChanges ? 1 : 0,
     resumeTo: null,
+    decisions: JSON.stringify(task.decisions),
+    inferredConfirmed: JSON.stringify(task.inferredConfirmed),
+    summary: JSON.stringify(task.summary),
     createdAt: task.createdAt,
     updatedAt: task.updatedAt
   }

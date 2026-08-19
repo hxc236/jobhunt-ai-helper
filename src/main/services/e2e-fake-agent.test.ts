@@ -82,9 +82,14 @@ describe('E2E 假 agent（#90/T02：dev 模式开关）', () => {
       const rewrite = await session.prompt(
         ['[内容优化 2/2：项目改写]', '简历 JSON：', JSON.stringify(resume)].join('\n')
       )
-      const parsed = JSON.parse(rewrite) as { resume: unknown; changes: Array<{ projectId: string }> }
-      expect(parsed.resume).toEqual(resume)
+      const parsed = JSON.parse(rewrite) as {
+        resume: { projects: Array<{ id: string; description: string }> }
+        changes: Array<{ projectId: string; source: string }>
+      }
+      // T06：改写稿对项目做真实改动（含高并发难点与可量化结果），change 有来源与稳定归属
+      expect(parsed.resume.projects[0]?.description).toContain('高并发难点与可量化结果')
       expect(parsed.changes[0]?.projectId).toBe('proj-1')
+      expect(parsed.changes[0]?.source).toBe('user-answer')
     } finally {
       session.dispose()
     }

@@ -165,6 +165,12 @@ export function registerIpcHandlers({ settings, agent, positions, resumes, resum
   handleRequest(IpcChannel.ContentOptimizeSubmitAnswers, (request) =>
     contentOptimize.submitAnswers(request.taskId, request.answers)
   )
+  handleRequest(IpcChannel.ContentOptimizeSetReview, (request) =>
+    contentOptimize.setReview(request.taskId, {
+      decisions: request.decisions,
+      inferredConfirmed: request.inferredConfirmed
+    })
+  )
   handleRequest(IpcChannel.ContentOptimizeConfirm, (request) => contentOptimize.confirm(request.taskId))
   handleRequest(IpcChannel.ContentOptimizeCancel, (request) => contentOptimize.cancel(request.taskId))
   handleRequest(IpcChannel.ContentOptimizeRetry, (request) => contentOptimize.retry(request.taskId))

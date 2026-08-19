@@ -243,7 +243,15 @@ export const MIGRATIONS: readonly string[] = [
     updated_at TEXT NOT NULL
   );
   CREATE INDEX idx_content_optimize_tasks_resume ON content_optimize_tasks(resume_id);
-  `
+  `,
+  // v12: content_optimize_tasks 增 T06 确认决策列（#90/T06 确认、对比与整合）。
+  // - decisions_json：按项目整体接受/拒绝改写（键=项目 id；缺省全部接受）；
+  // - inferred_confirmed_json：已显式勾选「确认纳入最终版」的推断-待确认改动 id 列表（US17 门禁）；
+  // - summary_json：整合汇总（标点/排序自动修复、删除确认/保留原文警告、「仍有未解决项目」；确认后保留展示）。
+  // 旧行：三列默认 'null'（JSON null），语义 = 未设置决策/无勾选/无汇总。
+  `ALTER TABLE content_optimize_tasks ADD COLUMN decisions_json TEXT NOT NULL DEFAULT 'null' CHECK (json_valid(decisions_json))`,
+  `ALTER TABLE content_optimize_tasks ADD COLUMN inferred_confirmed_json TEXT NOT NULL DEFAULT 'null' CHECK (json_valid(inferred_confirmed_json))`,
+  `ALTER TABLE content_optimize_tasks ADD COLUMN summary_json TEXT NOT NULL DEFAULT 'null' CHECK (json_valid(summary_json))`
 ]
 
 /**

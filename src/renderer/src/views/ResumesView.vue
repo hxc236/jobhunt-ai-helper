@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import type { Resume, StoredResume } from '@shared/types/resume'
-import type { ResumeDraft, ContentOptimizeTask, ContentQuestion } from '@shared/types'
+import type { ResumeDraft, ContentOptimizeTask, ContentQuestion, ContentProjectDecision } from '@shared/types'
 import { CONTENT_STATUS_LABELS } from '@shared/types'
 import { contentQuestionKey } from '@shared/content-answers'
+import { CHANGE_SOURCE_LABELS, buildIntegrationSummary } from '@shared/content-review'
 import { IpcEvent } from '@shared/protocol'
 import { defaultBaseTitle, emptyResumeForm, formToResume, issueSection, keepEmptyRows, resumeToForm, SKILL_CATEGORIES, type ResumeForm } from '../resume-form'
 import { FACT_SOURCE_LABELS, PROJECT_VERDICT_LABELS, RULE_STATUS_LABELS, ruleName } from '../content-diagnosis-view'
@@ -17,6 +18,16 @@ import {
   type AnswerAction,
   type AnswerDraft
 } from '../content-answers-form'
+import {
+  emptyReviewDraft,
+  isInferredConfirmed,
+  pendingInferredCount,
+  reviewDecision,
+  reviewGroups,
+  setReviewDecision,
+  toggleInferredConfirmed,
+  type ReviewDraft
+} from '../content-review-state'
 import Modal from '../components/Modal.vue'
 import Resizer from '../components/Resizer.vue'
 import Icon from '../components/Icon.vue'
@@ -484,6 +495,9 @@ const contentTaskError = ref('')
 /** 追问批量回答草稿（#94/T04：按任务 id → 问题键 → 草稿；任务卡存在期间保留）。 */
 const answerDrafts = ref<Record<string, Record<string, AnswerDraft>>>({})
 
+/** 按项目确认草稿（T06/#96：按任务 id → 决策/推断-待确认勾选；改动即持久化）。 */
+const reviewDrafts = ref<Record<string, ReviewDraft>>({})
+
 /** 某任务关联的简历标题（任务卡片展示）。 */
 function contentResumeTitle(task: ContentOptimizeTask): string {
   const resume = resumes.value.find((r) => r.meta.id === task.resumeId)
@@ -640,6 +654,73 @@ async function submitContentAnswers(task: ContentOptimizeTask): Promise<void> {
     await loadContentTasks()
   } catch (err) {
     contentTaskError.value = String(err)
+  }
+}
+
+// ---- 逐项目确认区（T06/#96：按项目接受/拒绝 + 推断-待确认勾选 + 整合汇总） ----
+
+/** 任务确认草稿（懒初始化：从任务已持久化决策恢复）。 */
+function reviewDraftFor(task: ContentOptimizeTask): ReviewDraft {
+  let draft = reviewDrafts.value[task.id]
+  if (draft === undefined) {
+    draft = emptyReviewDraft(task)
+    reviewDrafts.value[task.id] = draft
+  }
+  return draft
+}
+
+/** 逐项目确认组（改写稿顺序 + 原文删除项追加）。 */
+function reviewGroupsFor(task: ContentOptimizeTask) {
+  const original = resumes.value.find((r) => r.meta.id === task.resumeId)
+  return reviewGroups(original, task)
+}
+
+/** 该项目待勾选的推断-待确认改动（门禁提示）。 */
+function pendingInferredFor(task: ContentOptimizeTask): number {
+  return pendingInferredCount(task, reviewDraftFor(task))
+}
+
+/** 整合汇总实时预览（标点/排序/删除/保留原文警告/仍有未解决项目）。 */
+function reviewSummaryFor(task: ContentOptimizeTask) {
+  if (task.rewrite === null) return null
+  const original = resumes.value.find((r) => r.meta.id === task.resumeId)
+  if (original === undefined) return null
+  return buildIntegrationSummary(original, task.rewrite, reviewDraftFor(task).decisions)
+}
+
+/** 项目名（确认区项目组标题）。 */
+function reviewProjectName(task: ContentOptimizeTask, projectId: string): string {
+  return projectDisplayName(task, projectId)
+}
+
+/** 设置项目决策（接受改写 / 保留原文）并持久化。 */
+async function onReviewDecision(
+  task: ContentOptimizeTask,
+  projectId: string,
+  decision: ContentProjectDecision
+): Promise<void> {
+  contentTaskError.value = ''
+  const draft = reviewDraftFor(task)
+  setReviewDecision(draft, projectId, decision)
+  await persistReview(task)
+}
+
+/** 切换推断-待确认勾选并持久化。 */
+async function onToggleInferred(task: ContentOptimizeTask, changeId: string | undefined): Promise<void> {
+  contentTaskError.value = ''
+  const draft = reviewDraftFor(task)
+  toggleInferredConfirmed(draft, changeId)
+  await persistReview(task)
+}
+
+/** 持久化确认决策/勾选（IPC set-review；失败提示但不阻塞本地草稿）。 */
+async function persistReview(task: ContentOptimizeTask): Promise<void> {
+  const draft = reviewDrafts.value[task.id]
+  if (draft === undefined) return
+  try {
+    await window.api.contentOptimize.setReview(task.id, draft.decisions, draft.inferredConfirmed)
+  } catch (err) {
+    contentTaskError.value = `保存确认决策失败：${String(err)}`
   }
 }
 
@@ -922,6 +1003,9 @@ onMounted(() => {
   // #90/T02：内容优化任务变更实时推送（阶段流转/进度/失败/取消）
   const offContentTasks = window.api.on(IpcEvent.ContentOptimizeChanged, () => {
     void loadContentTasks()
+    // 任务事件可能伴随基准简历变更（start 时 T01 补齐项目 id/highlights/sectionOrder）——
+    // 逐项目确认区需要最新的原文快照（id 匹配），一并刷新简历列表。
+    void load()
   })
   onUnmounted(() => offContentTasks())
 })
@@ -1101,7 +1185,110 @@ onMounted(() => {
         <div v-if="t.status === 'ready_for_review' && t.noChanges" class="opt-task-note">
           无需修改——确认后不创建新版本。
         </div>
+        <!-- T06/#96 逐项目确认区（对比/接受拒绝/推断勾选/删除建议/整合汇总） -->
+        <div
+          v-if="t.status === 'ready_for_review' && !t.noChanges && t.rewrite"
+          class="opt-review"
+        >
+          <div class="opt-diag-heading">逐项目确认</div>
+          <div
+            v-for="group in reviewGroupsFor(t)"
+            :key="group.projectId"
+            class="opt-review-project"
+            :class="{ rejected: reviewDecision(reviewDraftFor(t), group.projectId) === 'reject' }"
+          >
+            <div class="opt-review-project-head">
+              <span class="opt-diag-project-name">{{ reviewProjectName(t, group.projectId) }}</span>
+              <Pill v-if="group.state === 'deleted'" tone="ghost">建议删除</Pill>
+              <Pill v-else-if="group.state === 'changed'" tone="tint">已改写</Pill>
+              <Pill v-else tone="ghost">无改动</Pill>
+              <span class="opt-review-decision">
+                <button
+                  type="button"
+                  :class="{ active: reviewDecision(reviewDraftFor(t), group.projectId) === 'accept' }"
+                  @click="onReviewDecision(t, group.projectId, 'accept')"
+                >
+                  {{ group.state === 'deleted' ? '确认删除' : '接受改写' }}
+                </button>
+                <button
+                  type="button"
+                  :class="{ active: reviewDecision(reviewDraftFor(t), group.projectId) === 'reject' }"
+                  @click="onReviewDecision(t, group.projectId, 'reject')"
+                >
+                  {{ group.state === 'deleted' ? '保留原文（警告）' : '保留原文' }}
+                </button>
+              </span>
+            </div>
+            <p v-if="group.state === 'deleted'" class="opt-review-warn">
+              该项目没有可补充的难点/结果，建议删除。拒绝删除将保留原文并给出警告。
+            </p>
+            <template v-if="group.rewrittenProject">
+              <div class="opt-review-block">
+                <div class="opt-review-label">改写后</div>
+                <p class="opt-review-text">{{ group.rewrittenProject.description }}</p>
+                <ul v-if="group.rewrittenProject.highlights && group.rewrittenProject.highlights.length > 0" class="opt-review-list">
+                  <li v-for="(h, hi) in group.rewrittenProject.highlights" :key="hi">{{ h }}</li>
+                </ul>
+                <p v-if="group.rewrittenProject.techStack && group.rewrittenProject.techStack.length > 0" class="opt-review-muted">
+                  技术栈：{{ group.rewrittenProject.techStack.join('、') }}
+                </p>
+              </div>
+            </template>
+            <div v-if="group.changes.length > 0" class="opt-review-changes">
+              <div v-for="(c, ci) in group.changes" :key="c.id ?? ci" class="opt-review-change">
+                <span class="opt-diag-rule-id">{{ CHANGE_SOURCE_LABELS[c.source] }}</span>
+                <span class="opt-review-change-text">{{ c.before }} → {{ c.after }}</span>
+                <p class="opt-review-muted">{{ c.reason }}</p>
+                <label v-if="c.source === 'inferred'" class="opt-review-confirm">
+                  <input
+                    type="checkbox"
+                    :checked="isInferredConfirmed(reviewDraftFor(t), c.id)"
+                    @change="onToggleInferred(t, c.id)"
+                  />
+                  确认纳入最终版
+                </label>
+              </div>
+            </div>
+          </div>
+          <div v-if="reviewSummaryFor(t)" class="opt-review-summary">
+            <div class="opt-diag-heading">自动修复与汇总</div>
+            <template v-if="reviewSummaryFor(t)!.punctuationFixed.length > 0">
+              <p class="opt-review-line">标点/格式修复：{{ reviewSummaryFor(t)!.punctuationFixed.map((id) => reviewProjectName(t, id)).join('、') }}</p>
+            </template>
+            <template v-if="reviewSummaryFor(t)!.orderingAdjustments.length > 0">
+              <p class="opt-review-line">顺序调整：{{ reviewSummaryFor(t)!.orderingAdjustments.join('；') }}</p>
+            </template>
+            <template v-if="reviewSummaryFor(t)!.deletedProjects.length > 0">
+              <p class="opt-review-line">删除：{{ reviewSummaryFor(t)!.deletedProjects.map((id) => reviewProjectName(t, id)).join('、') }}</p>
+            </template>
+            <template v-if="reviewSummaryFor(t)!.keptWithWarning.length > 0">
+              <p class="opt-review-line opt-review-warn">保留原文（警告）：{{ reviewSummaryFor(t)!.keptWithWarning.map((id) => reviewProjectName(t, id)).join('、') }}</p>
+            </template>
+            <template v-if="reviewSummaryFor(t)!.unresolvedProjects.length > 0">
+              <p class="opt-review-line opt-review-warn">仍有未解决项目：{{ reviewSummaryFor(t)!.unresolvedProjects.map((id) => reviewProjectName(t, id)).join('、') }}</p>
+            </template>
+          </div>
+        </div>
         <div v-if="t.status === 'confirmed'" class="opt-task-note">已完成。</div>
+        <!-- T06/#96：确认后保留整合汇总（仍有未解决项目等警告） -->
+        <div v-if="t.status === 'confirmed' && t.summary" class="opt-review-summary">
+          <div class="opt-diag-heading">确认结果</div>
+          <template v-if="t.summary.punctuationFixed.length > 0">
+            <p class="opt-review-line">标点/格式修复：{{ t.summary.punctuationFixed.map((id) => reviewProjectName(t, id)).join('、') }}</p>
+          </template>
+          <template v-if="t.summary.orderingAdjustments.length > 0">
+            <p class="opt-review-line">顺序调整：{{ t.summary.orderingAdjustments.join('；') }}</p>
+          </template>
+          <template v-if="t.summary.deletedProjects.length > 0">
+            <p class="opt-review-line">删除：{{ t.summary.deletedProjects.map((id) => reviewProjectName(t, id)).join('、') }}</p>
+          </template>
+          <template v-if="t.summary.keptWithWarning.length > 0">
+            <p class="opt-review-line opt-review-warn">保留原文（警告）：{{ t.summary.keptWithWarning.map((id) => reviewProjectName(t, id)).join('、') }}</p>
+          </template>
+          <template v-if="t.summary.unresolvedProjects.length > 0">
+            <p class="opt-review-line opt-review-warn">仍有未解决项目：{{ t.summary.unresolvedProjects.map((id) => reviewProjectName(t, id)).join('、') }}</p>
+          </template>
+        </div>
         <div class="opt-task-actions">
           <template v-if="t.status === 'diagnosing' || t.status === 'created' || t.status === 'rewriting'">
             <button class="btn" type="button" @click="cancelContentTask(t)">取消</button>
@@ -1117,7 +1304,16 @@ onMounted(() => {
             <button class="btn" type="button" @click="voidContentTask(t)">作废</button>
           </template>
           <template v-else-if="t.status === 'ready_for_review'">
-            <button class="btn primary" type="button" @click="confirmContentTask(t)">确认{{ t.noChanges ? '（无需修改）' : '' }}</button>
+            <button
+              v-if="!t.noChanges && pendingInferredFor(t) > 0"
+              class="btn"
+              type="button"
+              disabled
+              title="请先勾选全部「推断-待确认」改动"
+            >
+              确认（先勾选推断-待确认 {{ pendingInferredFor(t) }} 项）
+            </button>
+            <button v-else class="btn primary" type="button" @click="confirmContentTask(t)">确认{{ t.noChanges ? '（无需修改）' : '' }}</button>
           </template>
         </div>
       </div>
@@ -2339,5 +2535,111 @@ onMounted(() => {
   gap: 6px;
   margin-top: 8px;
   flex-wrap: wrap;
+}
+
+/* T06/#96 逐项目确认区 */
+.opt-review {
+  margin-top: 8px;
+  border-top: 1px dashed var(--border, rgba(128, 128, 128, 0.3));
+  padding-top: 8px;
+}
+.opt-review-project {
+  border: 1px solid rgba(128, 128, 128, 0.22);
+  border-radius: 6px;
+  padding: 6px 8px;
+  margin-bottom: 6px;
+  background: rgba(128, 128, 128, 0.06);
+}
+.opt-review-project.rejected {
+  border-color: rgba(180, 83, 9, 0.4);
+}
+.opt-review-project-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.opt-review-decision {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 4px;
+}
+.opt-review-decision button {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border, rgba(128, 128, 128, 0.3));
+  background: var(--bg);
+  color: var(--muted);
+  cursor: pointer;
+}
+.opt-review-decision button.active {
+  background: rgba(37, 99, 235, 0.12);
+  color: #2563eb;
+  border-color: rgba(37, 99, 235, 0.4);
+}
+.opt-review-warn {
+  color: #b45309;
+  font-size: 11.5px;
+  margin: 4px 0 0;
+}
+.opt-review-block {
+  margin-top: 4px;
+}
+.opt-review-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  margin: 4px 0 2px;
+}
+.opt-review-text {
+  font-size: 12px;
+  margin: 0;
+  word-break: break-word;
+}
+.opt-review-list {
+  margin: 2px 0 0;
+  padding-left: 16px;
+  font-size: 12px;
+}
+.opt-review-muted {
+  font-size: 11.5px;
+  color: var(--muted);
+  margin: 2px 0 0;
+  word-break: break-word;
+}
+.opt-review-changes {
+  margin-top: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.opt-review-change {
+  font-size: 11.5px;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.opt-review-change-text {
+  word-break: break-word;
+  min-width: 0;
+}
+.opt-review-confirm {
+  font-size: 11.5px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #b45309;
+}
+.opt-review-summary {
+  margin-top: 8px;
+  border-top: 1px dashed var(--border, rgba(128, 128, 128, 0.3));
+  padding-top: 6px;
+}
+.opt-review-line {
+  font-size: 11.5px;
+  color: var(--muted);
+  margin: 3px 0 0;
 }
 </style>

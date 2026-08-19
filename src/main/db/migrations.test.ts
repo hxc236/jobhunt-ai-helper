@@ -252,4 +252,53 @@ describe('applyMigrations', () => {
       upgraded.close()
     })
   })
+
+  describe('v12：content_optimize_tasks 确认决策列（#90/T06 确认、对比与整合）', () => {
+    const INSERT_WITH_REVIEW = `INSERT INTO content_optimize_tasks
+      (id, resume_id, status, diagnosis_json, answers_json, rewrite_json, progress, error, no_changes, resume_to,
+       decisions_json, inferred_confirmed_json, summary_json, created_at, updated_at)
+      VALUES (?, ?, 'ready_for_review', 'null', 'null', 'null', '', '', 0, NULL, ?, ?, ?, 'now', 'now')`
+
+    it('新库迁移后：三列存在、默认 NULL、JSON 约束生效、旧 INSERT 仍兼容', () => {
+      const db = new Database(':memory:')
+      migrate(db)
+
+      // 默认值：不写新列 → 'null'（JSON null，语义=未设置）
+      db.prepare(`INSERT INTO content_optimize_tasks
+        (id, resume_id, status, diagnosis_json, answers_json, rewrite_json, progress, error, no_changes, resume_to, created_at, updated_at)
+        VALUES ('t0', 'r1', 'created', 'null', 'null', 'null', '', '', 0, NULL, 'now', 'now')`).run()
+      const row = db.prepare('SELECT decisions_json, inferred_confirmed_json, summary_json FROM content_optimize_tasks WHERE id = ?').get('t0') as Record<string, string>
+      expect(row.decisions_json).toBe('null')
+      expect(row.inferred_confirmed_json).toBe('null')
+      expect(row.summary_json).toBe('null')
+
+      // 写入决策/勾选/汇总 JSON
+      db.prepare(INSERT_WITH_REVIEW)
+        .run('t1', 'r1', JSON.stringify({ p1: 'reject' }), JSON.stringify(['chg-0']), JSON.stringify({ punctuationFixed: [], orderingAdjustments: [], deletedProjects: [], keptWithWarning: [], unresolvedProjects: [] }))
+      const filled = db.prepare('SELECT decisions_json, inferred_confirmed_json, summary_json FROM content_optimize_tasks WHERE id = ?').get('t1') as Record<string, string>
+      expect(JSON.parse(filled.decisions_json)).toEqual({ p1: 'reject' })
+      expect(JSON.parse(filled.inferred_confirmed_json)).toEqual(['chg-0'])
+
+      // JSON 约束：非 JSON 文本拒绝
+      expect(() =>
+        db.prepare(INSERT_WITH_REVIEW).run('bad', 'r1', 'not json', 'null', 'null')
+      ).toThrow()
+
+      // 既有 v11 库升级：旧行保留、新列默认 null
+      const file = openTempFile()
+      tempDirs.add(join(file, '..'))
+      const old = new Database(file)
+      applyMigrations(old, MIGRATIONS.slice(0, 11))
+      old.prepare(`INSERT INTO content_optimize_tasks
+        (id, resume_id, status, diagnosis_json, answers_json, rewrite_json, progress, error, no_changes, resume_to, created_at, updated_at)
+        VALUES ('t-v11', 'r1', 'created', 'null', 'null', 'null', '', '', 0, NULL, 'now', 'now')`).run()
+      old.close()
+      const upgraded = new Database(file)
+      migrate(upgraded)
+      expect(userVersion(upgraded)).toBe(MIGRATIONS.length)
+      const upgradedRow = upgraded.prepare('SELECT decisions_json FROM content_optimize_tasks WHERE id = ?').get('t-v11') as { decisions_json: string }
+      expect(upgradedRow.decisions_json).toBe('null')
+      upgraded.close()
+    })
+  })
 })

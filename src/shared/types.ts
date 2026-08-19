@@ -637,6 +637,8 @@ export interface ContentDiagnosis {
 
 /** 逐处改动说明（含来源，防幻觉依据）。 */
 export interface ContentOptimizeChange {
+  /** 稳定 id（T06 推断-待确认勾选用；服务层在改写轮解析后统一分配 chg-<n>）。 */
+  id?: string
   projectId?: string
   section: string
   before: string
@@ -650,6 +652,23 @@ export interface ContentOptimizeChange {
 export interface ContentRewrite {
   resume: Resume
   changes: ContentOptimizeChange[]
+}
+
+/** 按项目整体接受/拒绝改写（T06：拒绝 = 该项目保留原文）。删除建议共用同一决策：接受=确认删除，拒绝=保留原文+警告。 */
+export type ContentProjectDecision = 'accept' | 'reject'
+
+/** 内容优化整合汇总（T06：标点/排序自动修复、删除确认/保留原文警告、「仍有未解决项目」展示）。 */
+export interface ContentIntegrationSummary {
+  /** 标点/格式自动修复涉及的项目（R2：文本仅标点/空白/格式差异）。 */
+  punctuationFixed: string[]
+  /** 模块/节顺序调整说明（R3 实习前置等相对顺序调整）。 */
+  orderingAdjustments: string[]
+  /** 确认删除的项目（US18：确认删除后不进入最终稿）。 */
+  deletedProjects: string[]
+  /** 删除建议被拒（保留原文 + 警告）的项目（US18）。 */
+  keptWithWarning: string[]
+  /** 改写被拒（保留原文）的项目 —— 最终版「仍有未解决项目」（US19）。 */
+  unresolvedProjects: string[]
 }
 
 /** 内容优化任务（渲染层 IPC 载荷 = 服务层快照）。 */
@@ -669,6 +688,12 @@ export interface ContentOptimizeTask {
   error: string | null
   /** 无改动（空诊断路径：全部保持 → 无需修改，不创建新版本）。 */
   noChanges: boolean
+  /** 按项目整体接受/拒绝决策（T06；键=项目 id；缺省全部接受）。 */
+  decisions: Record<string, ContentProjectDecision> | null
+  /** 已显式勾选「确认纳入最终版」的推断-待确认改动 id（T06/US17 门禁）。 */
+  inferredConfirmed: string[] | null
+  /** 整合汇总（T06：标点/排序自动修复、删除/保留原文警告、仍有未解决项目；确认后保留展示）。 */
+  summary: ContentIntegrationSummary | null
   createdAt: string
   updatedAt: string
 }
