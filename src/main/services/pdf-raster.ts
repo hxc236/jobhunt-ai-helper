@@ -65,6 +65,7 @@ async function ensureWindow(): Promise<BrowserWindow> {
     webPreferences: { sandbox: false, contextIsolation: true, nodeIntegration: false }
   })
   await win.loadURL(`${PROTOCOL}://lib/render.html`)
+  await waitForRasterReady(win) // #84 遗留：loadURL 后模块脚本（含顶层 await import）可能尚未求值完，executeJavaScript 会过早失败
   rasterWindow = win
   win.on('closed', () => {
     rasterWindow = null
@@ -72,11 +73,32 @@ async function ensureWindow(): Promise<BrowserWindow> {
   return win
 }
 
+/**
+ * 等待栅格化窗口就绪（内联 module 脚本执行完、window.__openPdf 已挂载）。
+ * loadURL 的 did-finish-load 与含顶层 await 的模块脚本求值存在竞态（实测首次导入偶发
+ * 『Script failed to execute』），故轮询探测；超时报明确错误而非 Electron 原生对话框。
+ */
+async function waitForRasterReady(win: BrowserWindow, timeoutMs = 10000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const ok = await win.webContents
+      .executeJavaScript('typeof window.__openPdf === \'function\'', true)
+      .catch(() => false)
+    if (ok) return
+    await new Promise((r) => setTimeout(r, 100))
+  }
+  throw new Error('栅格化窗口初始化超时（render.html 脚本未就绪）')
+}
+
 /** 在栅格化窗口中打开 PDF，返回页数（后续 renderRasterPage/closeRasterPdf 用）。 */
 export async function openPdfInRasterWindow(pdfPath: string): Promise<number> {
   const win = await ensureWindow()
   const pdfB64 = readFileSync(pdfPath).toString('base64')
-  const numPages = await win.webContents.executeJavaScript(`window.__openPdf('${pdfB64}')`, true)
+  const numPages = await win.webContents
+    .executeJavaScript(`window.__openPdf('${pdfB64}')`, true)
+    .catch((err: unknown) => {
+      throw new Error(`栅格化窗口打开 PDF 失败：${err instanceof Error ? err.message : String(err)}`)
+    })
   if (typeof numPages !== 'number' || numPages < 1) {
     throw new Error(`PDF 打开失败：${pdfPath}`)
   }
@@ -87,7 +109,11 @@ export async function openPdfInRasterWindow(pdfPath: string): Promise<number> {
 export async function renderRasterPage(pageNo: number, scale = 2): Promise<Buffer> {
   const win = rasterWindow
   if (win === null || win.isDestroyed()) throw new Error('栅格化窗口未打开 PDF')
-  const result = await win.webContents.executeJavaScript(`window.__renderPdfPage(${pageNo}, ${scale})`, true)
+  const result = await win.webContents
+    .executeJavaScript(`window.__renderPdfPage(${pageNo}, ${scale})`, true)
+    .catch((err: unknown) => {
+      throw new Error(`PDF 第 ${pageNo} 页渲染失败：${err instanceof Error ? err.message : String(err)}`)
+    })
   if (typeof result !== 'string' || !result.startsWith('data:image/png;base64,')) {
     throw new Error(`PDF 第 ${pageNo} 页渲染失败（未返回 PNG）`)
   }
