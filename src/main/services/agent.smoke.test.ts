@@ -14,8 +14,8 @@ import { PiAgentProvider } from './pi-agent-provider'
  *   - 环境变量：AGENT_SMOKE_API_KEY=sk-... AGENT_SMOKE_PROVIDER=deepseek AGENT_SMOKE_MODEL=deepseek-v4-flash
  *   - 未设置时复用本机 ~/.pi/agent/auth.json 中对应 provider 的 api_key
  *
- * 覆盖：未配置认证明确错误（AC-3 真实路径）→ configureProvider → 三种任务
- * 类型的真实会话（AC-2 真实事件流；learn 走内置 teach 技能 + 教学工作区）。
+ * 覆盖：未配置认证明确错误（AC-3 真实路径）→ configureProvider → 四种任务
+ * 类型的真实会话（含隔离的 resume_import；learn 走内置 teach 技能 + 教学工作区）。
  */
 
 const SMOKE_ENABLED = process.env['AGENT_SMOKE'] === '1'
@@ -79,9 +79,23 @@ async function waitForFirstActivity(events: AgentEvent[], timeoutMs: number): Pr
   throw new Error(`会话在 ${timeoutMs}ms 内无任何活动`)
 }
 
+async function within<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), timeoutMs)
+      })
+    ])
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
+}
+
 describe.skipIf(!SMOKE_ENABLED)('AgentService 真实 SDK 冒烟（AGENT_SMOKE=1）', () => {
   it(
-    '全流程：未配置错误 → configureProvider → optimize/interview/learn 三任务',
+    '全流程：未配置错误 → configureProvider → optimize/resume_import/interview/learn 四任务',
     { timeout: 300_000 },
     async () => {
       const providerId = process.env['AGENT_SMOKE_PROVIDER'] ?? 'deepseek'
@@ -110,6 +124,21 @@ describe.skipIf(!SMOKE_ENABLED)('AgentService 真实 SDK 冒烟（AGENT_SMOKE=1�
         expect(reply.length).toBeGreaterThan(0)
         expect((deltas.get(optimize.id) ?? []).join('')).toBe(reply)
         optimize.dispose()
+
+        // resume_import：纯文本→JSON 隔离会话，不应加载代码 Agent 上下文而拖慢首轮。
+        console.log('[resume_import]')
+        const resumeImport = await service.createSession('resume_import')
+        const importStartedAt = Date.now()
+        const importReply = await within(
+          resumeImport.prompt(
+            '把以下脱敏简历转为 JSON，只输出 {"name":"...","education":["..."]}：\n张伟\n北京理工大学 软件工程 本科'
+          ),
+          30_000,
+          'resume_import 30 秒内未完成'
+        )
+        expect(importReply.length).toBeGreaterThan(0)
+        expect(Date.now() - importStartedAt).toBeLessThan(30_000)
+        resumeImport.dispose()
 
         // interview：长驻会话
         console.log('[interview]')

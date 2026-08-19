@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import path from 'node:path'
 import mammoth from 'mammoth'
 import { getDocument, type PDFDocumentProxy } from 'pdfjs-dist/legacy/build/pdf.mjs'
@@ -22,6 +23,18 @@ export class ResumeParseError extends Error {
     super(message)
     this.name = 'ResumeParseError'
   }
+}
+
+const require = createRequire(import.meta.url)
+const PDFJS_PACKAGE_DIR = path.dirname(require.resolve('pdfjs-dist/package.json'))
+
+/**
+ * pdfjs Node 字体资源目录。部分中文 PDF 只声明 Adobe-GB1/GB-EUC-H 等外部 CMap，
+ * 不内嵌 ToUnicode；缺少这些资源时 pdfjs 会静默产出空文本/乱码并只写 warning。
+ * Node PDF factory 接受文件系统路径，但要求统一 `/` 且以 `/` 结尾。
+ */
+function pdfjsAssetDir(name: 'cmaps' | 'standard_fonts'): string {
+  return `${path.join(PDFJS_PACKAGE_DIR, name).replace(/\\/g, '/')}/`
 }
 
 /** 单页提取结果（#78：页码 + 行文本 + 字符坐标，坐标供 #82 双栏重排）。 */
@@ -70,7 +83,12 @@ async function extractDocxText(filePath: string): Promise<string> {
 export async function extractPdfPages(filePath: string, maxPages?: number): Promise<PdfPageText[]> {
   try {
     const data = new Uint8Array(await readFile(filePath))
-    const loadingTask = getDocument({ data })
+    const loadingTask = getDocument({
+      data,
+      cMapUrl: pdfjsAssetDir('cmaps'),
+      cMapPacked: true,
+      standardFontDataUrl: pdfjsAssetDir('standard_fonts')
+    })
     let doc: PDFDocumentProxy
     try {
       doc = await loadingTask.promise

@@ -65,6 +65,46 @@ function buildPdf(textLines: string[]): Promise<Buffer> {
   return buildMultiPagePdf([textLines])
 }
 
+/**
+ * 脱敏 CJK PDF：Type0 字体只声明 GB-EUC-H / Adobe-GB1，不内嵌 ToUnicode。
+ * pdfjs 必须加载随包 CMap 才能把字符码还原成中文；用于复现部分招聘模板 PDF 的乱码。
+ */
+function buildExternalCMapPdf(): Buffer {
+  // 「张伟 简历 教育背景 软件工程」的 GB2312 字节；内容为合成样本。
+  const textHex = 'D5C5CEB020BCF2C0FA20BDCCD3FDB1B3BEB020C8EDBCFEB9A4B3CC'
+  const objects: Buffer[] = []
+  const add = (body: string | Buffer): void => {
+    objects.push(typeof body === 'string' ? Buffer.from(body, 'latin1') : body)
+  }
+  add('<< /Type /Catalog /Pages 2 0 R >>')
+  add('<< /Type /Pages /Kids [3 0 R] /Count 1 >>')
+  add('<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 7 0 R >>')
+  add('<< /Type /Font /Subtype /Type0 /BaseFont /STSong-Light /Encoding /GB-EUC-H /DescendantFonts [5 0 R] >>')
+  add('<< /Type /Font /Subtype /CIDFontType0 /BaseFont /STSong-Light /CIDSystemInfo << /Registry (Adobe) /Ordering (GB1) /Supplement 4 >> /FontDescriptor 6 0 R /DW 1000 >>')
+  add('<< /Type /FontDescriptor /FontName /STSong-Light /Flags 6 /FontBBox [-250 -250 1200 1000] /ItalicAngle 0 /Ascent 880 /Descent -120 /CapHeight 700 /StemV 80 >>')
+  const stream = Buffer.from(`BT /F1 18 Tf 72 760 Td <${textHex}> Tj ET`, 'ascii')
+  add(Buffer.concat([Buffer.from(`<< /Length ${stream.length} >>\nstream\n`, 'ascii'), stream, Buffer.from('\nendstream', 'ascii')]))
+
+  const chunks: Buffer[] = [Buffer.from('%PDF-1.4\n%\xe2\xe3\xcf\xd3\n', 'latin1')]
+  const offsets = [0]
+  let length = chunks[0].length
+  objects.forEach((object, index) => {
+    offsets.push(length)
+    const chunk = Buffer.concat([Buffer.from(`${index + 1} 0 obj\n`, 'ascii'), object, Buffer.from('\nendobj\n', 'ascii')])
+    chunks.push(chunk)
+    length += chunk.length
+  })
+  const xrefOffset = length
+  const xref = [
+    `xref\n0 ${objects.length + 1}\n`,
+    '0000000000 65535 f \n',
+    ...offsets.slice(1).map((offset) => `${String(offset).padStart(10, '0')} 00000 n \n`),
+    `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`
+  ].join('')
+  chunks.push(Buffer.from(xref, 'ascii'))
+  return Buffer.concat(chunks)
+}
+
 /** 多页 PDF：每组文本占一页（#78 跨页/页数上限测试用）。 */
 function buildMultiPagePdf(pageGroups: string[][]): Promise<Buffer> {
   const cjkFont = 'C:/Windows/Fonts/simhei.ttf'
@@ -126,6 +166,16 @@ describe('parseUploadFile 简历上传解析（F-14/#26）', () => {
     expect("confidence" in draft).toBe(false)
     expect(draft.fieldStatus).toMatchObject({ name: 'text', phone: 'text', email: 'text', education: 'text' })
     expect(draft.unmappedText).toEqual([])
+  })
+
+  it('外部 Adobe-GB1 CMap PDF 可还原中文文本层，不误判为扫描件或把乱码交给 Agent', async () => {
+    const file = tempFile('external-cmap.pdf', buildExternalCMapPdf())
+    const draft = await parseUploadFile(file)
+
+    expect(draft.text).toContain('张伟')
+    expect(draft.text).toContain('教育背景')
+    expect(draft.text).toContain('软件工程')
+    expect(draft.scanned).toBe(false)
   })
 
   it('样例 pdf 解析：文本提取 + 字段映射与 docx 一致', async () => {

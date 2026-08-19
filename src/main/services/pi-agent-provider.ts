@@ -32,14 +32,16 @@ import {
  * 认证/配置隔离（ADR-0002 + 调研结论）：
  * - ModelRuntime.create({ authPath, modelsPath }) 指向应用自有目录（userData/pi），
  *   不读不写用户 ~/.pi/agent；API key 只落应用自有 auth.json（0600），不落 SQLite；
- * - agentDir 指向应用自有目录 + noExtensions：不加载用户全局扩展/技能，进程面干净；
- * - learn 的 teach 技能经 skillsOverride 注入仓库内置副本（resources/teach），自包含。
+ * - agentDir 指向应用自有目录 + noExtensions：不加载用户全局扩展；
+ * - learn 的 teach 技能经 skillsOverride 注入仓库内置副本（resources/teach），自包含；
+ * - resume_import 关闭 skills/context/templates/themes，使用专用最小 system prompt。
  *
  * 会话策略（ADR-0002）：
  * - optimize：SessionManager.inMemory()，无工具（纯文本三轮）；
  * - interview：SessionManager.inMemory()，无工具（tools 收紧），长驻 + steer/followUp；
  * - learn：SessionManager.continueRecent(教学工作区, 应用自有 sessions 目录)，保留
- *   read/write/edit/bash/ls/grep/find（teach 技能依赖写 HTML/引用文件）。
+ *   read/write/edit/bash/ls/grep/find（teach 技能依赖写 HTML/引用文件）；
+ * - resume_import：SessionManager.inMemory()，无工具/无代码上下文，纯文本→JSON。
  */
 
 /** 各任务类型默认策略。 */
@@ -152,7 +154,8 @@ export class PiAgentProvider implements AgentProvider {
     const resourceLoader = await createAppLoader({
       cwd,
       agentDir: this.agentDir,
-      teachSkillDir: this.options.teachSkillDir
+      teachSkillDir: this.options.teachSkillDir,
+      task
     })
 
     const { session } = await createAgentSession({
@@ -162,6 +165,8 @@ export class PiAgentProvider implements AgentProvider {
       sessionManager,
       settingsManager: SettingsManager.inMemory(),
       resourceLoader,
+      // 简历导入是纯数据转换：关闭思考，避免长推理拖慢结构化。
+      ...(task === 'resume_import' ? { thinkingLevel: 'off' as const } : {}),
       // optimize/interview 无工具（tools 收紧）；learn 保留 teach 依赖的工具
       ...(strategy.tools === undefined
         ? { noTools: 'all' as const }
@@ -200,15 +205,30 @@ async function createAppLoader(options: {
   cwd: string
   agentDir: string
   teachSkillDir: string
+  task: AgentTaskType
 }): Promise<DefaultResourceLoader> {
+  const isolatedResumeImport = options.task === 'resume_import'
   const loader = new DefaultResourceLoader({
     cwd: options.cwd,
     agentDir: options.agentDir,
     noExtensions: true,
-    skillsOverride: (current) => ({
-      skills: [bundledTeachSkill(options.teachSkillDir), ...current.skills],
-      diagnostics: current.diagnostics
-    })
+    ...(isolatedResumeImport
+      ? {
+          // 导入只做文本→JSON，不加载代码 Agent 的 AGENTS.md、skills、模板或主题。
+          // 否则项目上下文和技能清单会显著放大请求，干扰纯结构化并拖慢首 token。
+          noSkills: true,
+          noPromptTemplates: true,
+          noThemes: true,
+          noContextFiles: true,
+          systemPrompt:
+            '你是一个只做简历文本结构化的数据转换器。严格遵循用户给出的 JSON 字段和事实约束；不调用工具，不解释，只输出 JSON。'
+        }
+      : {
+          skillsOverride: (current: ReturnType<DefaultResourceLoader['getSkills']>) => ({
+            skills: [bundledTeachSkill(options.teachSkillDir), ...current.skills],
+            diagnostics: current.diagnostics
+          })
+        })
   })
   await loader.reload()
   return loader
