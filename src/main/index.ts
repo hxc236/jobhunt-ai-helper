@@ -207,9 +207,6 @@ app.whenReady().then(() => {
         case 'agent_pending':
           pushEvent(IpcEvent.ResumesImportAgentPending, { token: event.token, kind: event.kind })
           break
-        case 'agent_pending':
-          pushEvent(IpcEvent.ResumesImportAgentPending, { token: event.token, kind: event.kind })
-          break
       }
     }
   })

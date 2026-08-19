@@ -276,8 +276,10 @@ export class ResumeImportService {
     }
     let session: AgentSession
     try {
-      session = await agent.createSession('resume_import')
-    } catch {
+      session = await this.createSessionWithDecision(entry, agent)
+    } catch (err) {
+      if (err instanceof AgentUseLocalError) return { used: false, failedReason: 'user-local' }
+      if (err instanceof ImportCancelledError) throw err
       return { used: false, failedReason: 'agent-not-configured' }
     }
     entry.agentSession = session
@@ -326,6 +328,38 @@ export class ResumeImportService {
       entry.agentSession = undefined
       session.dispose()
     }
+  }
+
+  /**
+   * 创建导入专用 Agent 会话也受等待阈值保护。
+   * Pi SDK 的 runtime/model/resource 初始化发生在 createSession 内，不能只给 prompt 加超时。
+   */
+  private async createSessionWithDecision(entry: DraftEntry, agent: AgentService): Promise<AgentSession> {
+    const sessionPromise = agent.createSession('resume_import')
+    // 即使用户取消或选择本地草稿，仍消费迟到的 rejection，避免未处理 Promise。
+    void sessionPromise.catch(() => undefined)
+    const timedOut = await Promise.race([
+      sessionPromise.then(() => false),
+      sleep(this.agentWaitMs).then(() => true)
+    ])
+    if (!timedOut) return await sessionPromise
+
+    this.deps.emit({ type: 'agent_pending', token: entry.token, kind: 'timeout' })
+    const choice = await this.awaitAgentDecision(entry, 'timeout')
+    if (choice === 'local') {
+      // createSession 可能稍后才完成；迟到的会话不能泄漏。
+      void sessionPromise
+        .then(async (session) => {
+          try {
+            await session.abort()
+          } finally {
+            session.dispose()
+          }
+        })
+        .catch(() => undefined)
+      throw new AgentUseLocalError()
+    }
+    return await sessionPromise
   }
 
   /** Agent 提示 + 30s 等待阈值：超时 → agent_pending(timeout)，由用户决定继续等待/本地草稿。 */

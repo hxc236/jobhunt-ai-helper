@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import JSZip from 'jszip'
 import { openDatabase } from '../db/database'
-import { AgentService } from './agent'
+import { AgentService, type AgentProvider, type AgentSession } from './agent'
 import { FakeAgentProvider } from './fake-agent-provider'
 import { ResumeService } from './resume'
 import { SettingsService } from './settings'
@@ -109,6 +109,22 @@ function writeFixture(dir: string, name: string, buf: Buffer): string {
   return p
 }
 
+class HangingCreateSessionProvider implements AgentProvider {
+  readonly name = 'hanging-create'
+
+  getStatus() {
+    return { configured: true, provider: 'hanging', model: 'test' }
+  }
+
+  async configureProvider(): Promise<void> {}
+
+  createSession(_task: Parameters<AgentProvider['createSession']>[0]): Promise<AgentSession> {
+    return new Promise<AgentSession>(() => {})
+  }
+
+  dispose(): void {}
+}
+
 async function settle(svc: ResumeImportService, token: string, timeoutMs = 5000): Promise<void> {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
@@ -135,6 +151,29 @@ async function waitForPending(h: Harness, token: string, kind: string, timeoutMs
 }
 
 describe('ResumeImportService Agent 结构化（#77）', () => {
+  it('Agent 建立会话超时：显示 timeout 决策并可选择本地草稿', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'resume-import-agent-create-timeout-'))
+    const resumes = new ResumeService(openDatabase(':memory:'))
+    const settings = new SettingsService(openDatabase(':memory:'))
+    settings.set(AGENT_IMPORT_CONSENT, new Date().toISOString())
+    const events: ImportEvent[] = []
+    const svc = new ResumeImportService({
+      resumeService: resumes,
+      settings,
+      agent: new AgentService(new HangingCreateSessionProvider()),
+      agentWaitMs: 20,
+      emit: (event) => events.push(event)
+    })
+    const token = svc.start(writeFixture(dir, 'hanging.docx', await makeDocx(SAMPLE_TEXT)))
+
+    await waitForPending({ events } as Harness, token, 'timeout', 250)
+    svc.decide(token, 'timeout', 'local')
+    await settle(svc, token)
+    const done = events.find((event) => event.type === 'done' && event.token === token)
+    expect(done).toBeDefined()
+    expect(done && done.type === 'done' ? done.agent.failedReason : undefined).toBe('user-local')
+  })
+
   it('Agent 输出合法：done 携带 Agent 映射的 Resume，字段状态标记 agent', async () => {
     const h = makeHarness()
     h.settings.set(AGENT_IMPORT_CONSENT, new Date().toISOString()) // 已同意
