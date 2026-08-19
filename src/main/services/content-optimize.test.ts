@@ -553,6 +553,312 @@ describe('ContentOptimizeService — 任务状态机与持久化（T02/#92）', 
   })
 })
 
+describe('确认、对比与整合（T06/#96）', () => {
+  /** 改写回复：p1 增加一条 highlights（source=inferred 推断-待确认）。 */
+  function inferredRewriteReply(prompt: string): string {
+    const resume = extractResumeFromPrompt(prompt)
+    const pid = resume?.projects?.[0]?.id ?? 'proj-1'
+    return JSON.stringify({
+      resume: {
+        ...resume,
+        projects: (resume?.projects ?? []).map((p, i) =>
+          i === 0 ? { ...p, highlights: ['高并发秒杀压测优化'] } : p
+        )
+      },
+      changes: [
+        {
+          projectId: pid,
+          section: 'highlights',
+          before: '',
+          after: '高并发秒杀压测优化',
+          reason: 'R1 新增难点',
+          source: 'inferred'
+        }
+      ]
+    })
+  }
+
+  async function runToReview(h: Harness): Promise<string> {
+    const task = h.service.start(h.resumeId)
+    await waitForStatus(h, task.id, (t) => t.status === 'ready_for_review')
+    return task.id
+  }
+
+  it('改写轮解析后为每条改动分配稳定 id（推断-待确认勾选引用）', async () => {
+    const h = makeHarness({
+      diagnosis: () =>
+        JSON.stringify({
+          rules: [],
+          projects: [{ projectId: 'proj-1', verdict: 'rewrite' }],
+          questions: []
+        }),
+      rewrite: inferredRewriteReply
+    })
+    const taskId = await runToReview(h)
+    const ready = h.service.get(taskId)!
+    expect(ready.rewrite?.changes[0]?.id).toBe('chg-0')
+    expect(ready.rewrite?.changes[0]?.source).toBe('inferred')
+    expect(ready.rewrite?.changes[0]?.reason).toContain('待确认')
+  })
+
+  it('setReview：保存按项目决策 + 推断勾选并持久化（重启后仍可读回）', async () => {
+    const h = makeHarness({
+      diagnosis: () =>
+        JSON.stringify({
+          rules: [],
+          projects: [{ projectId: 'proj-1', verdict: 'rewrite' }],
+          questions: []
+        }),
+      rewrite: inferredRewriteReply
+    })
+    const taskId = await runToReview(h)
+    const pid = h.service.get(taskId)!.rewrite!.changes[0]!.projectId!
+
+    const updated = h.service.setReview(taskId, {
+      decisions: { [pid]: 'reject' },
+      inferredConfirmed: ['chg-0']
+    })
+    expect(updated.decisions?.[pid]).toBe('reject')
+    expect(updated.inferredConfirmed).toEqual(['chg-0'])
+
+    // 重启后从 DB 读回（中断续接不丢确认决策）
+    const service2 = new ContentOptimizeService(h.db, h.resumes, new AgentService(h.provider), {
+      emit: () => undefined,
+      queue: new LlmRoundQueue()
+    })
+    const restored = service2.get(taskId)!
+    expect(restored.decisions?.[pid]).toBe('reject')
+    expect(restored.inferredConfirmed).toEqual(['chg-0'])
+  })
+
+  it('setReview 校验：非可确认状态/未知项目/非法决策值/未知改动 id 均拒绝', async () => {
+    const h = makeHarness({
+      diagnosis: () =>
+        JSON.stringify({
+          rules: [],
+          projects: [{ projectId: 'proj-1', verdict: 'rewrite' }],
+          questions: []
+        }),
+      rewrite: inferredRewriteReply
+    })
+    const taskId = await runToReview(h)
+    const pid = h.service.get(taskId)!.rewrite!.changes[0]!.projectId!
+
+    // 非 ready_for_review 状态拒绝
+    const h2 = makeHarness({ diagnosis: () => JSON.stringify(withQuestions()) })
+    const t2 = h2.service.start(h2.resumeId)
+    await waitForStatus(h2, t2.id, (t) => t.status === 'awaiting_answers')
+    expect(() => h2.service.setReview(t2.id, { decisions: {}, inferredConfirmed: [] })).toThrowError(
+      ContentOptimizeError
+    )
+    expect(() => h2.service.setReview(t2.id, { decisions: {}, inferredConfirmed: [] })).toThrowError(
+      /不可设置确认决策/
+    )
+
+    // 未知项目 / 非法决策值 / 未知改动 id
+    expect(() => h.service.setReview(taskId, { decisions: { nope: 'accept' }, inferredConfirmed: [] })).toThrowError(
+      /未知项目/
+    )
+    expect(() =>
+      h.service.setReview(taskId, { decisions: { [pid]: 'maybe' as never }, inferredConfirmed: [] })
+    ).toThrowError(/非法决策值/)
+    expect(() =>
+      h.service.setReview(taskId, { decisions: {}, inferredConfirmed: ['chg-99'] })
+    ).toThrowError(/未知改动 id/)
+  })
+
+  it('US17 门禁：inferred 改动未勾选 → confirm 拒绝（inferred-pending）且状态不变；勾选后确认成功', async () => {
+    const h = makeHarness({
+      diagnosis: () =>
+        JSON.stringify({
+          rules: [],
+          projects: [{ projectId: 'proj-1', verdict: 'rewrite' }],
+          questions: []
+        }),
+      rewrite: inferredRewriteReply
+    })
+    const taskId = await runToReview(h)
+    const pid = h.service.get(taskId)!.rewrite!.changes[0]!.projectId!
+
+    // 未勾选 → 拒绝，任务仍可确认态
+    expect(() => h.service.confirm(taskId)).toThrowError(ContentOptimizeError)
+    expect(() => h.service.confirm(taskId)).toThrowError(/inferred-pending|推断-待确认/)
+    expect(h.service.get(taskId)?.status).toBe('ready_for_review')
+
+    // 勾选后 → 确认成功，创建新版本
+    h.service.setReview(taskId, { decisions: {}, inferredConfirmed: ['chg-0'] })
+    const before = h.resumes.list().length
+    const { createdResumeId } = h.service.confirm(taskId)
+    expect(createdResumeId).not.toBeNull()
+    expect(h.resumes.list().length).toBe(before + 1)
+    const confirmed = h.service.get(taskId)!
+    expect(confirmed.status).toBe('confirmed')
+    expect(confirmed.summary).not.toBeNull()
+    expect(confirmed.summary?.unresolvedProjects).toEqual([])
+    void pid
+  })
+
+  it('改写被拒 → 该项目保留原文，最终版标记「仍有未解决项目」（US19）；其他修改照常生效', async () => {
+    const h = makeHarness({
+      diagnosis: () =>
+        JSON.stringify({
+          rules: [],
+          projects: [{ projectId: 'proj-1', verdict: 'rewrite' }],
+          questions: []
+        }),
+      rewrite: (prompt) => {
+        const resume = extractResumeFromPrompt(prompt)
+        const pid = resume?.projects?.[0]?.id ?? 'proj-1'
+        return JSON.stringify({
+          resume: {
+            ...resume,
+            // 改写稿还带一个非项目改动（实习经历新增，R3），用于验证「其他修改照常生效」
+            experience: [
+              ...(resume?.experience ?? []),
+              { company: '某公司', title: '实习生', highlights: ['完成订单模块'] }
+            ],
+            projects: (resume?.projects ?? []).map((p, i) =>
+              i === 0 ? { ...p, description: 'C2C 二手交易（含高并发难点与解决行动）' } : p
+            )
+          },
+          changes: [
+            {
+              projectId: pid,
+              section: 'projects',
+              before: 'C2C 二手交易',
+              after: 'C2C 二手交易（含高并发难点与解决行动）',
+              reason: 'R1 补充难点与解决行动',
+              source: 'user-answer'
+            }
+          ]
+        })
+      }
+    })
+    const taskId = await runToReview(h)
+    const pid = h.service.get(taskId)!.rewrite!.changes[0]!.projectId!
+    h.service.setReview(taskId, { decisions: { [pid]: 'reject' }, inferredConfirmed: [] })
+
+    const before = h.resumes.list().length
+    const { createdResumeId } = h.service.confirm(taskId)
+    const confirmed = h.service.get(taskId)!
+    expect(confirmed.summary?.unresolvedProjects).toEqual([pid])
+    expect(confirmed.summary?.keptWithWarning).toEqual([])
+    // 其他（非项目）修改照常生效 → 创建新版本，且版本中 p1 为原文
+    expect(createdResumeId).not.toBeNull()
+    expect(h.resumes.list().length).toBe(before + 1)
+    const createdResume = h.resumes.list().find((r) => r.meta.id === createdResumeId)!
+    expect(createdResume.experience?.length).toBe(1) // 实习经历照常进入最终版
+    const p1 = createdResume.projects?.find((p) => p.id === pid)
+    expect(p1?.description).toContain('C2C 二手交易')
+    expect(p1?.description).not.toContain('含高并发难点') // 原文保留
+  })
+
+  it('删除建议：确认删除 → 项目不进最终稿；拒绝 → 保留原文 + 警告', async () => {
+    const h = makeHarness({
+      diagnosis: () =>
+        JSON.stringify({
+          rules: [],
+          projects: [{ projectId: 'proj-1', verdict: 'rewrite' }],
+          questions: []
+        }),
+      rewrite: (prompt) => {
+        const resume = extractResumeFromPrompt(prompt)
+        const pid = resume?.projects?.[0]?.id ?? 'proj-1'
+        return JSON.stringify({
+          resume: {
+            ...resume,
+            projects: (resume?.projects ?? []).filter((p) => p.id !== pid)
+          },
+          changes: [
+            {
+              projectId: pid,
+              section: 'projects',
+              before: 'C2C 二手交易',
+              after: '（建议删除）',
+              reason: '无可补充的难点/结果，建议删除',
+              source: 'original'
+            }
+          ]
+        })
+      }
+    })
+    const taskId = await runToReview(h)
+    const pid = h.service.get(taskId)!.rewrite!.changes[0]!.projectId!
+
+    // 拒绝删除 → 保留原文 + 警告（最终稿与原文一致 → 不建版本）
+    h.service.setReview(taskId, { decisions: { [pid]: 'reject' }, inferredConfirmed: [] })
+    const before = h.resumes.list().length
+    const kept = h.service.confirm(taskId)
+    expect(kept.createdResumeId).toBeNull()
+    expect(h.service.get(taskId)?.summary?.keptWithWarning).toEqual([pid])
+    expect(h.resumes.list().length).toBe(before) // 无实际改动不建版本（US20）
+
+    // 确认删除 → 项目移除 → 创建新版本
+    const h2 = makeHarness({
+      diagnosis: () =>
+        JSON.stringify({
+          rules: [],
+          projects: [{ projectId: 'proj-1', verdict: 'rewrite' }],
+          questions: []
+        }),
+      rewrite: (prompt) => {
+        const resume = extractResumeFromPrompt(prompt)
+        const pid = resume?.projects?.[0]?.id ?? 'proj-1'
+        return JSON.stringify({
+          resume: {
+            ...resume,
+            projects: (resume?.projects ?? []).filter((p) => p.id !== pid)
+          },
+          changes: [
+            {
+              projectId: pid,
+              section: 'projects',
+              before: 'C2C 二手交易',
+              after: '（建议删除）',
+              reason: '无可补充的难点/结果，建议删除',
+              source: 'original'
+            }
+          ]
+        })
+      }
+    })
+    const taskId2 = await runToReview(h2)
+    const pid2 = h2.service.get(taskId2)!.rewrite!.changes[0]!.projectId!
+    h2.service.setReview(taskId2, { decisions: { [pid2]: 'accept' }, inferredConfirmed: [] })
+    const before2 = h2.resumes.list().length
+    const deleted = h2.service.confirm(taskId2)
+    expect(deleted.createdResumeId).not.toBeNull()
+    expect(h2.service.get(taskId2)?.summary?.deletedProjects).toEqual([pid2])
+    expect(h2.resumes.list().length).toBe(before2 + 1)
+    const createdResume = h2.resumes.list().find((r) => r.meta.id === deleted.createdResumeId)!
+    expect(createdResume.projects?.some((p) => p.id === pid2)).toBe(false)
+  })
+
+  it('全部拒绝（无实际改动）→ 不创建新版本，进度标记「未应用改动」（US20）', async () => {
+    const h = makeHarness({
+      diagnosis: () =>
+        JSON.stringify({
+          rules: [],
+          projects: [{ projectId: 'proj-1', verdict: 'rewrite' }],
+          questions: []
+        }),
+      rewrite: inferredRewriteReply
+    })
+    const taskId = await runToReview(h)
+    const pid = h.service.get(taskId)!.rewrite!.changes[0]!.projectId!
+    h.service.setReview(taskId, { decisions: { [pid]: 'reject' }, inferredConfirmed: [] })
+
+    const before = h.resumes.list().length
+    const { createdResumeId } = h.service.confirm(taskId)
+    expect(createdResumeId).toBeNull()
+    expect(h.resumes.list().length).toBe(before)
+    const confirmed = h.service.get(taskId)!
+    expect(confirmed.status).toBe('confirmed')
+    expect(confirmed.progress).toContain('未应用改动')
+    expect(confirmed.summary?.unresolvedProjects).toEqual([pid])
+  })
+})
+
 describe('ContentQuestion 类型约束', () => {
   it('question 结构：projectId/field/question/evidence/candidates', () => {
     const q: ContentQuestion = {

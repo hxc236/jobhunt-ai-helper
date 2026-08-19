@@ -87,12 +87,29 @@ export function createContentOptimizeFakeProvider(
       }
       if (prompt.includes('[内容优化 2/2')) {
         if (scenario === 'questions') {
-          // 合法最小 ContentRewrite：原简历原样 + 一条 change（parseRewrite 过 schema 校验）
+          // 合法最小 ContentRewrite：改写稿对项目做真实改动（parseRewrite 过 schema + 溯源校验）
           const resume = extractResumeFromPrompt(prompt)
           const pid = resume?.projects?.[0]?.id ?? ''
+          const rewritten = {
+            ...resume,
+            projects: (resume?.projects ?? []).map((p, i) =>
+              i === 0
+                ? { ...p, description: 'C2C 二手交易系统（含高并发难点与可量化结果）' }
+                : p
+            )
+          }
           return JSON.stringify({
-            resume,
-            changes: [{ projectId: pid, section: 'projects', before: 'C2C 二手交易系统', after: 'C2C 二手交易系统（含高并发难点与可量化结果）', reason: '融合用户回答', source: 'user-answer' }]
+            resume: rewritten,
+            changes: [
+              {
+                projectId: pid,
+                section: 'projects',
+                before: 'C2C 二手交易系统',
+                after: 'C2C 二手交易系统（含高并发难点与可量化结果）',
+                reason: '融合用户回答补充难点与可量化结果',
+                source: 'user-answer'
+              }
+            ]
           })
         }
         // 改写轮（empty 场景不会被 E2E 触发）：回显兜底

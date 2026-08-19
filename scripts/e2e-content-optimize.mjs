@@ -87,7 +87,7 @@ function assertQuestionsDatabase(userDataDir, taskId) {
   const db = new Database(join(userDataDir, 'jobhunt.db'), { readonly: true })
   try {
     const task = db
-      .prepare('SELECT status, no_changes, answers_json FROM content_optimize_tasks WHERE id = ?')
+      .prepare('SELECT status, no_changes, answers_json, summary_json FROM content_optimize_tasks WHERE id = ?')
       .get(taskId)
     if (task === undefined) throw new Error(`任务 ${taskId} 未落库`)
     if (task.status !== 'confirmed') throw new Error(`任务状态应为 confirmed，实际 ${task.status}`)
@@ -102,6 +102,10 @@ function assertQuestionsDatabase(userDataDir, taskId) {
     const resumeCount = db.prepare('SELECT COUNT(*) AS n FROM resumes').get().n
     if (resumeCount !== 2) {
       throw new Error(`有改写的确认应创建新基准简历：resumes 应为 2，实际 ${resumeCount}`)
+    }
+    const summary = JSON.parse(String(task.summary_json))
+    if (summary.unresolvedProjects.length !== 0) {
+      throw new Error(`确认后不应有未解决项目：${JSON.stringify(summary)}`)
     }
     console.log(`  [db] task=${task.status} no_changes=${task.no_changes} resumes=${resumeCount} answers=${JSON.stringify(answers)} ✓`)
   } finally {
@@ -204,6 +208,19 @@ async function runQuestionsFlow(page, userDataDir) {
     return card !== null && card.textContent.includes('可确认')
   }, undefined, { timeout: 15_000 })
   console.log('  生成优化稿 → 任务流转到「可确认」✓')
+
+  // T06/#96 逐项目确认区：改写稿/来源标签/接受·保留控件出现
+  await page.waitForSelector('.opt-review', { timeout: 10_000 })
+  const reviewA11y = await page.locator('.opt-review').ariaSnapshot()
+  for (const expectText of ['逐项目确认', '已改写', '接受改写', '保留原文', '用户回答', '改写后']) {
+    if (!reviewA11y.includes(expectText)) {
+      throw new Error(`逐项目确认区缺少「${expectText}」：${reviewA11y.slice(0, 400)}`)
+    }
+  }
+  console.log('  逐项目确认区（改写稿/来源/接受·保留）无障碍快照断言 ✓')
+  const reviewShot = join(userDataDir, 'task-card-review.png')
+  await page.screenshot({ path: reviewShot, fullPage: false })
+  console.log(`  截图：${reviewShot}`)
 
   // 键盘确认
   const confirmBtn = page.locator('.opt-task-card button', { hasText: '确认' }).first()

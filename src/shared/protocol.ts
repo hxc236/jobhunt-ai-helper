@@ -39,7 +39,8 @@ import type {
   TopicInput,
   TopicStatus,
   ResumeDraft,
-  ContentOptimizeTask
+  ContentOptimizeTask,
+  ContentProjectDecision
 } from './types'
 import type { Resume, StoredResume } from './types/resume'
 
@@ -117,6 +118,7 @@ export const IpcChannel = {
   ContentOptimizeList: 'content-optimize:list',
   ContentOptimizeGet: 'content-optimize:get',
   ContentOptimizeSubmitAnswers: 'content-optimize:submit-answers',
+  ContentOptimizeSetReview: 'content-optimize:set-review',
   ContentOptimizeConfirm: 'content-optimize:confirm',
   ContentOptimizeCancel: 'content-optimize:cancel',
   ContentOptimizeRetry: 'content-optimize:retry',
@@ -237,6 +239,15 @@ export interface IpcProtocol {
   [IpcChannel.ContentOptimizeGet]: { request: { taskId: string }; response: ContentOptimizeTask | null }
   [IpcChannel.ContentOptimizeSubmitAnswers]: {
     request: { taskId: string; answers: Record<string, string> }
+    response: ContentOptimizeTask
+  }
+  // T06/#96：保存按项目接受/拒绝决策 + 推断-待确认改动勾选（ready_for_review 有改写时；持久化供中断续接）。
+  [IpcChannel.ContentOptimizeSetReview]: {
+    request: {
+      taskId: string
+      decisions: Record<string, ContentProjectDecision>
+      inferredConfirmed: string[]
+    }
     response: ContentOptimizeTask
   }
   [IpcChannel.ContentOptimizeConfirm]: {
@@ -472,6 +483,12 @@ export interface ContentOptimizeApi {
   get: (taskId: string) => Promise<ContentOptimizeTask | null>
   /** 提交追问回答（awaiting_answers → rewriting）。 */
   submitAnswers: (taskId: string, answers: Record<string, string>) => Promise<ContentOptimizeTask>
+  /** T06/#96：保存按项目接受/拒绝决策 + 推断-待确认改动勾选（US15/US17；持久化供中断续接）。 */
+  setReview: (
+    taskId: string,
+    decisions: Record<string, ContentProjectDecision>,
+    inferredConfirmed: string[]
+  ) => Promise<ContentOptimizeTask>
   /** 确认内容优化稿（空诊断不创建新版本；返回 createdResumeId）。 */
   confirm: (taskId: string) => Promise<{ task: ContentOptimizeTask; createdResumeId: string | null }>
   /** 取消（当前 LLM 轮结束后停止）。 */
