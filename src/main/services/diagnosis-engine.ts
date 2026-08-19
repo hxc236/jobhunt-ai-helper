@@ -5,7 +5,7 @@ import type {
   ContentRuleStatus,
   ContentRuleVerdict
 } from '../../shared/types'
-import { CONTENT_RULE_NAMES } from '../../shared/types'
+import { CONTENT_PROJECT_TARGET_PREFIX, CONTENT_RULE_NAMES } from '../../shared/types'
 import { extractJson } from './optimize'
 
 /**
@@ -53,8 +53,12 @@ export const CONTENT_RULE_DEFINITIONS: ReadonlyArray<{
 /** 诊断轮提示词：完整规则矩阵 + 质量维度定义 + JSON 输出契约 + 简历原文。 */
 export function buildDiagnosisPrompt(resume: Resume): string {
   const ruleLines = CONTENT_RULE_DEFINITIONS.map((r) => {
-    if (r.scope === 'project') return `${r.ruleId} ${r.name}（每项目一条，target=project:<项目id>）`
-    return `${r.ruleId} ${r.name}（全局一条，target=${r.ruleId === 'R3' ? 'section:order' : 'global'}）`
+    if (r.scope === 'project') return `${r.ruleId} ${r.name}（每项目一条，target=${CONTENT_PROJECT_TARGET_PREFIX}<项目id>）`
+    if (r.ruleId === 'R3') {
+      // R3 na 条件：无实习经历或仅一条实习经历时不存在相对顺序问题，判定为不适用
+      return `${r.ruleId} ${r.name}（全局一条，target=section:order；无实习经历或仅一条实习经历时判定为不适用(na)）`
+    }
+    return `${r.ruleId} ${r.name}（全局一条，target=global）`
   })
   return [
     '[内容优化 1/2：规则诊断] 你是一名简历内容优化专家。以下为一份应届生中文简历（无 JD、无岗位方向）。',
@@ -106,19 +110,37 @@ export function parseDiagnosis(reply: string): ContentDiagnosis {
       }))
     : []
   // 项目判定：优先由该项目规则状态推导（一致性约束）；该项目无规则条目时兜底用 LLM 判定。
-  const projects = Array.isArray(parsed.projects)
-    ? parsed.projects.filter(isRecord).map((p) => {
-        const projectId = String(p.projectId ?? '')
-        const hasProjectRules = rules.some((r) => r.target === `project:${projectId}`)
-        return {
-          projectId,
-          verdict: hasProjectRules
-            ? deriveProjectVerdict(projectId, rules)
-            : (isVerdict(p.verdict) ? p.verdict : 'keep')
-        }
-      })
-    : []
+  // 项目判定：优先由该项目规则状态推导（一致性约束）；该项目无规则条目时兜底用 LLM 判定。
+  // LLM 省略 projects 数组（或为空）时，由项目级规则反向推导项目判定（review 修复：
+  // 避免仅有 improve 规则却落入 noChanges 路径）。
+  const projects =
+    Array.isArray(parsed.projects) && parsed.projects.length > 0
+      ? parsed.projects.filter(isRecord).map((p) => {
+          const projectId = String(p.projectId ?? '')
+          const hasProjectRules = rules.some((r) => r.target === projectTarget(projectId))
+          return {
+            projectId,
+            verdict: hasProjectRules
+              ? deriveProjectVerdict(projectId, rules)
+              : (isVerdict(p.verdict) ? p.verdict : 'keep')
+          }
+        })
+      : deriveProjectsFromRules(rules)
   return { rules, projects, questions }
+}
+
+/** 项目级规则 → 按项目分组推导判定（LLM 未返回 projects 数组时的兜底）。 */
+function deriveProjectsFromRules(
+  rules: ContentRuleVerdict[]
+): Array<{ projectId: string; verdict: ContentProjectVerdict }> {
+  const projectIds = new Set<string>()
+  for (const r of rules) {
+    const id = projectIdFromTarget(r.target)
+    if (id !== undefined) projectIds.add(id)
+  }
+  return [...projectIds]
+    .map((projectId) => ({ projectId, verdict: deriveProjectVerdict(projectId, rules) }))
+    .sort((a, b) => a.projectId.localeCompare(b.projectId))
 }
 
 /** 一致性推导：insufficient → needs-info；否则 improve → rewrite；否则 keep。 */
@@ -126,10 +148,22 @@ export function deriveProjectVerdict(
   projectId: string,
   rules: readonly ContentRuleVerdict[]
 ): ContentProjectVerdict {
-  const projectRules = rules.filter((r) => r.target === `project:${projectId}`)
+  const projectRules = rules.filter((r) => r.target === projectTarget(projectId))
   if (projectRules.some((r) => r.status === 'insufficient')) return 'needs-info'
   if (projectRules.some((r) => r.status === 'improve')) return 'rewrite'
   return 'keep'
+}
+
+/** target → 项目 id；非项目规则返回 undefined。 */
+function projectIdFromTarget(target: string): string | undefined {
+  if (!target.startsWith(CONTENT_PROJECT_TARGET_PREFIX)) return undefined
+  const id = target.slice(CONTENT_PROJECT_TARGET_PREFIX.length)
+  return id === '' ? undefined : id
+}
+
+/** 项目 id → 项目规则作用对象 target。 */
+function projectTarget(projectId: string): string {
+  return `${CONTENT_PROJECT_TARGET_PREFIX}${projectId}`
 }
 
 function parseRule(r: Record<string, unknown>): ContentRuleVerdict {

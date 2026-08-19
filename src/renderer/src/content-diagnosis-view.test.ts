@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   RULE_STATUS_LABELS,
   PROJECT_VERDICT_LABELS,
+  FACT_SOURCE_LABELS,
   ruleName,
   isProjectRule,
   isGlobalRule,
@@ -37,6 +38,14 @@ describe('content-diagnosis-view（#93 任务卡片判定展示辅助）', () =>
       keep: '保持',
       rewrite: '可直接改写',
       'needs-info': '需要补充信息'
+    })
+  })
+
+  it('FACT_SOURCE_LABELS：事实来源中文标签（原文 / 用户回答 / 推断-待确认）', () => {
+    expect(FACT_SOURCE_LABELS).toEqual({
+      original: '原文',
+      'user-answer': '用户回答',
+      inferred: '推断-待确认'
     })
   })
 

@@ -576,6 +576,9 @@ export const CONTENT_STATUS_LABELS: Record<ContentOptimizeStatus, string> = {
   cancelled: '已取消'
 }
 
+/** 项目级规则作用对象前缀（target=`project:<项目id>`；T03/#93：引擎/视图共用，避免字符串约定漂移）。 */
+export const CONTENT_PROJECT_TARGET_PREFIX = 'project:'
+
 /** 内容优化规则中文名（T03/#93：诊断提示词与任务卡片判定展示共用，单一来源）。 */
 export const CONTENT_RULE_NAMES: Record<string, string> = {
   R1: '含金量：难点+解决行动',

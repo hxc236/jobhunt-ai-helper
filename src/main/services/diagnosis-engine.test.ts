@@ -57,6 +57,12 @@ describe('buildDiagnosisPrompt（#93 规则诊断引擎）', () => {
     expect(prompt).toContain('无条件')
     expect(prompt).toMatch(/实习.*(?:之前|前置|排在前)/)
   })
+
+  it('R3 提示词注明 na 条件：无实习经历或仅一条实习经历 → 不适用(na)', () => {
+    const prompt = buildDiagnosisPrompt(RESUME)
+    expect(prompt).toMatch(/无实习.*仅一条.*不适用/)
+    expect(prompt).toContain('(na)')
+  })
 })
 
 describe('parseDiagnosis（#93 规则判定解析与一致性推导）', () => {
@@ -173,6 +179,59 @@ describe('parseDiagnosis（#93 规则判定解析与一致性推导）', () => {
       projects: [{ projectId: 'proj-1', verdict: 'keep' }],
       questions: []
     })
+  })
+
+  it('LLM 省略 projects 数组但有项目 improve 规则 → 由规则推导项目判定（rewrite）', () => {
+    const reply = JSON.stringify({
+      rules: [
+        { ruleId: 'R1', target: 'project:proj-1', status: 'improve', evidence: 'e', issue: 'i', suggestion: 's', factSource: 'original' },
+        { ruleId: 'R4-结果', target: 'project:proj-2', status: 'improve', evidence: 'e', issue: 'i', suggestion: 's', factSource: 'original' }
+      ],
+      questions: []
+    })
+    const d = parseDiagnosis(reply)
+    expect(d.projects).toEqual([
+      { projectId: 'proj-1', verdict: 'rewrite' },
+      { projectId: 'proj-2', verdict: 'rewrite' }
+    ])
+  })
+
+  it('LLM 省略 projects 数组且含 insufficient 项目规则 → 推导为 needs-info（最高优先级）', () => {
+    const reply = JSON.stringify({
+      rules: [
+        { ruleId: 'R4-简介', target: 'project:proj-1', status: 'insufficient', evidence: 'e', issue: 'i', suggestion: 's', factSource: 'original' },
+        { ruleId: 'R4-简介', target: 'project:proj-2', status: 'improve', evidence: 'e', issue: 'i', suggestion: 's', factSource: 'original' }
+      ],
+      questions: []
+    })
+    const d = parseDiagnosis(reply)
+    expect(d.projects).toEqual([
+      { projectId: 'proj-1', verdict: 'needs-info' },
+      { projectId: 'proj-2', verdict: 'rewrite' }
+    ])
+  })
+
+  it('无 projects 数组且无项目规则（仅全局规则）→ projects 保持空（不凭空生成）', () => {
+    const reply = JSON.stringify({
+      rules: [
+        { ruleId: 'R2', target: 'global', status: 'improve', evidence: 'e', issue: 'i', suggestion: 's', factSource: 'original' }
+      ],
+      questions: []
+    })
+    const d = parseDiagnosis(reply)
+    expect(d.projects).toEqual([])
+  })
+
+  it('projects 数组为空但项目规则存在 → 同样由规则推导（projects 空数组不阻断推导）', () => {
+    const reply = JSON.stringify({
+      rules: [
+        { ruleId: 'R1', target: 'project:proj-1', status: 'improve', evidence: 'e', issue: 'i', suggestion: 's', factSource: 'original' }
+      ],
+      projects: [],
+      questions: []
+    })
+    const d = parseDiagnosis(reply)
+    expect(d.projects).toEqual([{ projectId: 'proj-1', verdict: 'rewrite' }])
   })
 })
 

@@ -5,7 +5,7 @@ import type { ResumeDraft, ContentOptimizeTask } from '@shared/types'
 import { CONTENT_STATUS_LABELS } from '@shared/types'
 import { IpcEvent } from '@shared/protocol'
 import { defaultBaseTitle, emptyResumeForm, formToResume, issueSection, keepEmptyRows, resumeToForm, SKILL_CATEGORIES, type ResumeForm } from '../resume-form'
-import { PROJECT_VERDICT_LABELS, RULE_STATUS_LABELS, ruleName } from '../content-diagnosis-view'
+import { FACT_SOURCE_LABELS, PROJECT_VERDICT_LABELS, RULE_STATUS_LABELS, ruleName } from '../content-diagnosis-view'
 import Modal from '../components/Modal.vue'
 import Resizer from '../components/Resizer.vue'
 import Icon from '../components/Icon.vue'
@@ -954,6 +954,7 @@ onMounted(() => {
                 <p v-if="r.evidence" class="opt-diag-line">原文证据：{{ r.evidence }}</p>
                 <p v-if="r.issue" class="opt-diag-line">问题：{{ r.issue }}</p>
                 <p v-if="r.suggestion" class="opt-diag-line">建议：{{ r.suggestion }}</p>
+                <p class="opt-diag-line">事实来源：{{ FACT_SOURCE_LABELS[r.factSource] }}</p>
               </div>
             </div>
           </template>
