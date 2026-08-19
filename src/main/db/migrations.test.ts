@@ -301,4 +301,47 @@ describe('applyMigrations', () => {
       upgraded.close()
     })
   })
+
+  describe('v13：content_optimize_tasks 血缘与归档列（#90/T07 确认入库与血缘）', () => {
+    it('新库迁移后：created_resume_id / archived_at 两列存在、默认 NULL、可写入；旧 INSERT 仍兼容', () => {
+      const db = new Database(':memory:')
+      migrate(db)
+
+      // 默认值：不写新列 → NULL（无血缘/未归档）
+      db.prepare(`INSERT INTO content_optimize_tasks
+        (id, resume_id, status, diagnosis_json, answers_json, rewrite_json, progress, error, no_changes, resume_to,
+         decisions_json, inferred_confirmed_json, summary_json, created_at, updated_at)
+        VALUES ('t0', 'r1', 'created', 'null', 'null', 'null', '', '', 0, NULL, 'null', 'null', 'null', 'now', 'now')`).run()
+      const row = db.prepare('SELECT created_resume_id, archived_at FROM content_optimize_tasks WHERE id = ?').get('t0') as { created_resume_id: string | null; archived_at: string | null }
+      expect(row.created_resume_id).toBeNull()
+      expect(row.archived_at).toBeNull()
+
+      // 确认后写入血缘与归档时间
+      db.prepare('UPDATE content_optimize_tasks SET status = ?, created_resume_id = ?, archived_at = ? WHERE id = ?')
+        .run('confirmed', 'res-new', '2026-08-20T00:00:00.000Z', 't0')
+      const filled = db.prepare('SELECT created_resume_id, archived_at FROM content_optimize_tasks WHERE id = ?').get('t0') as { created_resume_id: string | null; archived_at: string | null }
+      expect(filled.created_resume_id).toBe('res-new')
+      expect(filled.archived_at).toBe('2026-08-20T00:00:00.000Z')
+      db.close()
+    })
+
+    it('既有 v12 库升级：旧行保留、新列默认 NULL', () => {
+      const file = openTempFile()
+      tempDirs.add(join(file, '..'))
+      const old = new Database(file)
+      applyMigrations(old, MIGRATIONS.slice(0, 14))
+      old.prepare(`INSERT INTO content_optimize_tasks
+        (id, resume_id, status, diagnosis_json, answers_json, rewrite_json, progress, error, no_changes, resume_to,
+         decisions_json, inferred_confirmed_json, summary_json, created_at, updated_at)
+        VALUES ('t-v12', 'r1', 'confirmed', 'null', 'null', 'null', '已确认', '', 1, NULL, 'null', 'null', 'null', 'now', 'now')`).run()
+      old.close()
+      const upgraded = new Database(file)
+      migrate(upgraded)
+      expect(userVersion(upgraded)).toBe(MIGRATIONS.length)
+      const upgradedRow = upgraded.prepare('SELECT created_resume_id, archived_at FROM content_optimize_tasks WHERE id = ?').get('t-v12') as { created_resume_id: string | null; archived_at: string | null }
+      expect(upgradedRow.created_resume_id).toBeNull()
+      expect(upgradedRow.archived_at).toBeNull()
+      upgraded.close()
+    })
+  })
 })

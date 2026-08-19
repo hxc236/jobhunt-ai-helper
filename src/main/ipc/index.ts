@@ -176,6 +176,10 @@ export function registerIpcHandlers({ settings, agent, positions, resumes, resum
   handleRequest(IpcChannel.ContentOptimizeRetry, (request) => contentOptimize.retry(request.taskId))
   handleRequest(IpcChannel.ContentOptimizeResume, (request) => contentOptimize.resume(request.taskId))
   handleRequest(IpcChannel.ContentOptimizeVoid, (request) => contentOptimize.voidTask(request.taskId))
+  // T07/#97：某基准简历是否已完成过内容优化（供「建议先做内容优化」提示）。
+  handleRequest(IpcChannel.ContentOptimizeHasCompleted, (request) =>
+    contentOptimize.hasCompletedContentOptimization(request.resumeId)
+  )
   // F-19（#33）：学习清单生成与人工 CRUD
   handleRequest(IpcChannel.TopicsList, (request) => topics.list(request))
   handleRequest(IpcChannel.TopicsGenerate, (request) =>

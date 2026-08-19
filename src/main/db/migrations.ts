@@ -251,7 +251,15 @@ export const MIGRATIONS: readonly string[] = [
   // 旧行：三列默认 'null'（JSON null），语义 = 未设置决策/无勾选/无汇总。
   `ALTER TABLE content_optimize_tasks ADD COLUMN decisions_json TEXT NOT NULL DEFAULT 'null' CHECK (json_valid(decisions_json))`,
   `ALTER TABLE content_optimize_tasks ADD COLUMN inferred_confirmed_json TEXT NOT NULL DEFAULT 'null' CHECK (json_valid(inferred_confirmed_json))`,
-  `ALTER TABLE content_optimize_tasks ADD COLUMN summary_json TEXT NOT NULL DEFAULT 'null' CHECK (json_valid(summary_json))`
+  `ALTER TABLE content_optimize_tasks ADD COLUMN summary_json TEXT NOT NULL DEFAULT 'null' CHECK (json_valid(summary_json))`,
+  // v13: content_optimize_tasks 增 T07 血缘与归档列（#90/T07 确认入库与血缘）。
+  // - created_resume_id：确认后生成的新基准简历 id（血缘记录在任务中，不进简历 JSON；
+  //   noChanges / 全部拒绝（未应用改动）路径为 NULL）；
+  // - archived_at：任务归档时间（确认即归档；已归档 = 非 NULL，供 UI 折叠与
+  //   「已做过内容优化」判定）。
+  // 旧行：两列默认 NULL（无血缘/未归档）。
+  `ALTER TABLE content_optimize_tasks ADD COLUMN created_resume_id TEXT`,
+  `ALTER TABLE content_optimize_tasks ADD COLUMN archived_at TEXT`
 ]
 
 /**

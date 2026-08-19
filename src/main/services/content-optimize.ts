@@ -3,6 +3,7 @@ import type { Db } from '../db/migrations'
 import type { AgentService } from './agent'
 import type { ResumeService } from './resume'
 import {
+  CONTENT_CONFIRMED_NO_CHANGES_LABEL,
   CONTENT_STATUS_LABELS,
   type ContentDiagnosis,
   type ContentIntegrationSummary,
@@ -110,6 +111,8 @@ interface TaskRow {
   decisions_json: string
   inferred_confirmed_json: string
   summary_json: string
+  created_resume_id: string | null
+  archived_at: string | null
   created_at: string
   updated_at: string
 }
@@ -128,6 +131,8 @@ function parseRow(row: TaskRow): ContentOptimizeTask {
     decisions: parseOptionalJson<Record<string, ContentProjectDecision>>(row.decisions_json),
     inferredConfirmed: parseOptionalJson<string[]>(row.inferred_confirmed_json),
     summary: parseOptionalJson<ContentIntegrationSummary>(row.summary_json),
+    createdResumeId: row.created_resume_id,
+    archivedAt: row.archived_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   }
@@ -165,6 +170,8 @@ interface TaskMutation {
   decisions?: Record<string, ContentProjectDecision> | null
   inferredConfirmed?: string[] | null
   summary?: ContentIntegrationSummary | null
+  createdResumeId?: string | null
+  archivedAt?: string | null
 }
 
 export class ContentOptimizeService {
@@ -269,6 +276,8 @@ export class ContentOptimizeService {
       decisions: null,
       inferredConfirmed: null,
       summary: null,
+      createdResumeId: null,
+      archivedAt: null,
       createdAt: now,
       updatedAt: now
     }
@@ -378,8 +387,12 @@ export class ContentOptimizeService {
     }
     let createdResumeId: string | null = null
     if (task.noChanges) {
-      // 空诊断：无需修改，不创建新版本
-      this.mutate(task, { status: 'confirmed', progress: CONTENT_PHASE_LABELS.confirmed })
+      // 空诊断：无需修改，不创建新版本（仍归档）
+      this.mutate(task, {
+        status: 'confirmed',
+        progress: CONTENT_PHASE_LABELS.confirmed,
+        archivedAt: new Date().toISOString()
+      })
     } else {
       if (task.rewrite === null) {
         throw new ContentOptimizeError('no-rewrite', '缺少改写结果，无法确认')
@@ -406,8 +419,9 @@ export class ContentOptimizeService {
         // 未应用任何改动（如全部拒绝）：不创建新版本（US20），仍保留「仍有未解决项目」等汇总
         this.mutate(task, {
           status: 'confirmed',
-          progress: '已确认（未应用改动）',
-          summary
+          progress: CONTENT_CONFIRMED_NO_CHANGES_LABEL,
+          summary,
+          archivedAt: new Date().toISOString()
         })
       } else {
         // #90-10/#90-21：确认后的内容优化稿成为新的基准简历（baseResumeId=null，血缘记录在任务里）
@@ -425,12 +439,29 @@ export class ContentOptimizeService {
         this.mutate(task, {
           status: 'confirmed',
           progress: CONTENT_PHASE_LABELS.confirmed,
-          summary
+          summary,
+          createdResumeId,
+          archivedAt: new Date().toISOString()
         })
       }
     }
     const updated = this.requireTask(taskId)
     return { task: updated, createdResumeId }
+  }
+
+  /**
+   * T07：某基准简历是否已完成过内容优化（有已确认/归档任务）。
+   * 语义：用于「按 JD 优化入口对未做内容优化的基准显示建议先做内容优化」提示；
+   * 派生稿（按 JD 优化稿）不属于内容优化对象，恒为 false。
+   */
+  hasCompletedContentOptimization(resumeId: string): boolean {
+    const row = this.db
+      .prepare(
+        `SELECT 1 AS x FROM content_optimize_tasks
+         WHERE resume_id = ? AND status = 'confirmed' AND archived_at IS NOT NULL LIMIT 1`
+      )
+      .get(resumeId) as { x: number } | undefined
+    return row !== undefined
   }
 
   /** 取消任务：当前 LLM 轮结束后停止（round 完成后检查标记），已得结果保留。 */
@@ -677,6 +708,8 @@ export class ContentOptimizeService {
       ...(patch.decisions !== undefined ? { decisions: patch.decisions } : {}),
       ...(patch.inferredConfirmed !== undefined ? { inferredConfirmed: patch.inferredConfirmed } : {}),
       ...(patch.summary !== undefined ? { summary: patch.summary } : {}),
+      ...(patch.createdResumeId !== undefined ? { createdResumeId: patch.createdResumeId } : {}),
+      ...(patch.archivedAt !== undefined ? { archivedAt: patch.archivedAt } : {}),
       updatedAt: new Date().toISOString()
     }
     const row = this.db.prepare(SELECT_BY_ID).get(next.id) as TaskRow | undefined
@@ -689,7 +722,8 @@ export class ContentOptimizeService {
         `UPDATE content_optimize_tasks
          SET status = ?, diagnosis_json = ?, answers_json = ?, rewrite_json = ?,
              progress = ?, error = ?, no_changes = ?, resume_to = ?, updated_at = ?,
-             decisions_json = ?, inferred_confirmed_json = ?, summary_json = ?
+             decisions_json = ?, inferred_confirmed_json = ?, summary_json = ?,
+             created_resume_id = ?, archived_at = ?
          WHERE id = ?`
       )
       .run(
@@ -705,6 +739,8 @@ export class ContentOptimizeService {
         JSON.stringify(next.decisions),
         JSON.stringify(next.inferredConfirmed),
         JSON.stringify(next.summary),
+        next.createdResumeId,
+        next.archivedAt,
         next.id
       )
     this.publish(next)
@@ -769,8 +805,8 @@ export class ContentOptimizeService {
 const SELECT_BY_ID = 'SELECT * FROM content_optimize_tasks WHERE id = ?'
 const SELECT_BY_RESUME = 'SELECT * FROM content_optimize_tasks WHERE resume_id = ?'
 const INSERT = `
-  INSERT INTO content_optimize_tasks (id, resume_id, status, diagnosis_json, answers_json, rewrite_json, progress, error, no_changes, resume_to, decisions_json, inferred_confirmed_json, summary_json, created_at, updated_at)
-  VALUES (@id, @resumeId, @status, @diagnosis, @answers, @rewrite, @progress, @error, @noChanges, @resumeTo, @decisions, @inferredConfirmed, @summary, @createdAt, @updatedAt)
+  INSERT INTO content_optimize_tasks (id, resume_id, status, diagnosis_json, answers_json, rewrite_json, progress, error, no_changes, resume_to, decisions_json, inferred_confirmed_json, summary_json, created_resume_id, archived_at, created_at, updated_at)
+  VALUES (@id, @resumeId, @status, @diagnosis, @answers, @rewrite, @progress, @error, @noChanges, @resumeTo, @decisions, @inferredConfirmed, @summary, @createdResumeId, @archivedAt, @createdAt, @updatedAt)
 `
 
 function isRoundPhase(status: ContentOptimizeStatus): status is 'diagnosing' | 'rewriting' {
@@ -822,6 +858,8 @@ function rowParams(task: ContentOptimizeTask) {
     decisions: JSON.stringify(task.decisions),
     inferredConfirmed: JSON.stringify(task.inferredConfirmed),
     summary: JSON.stringify(task.summary),
+    createdResumeId: task.createdResumeId,
+    archivedAt: task.archivedAt,
     createdAt: task.createdAt,
     updatedAt: task.updatedAt
   }

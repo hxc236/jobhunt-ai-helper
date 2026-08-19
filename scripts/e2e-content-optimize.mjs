@@ -66,17 +66,21 @@ function assertEmptyDatabase(userDataDir, taskId) {
   const db = new Database(join(userDataDir, 'jobhunt.db'), { readonly: true })
   try {
     const task = db
-      .prepare('SELECT status, no_changes, progress FROM content_optimize_tasks WHERE id = ?')
+      .prepare('SELECT status, no_changes, progress, created_resume_id, archived_at FROM content_optimize_tasks WHERE id = ?')
       .get(taskId)
     if (task === undefined) throw new Error(`任务 ${taskId} 未落库`)
     if (task.status !== 'confirmed') throw new Error(`任务状态应为 confirmed，实际 ${task.status}`)
     if (task.no_changes !== 1) throw new Error('空诊断路径 no_changes 应为 1')
     if (task.progress !== '已确认') throw new Error(`进度文案异常：${task.progress}`)
+    if (task.archived_at === null) throw new Error('空诊断路径也应归档（archived_at 应为非 NULL）')
+    if (task.created_resume_id !== null) {
+      throw new Error(`空诊断不应有血缘新基准：created_resume_id 应为 null，实际 ${task.created_resume_id}`)
+    }
     const resumeCount = db.prepare('SELECT COUNT(*) AS n FROM resumes').get().n
     if (resumeCount !== 1) {
       throw new Error(`空诊断不应创建新版本：resumes 应为 1，实际 ${resumeCount}`)
     }
-    console.log(`  [db] task=${task.status} no_changes=${task.no_changes} resumes=${resumeCount} ✓`)
+    console.log(`  [db] task=${task.status} no_changes=${task.no_changes} archived=${task.archived_at !== null} resumes=${resumeCount} ✓`)
   } finally {
     db.close()
   }
@@ -87,11 +91,13 @@ function assertQuestionsDatabase(userDataDir, taskId) {
   const db = new Database(join(userDataDir, 'jobhunt.db'), { readonly: true })
   try {
     const task = db
-      .prepare('SELECT status, no_changes, answers_json, summary_json FROM content_optimize_tasks WHERE id = ?')
+      .prepare('SELECT status, no_changes, answers_json, summary_json, created_resume_id, archived_at FROM content_optimize_tasks WHERE id = ?')
       .get(taskId)
     if (task === undefined) throw new Error(`任务 ${taskId} 未落库`)
     if (task.status !== 'confirmed') throw new Error(`任务状态应为 confirmed，实际 ${task.status}`)
     if (task.no_changes !== 0) throw new Error('追问场景有改写，no_changes 应为 0')
+    if (task.archived_at === null) throw new Error('有改写的确认也应归档（archived_at 应为非 NULL）')
+    if (task.created_resume_id === null) throw new Error('有改写的确认应记录血缘新基准 id（created_resume_id 不应为 null）')
     const answers = JSON.parse(task.answers_json)
     if (answers.q1 !== '高并发秒杀压测优化') {
       throw new Error(`answers.q1（确认候选）落库异常：${JSON.stringify(answers)}`)
@@ -107,7 +113,7 @@ function assertQuestionsDatabase(userDataDir, taskId) {
     if (summary.unresolvedProjects.length !== 0) {
       throw new Error(`确认后不应有未解决项目：${JSON.stringify(summary)}`)
     }
-    console.log(`  [db] task=${task.status} no_changes=${task.no_changes} resumes=${resumeCount} answers=${JSON.stringify(answers)} ✓`)
+    console.log(`  [db] task=${task.status} no_changes=${task.no_changes} resumes=${resumeCount} answers=${JSON.stringify(answers)} created=${task.created_resume_id} ✓`)
   } finally {
     db.close()
   }

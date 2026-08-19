@@ -102,3 +102,5 @@
 
 **F-36 确认、对比与整合（T06）**：行为：改写完成进入可确认后，逐项目对比确认区（接受改写/保留原文；删除建议「确认删除/保留原文+警告」）；推断-待确认改动（`source=inferred`）须显式勾选「确认纳入最终版」（含节级非项目改动）后才可确认（US17）；确认时服务端整合：接受项目采用改写稿、拒绝项目保留原文且不阻塞其他项目、拒绝删除项目留在原位置（US15/18/19）、标点/排序自动修复仅计入实际采纳改动；最终稿与原文无差异（`resumesDiffer` 键序无关深度比较）时不创建新版本（US20）；确认后生成新基准简历（#90-21），任务卡片保留整合汇总（标点修复/顺序调整/删除/保留原文警告/仍有未解决项目）。setReview 决策与推断勾选落库（`decisions_json`/`inferred_confirmed_json`，migration v12）。验收：确认/门禁/整合纯函数单测绿；E2E questions 场景含确认区断言通过。
 
+**F-37 确认入库与血缘（T07）**：行为：确认后任务归档（`archived_at` 落库），有实际改动时生成新基准简历（`baseResumeId=null`/`targetJobId=null`，旧基准保留），血缘记录在任务内（`created_resume_id`），不进简历 JSON；无改动（空诊断/全部拒绝）确认同样归档但不建版本，进度文案「已确认（未应用改动）」（`CONTENT_CONFIRMED_NO_CHANGES_LABEL` 单一来源）。可优化对象约束：内容优化只对基准简历开放（#90-27，`start()` 拒绝派生稿）；`hasCompletedContentOptimization`（服务端唯一判定：`status=confirmed ∧ archived_at 非空`）经 `content-optimize:has-completed` 供「按 JD 优化入口对未做内容优化的基准显示『建议先做内容优化』提示」使用，渲染层不再自行按 `archivedAt` 过滤。新基准可直接作为按 JD 优化输入（派生稿除外）。migration v13：`created_resume_id`/`archived_at` 列。验收：确认三路径（有改动/未应用改动/空诊断）血缘+归档单测绿（含重启读回）；E2E 双场景落库断言含 `archived_at`/`created_resume_id`。
+

@@ -36,6 +36,8 @@ function taskWithRewrite(rewrite: ContentRewrite, extra?: Partial<ContentOptimiz
     decisions: null,
     inferredConfirmed: null,
     summary: null,
+    createdResumeId: null,
+    archivedAt: null,
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
     ...extra

@@ -100,7 +100,9 @@ export function createRendererApi(bridge: IpcBridge): Omit<RendererApi, 'getPath
       cancel: (taskId) => bridge.invoke(IpcChannel.ContentOptimizeCancel, { taskId }),
       retry: (taskId) => bridge.invoke(IpcChannel.ContentOptimizeRetry, { taskId }),
       resume: (taskId) => bridge.invoke(IpcChannel.ContentOptimizeResume, { taskId }),
-      void: (taskId) => bridge.invoke(IpcChannel.ContentOptimizeVoid, { taskId })
+      void: (taskId) => bridge.invoke(IpcChannel.ContentOptimizeVoid, { taskId }),
+      hasCompleted: (resumeId) =>
+        bridge.invoke(IpcChannel.ContentOptimizeHasCompleted, { resumeId })
     },
     learn: {
       start: (topicId) => bridge.invoke(IpcChannel.LearnStart, { topicId }),

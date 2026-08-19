@@ -576,6 +576,9 @@ export const CONTENT_STATUS_LABELS: Record<ContentOptimizeStatus, string> = {
   cancelled: '已取消'
 }
 
+/** 内容优化确认但未应用改动（US20：全部拒绝/无实际差异时确认后的进度文案，T07/#97 单一来源）。 */
+export const CONTENT_CONFIRMED_NO_CHANGES_LABEL = '已确认（未应用改动）'
+
 /** 项目级规则作用对象前缀（target=`project:<项目id>`；T03/#93：引擎/视图共用，避免字符串约定漂移）。 */
 export const CONTENT_PROJECT_TARGET_PREFIX = 'project:'
 
@@ -694,6 +697,10 @@ export interface ContentOptimizeTask {
   inferredConfirmed: string[] | null
   /** 整合汇总（T06：标点/排序自动修复、删除/保留原文警告、仍有未解决项目；确认后保留展示）。 */
   summary: ContentIntegrationSummary | null
+  /** T07：确认后生成的新基准简历 id（血缘记录在任务中，不进简历 JSON；无改动/全部拒绝为 null）。 */
+  createdResumeId: string | null
+  /** T07：归档时间（确认即归档；已归档 = archivedAt != null）。 */
+  archivedAt: string | null
   createdAt: string
   updatedAt: string
 }
