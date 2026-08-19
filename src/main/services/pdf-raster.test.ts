@@ -50,15 +50,21 @@ describe('pdf-raster render.html 模板（#84）', () => {
 const outMain = join(process.cwd(), 'out', 'main', 'index.js')
 const built = existsSync(outMain)
 describe.skipIf(!built)('构建产物 render.html 模板区（#84）', () => {
-  it('out/main/index.js 的模板区未被注入 CommonJS shim', () => {
+  it('out/main/index.js 的模板字符串未被注入 CommonJS shim', () => {
     const bundle = readFileSync(outMain, 'utf8')
-    const start = bundle.indexOf('jobhunt-ocr-raster')
-    // 模板区：renderHtmlPath 附近起，至 pdf.worker.mjs 首次出现止
-    const end = bundle.indexOf('pdf.worker.mjs', start)
+    // 栅格模板独有标记 __openPdf，向前找最近的 <!DOCTYPE html>、向后找模板结尾
+    const marker = bundle.indexOf('window.__openPdf')
+    expect(marker).toBeGreaterThan(-1)
+    const start = bundle.lastIndexOf('<!DOCTYPE html>', marker)
+    // esbuild 会把字符串内的 </script> 转义为 <\/script>，用未转义的 </body></html> 定位结尾
+    const end = bundle.indexOf('</body></html>', marker)
     expect(start).toBeGreaterThan(-1)
     expect(end).toBeGreaterThan(start)
-    const region = bundle.slice(start, end + 20)
-    expect(region).not.toContain('node:module')
-    expect(region).not.toContain('CommonJS Shims')
+    const template = bundle.slice(start, end)
+    expect(template).not.toContain('node:module')
+    expect(template).not.toContain('CommonJS Shims')
+    // 动态导入形态保持（静态 import * as 会重新触发污染）
+    expect(template).toContain("await import('./pdf.mjs')")
+    expect(template).not.toContain('import * as pdfjs')
   })
 })
