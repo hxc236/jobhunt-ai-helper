@@ -1,4 +1,5 @@
 import type { Resume, ResumeProject } from '../../shared/types/resume'
+import { RESUME_SECTION_KEYS } from '../../shared/types/resume'
 import type {
   ContentDiagnosis,
   ContentOptimizeChange,
@@ -46,8 +47,10 @@ export interface RewriteRoundInput {
   answers: Record<string, string> | null
 }
 
-/** 排序类改动节：不要求 before 命中原文（相对顺序调整记录）。 */
-const ORDERING_SECTIONS = new Set(['sectionOrder', 'order', 'ordering', '排序'])
+/** 排序类改动节：不要求 before 命中原文（相对顺序调整记录）。
+ * 仅限输出契约中的 sectionOrder——其他节名（含猜测别名）不豁免文本锚点校验，
+ * 防止 LLM 借任意节名绕过溯源/降级。 */
+const ORDERING_SECTIONS = new Set(['sectionOrder'])
 
 /** 规则约束（改写轮提示词与规则引擎共用 R1–R4 名称，单一来源 CONTENT_RULE_NAMES）。 */
 const REWRITE_RULE_LINES: ReadonlyArray<{ ruleId: string; detail: string }> = [
@@ -283,9 +286,11 @@ function classifyChangeSource(change: ContentOptimizeChange, input: RewriteRound
   return change
 }
 
-/** inferred 的 change 必须带「待确认」语义（reason 内显式标记）。 */
+/** inferred 的 change 必须带「待确认」语义（reason 内显式标记，US17）。
+ * 无论 reason 是否已含「推断/待核实」等措辞都追加显式标记，保证标记统一；
+ * 仅在 reason 已以「待确认」结尾时跳过，避免重复追加。 */
 function withPendingMarker(change: ContentOptimizeChange): ContentOptimizeChange {
-  if (/待确认|待核实|推断|无法核实/.test(change.reason)) return change
+  if (change.reason.trim().endsWith('待确认')) return change
   return { ...change, reason: `${change.reason}（推断-待确认）` }
 }
 
@@ -294,19 +299,11 @@ function projectText(project: ResumeProject): string {
   return flattenObject(project as unknown as Record<string, unknown>)
 }
 
-/** 整份简历文本扁平化（不含 sectionOrder——排序不参与文本匹配）。 */
+/** 整份简历文本扁平化（不含 sectionOrder——排序不参与文本匹配）。
+ * 节列表复用 RESUME_SECTION_KEYS（schema 唯一来源），避免硬编码漂移。 */
 function flattenResume(resume: Resume): string {
   const parts: string[] = []
-  for (const key of [
-    'basics',
-    'education',
-    'experience',
-    'projects',
-    'honors',
-    'research',
-    'skills',
-    'selfAssessment'
-  ]) {
+  for (const key of RESUME_SECTION_KEYS) {
     const value = (resume as unknown as Record<string, unknown>)[key]
     if (value !== undefined) parts.push(flattenValue(value))
   }

@@ -53,6 +53,7 @@ describe('buildRewritePrompt（#95 逐项目改写提示词）', () => {
     expect(prompt).toContain('R2')
     expect(prompt).toContain('R3')
     expect(prompt).toContain('R4')
+    expect(prompt).toContain('R4 四要素与结果') // #95 review F1：R4 汇总行名称非空
     expect(prompt).toContain('难点')
     expect(prompt).toContain('解决行动')
     expect(prompt).toContain('标点')
@@ -224,6 +225,35 @@ describe('parseRewrite（#95 解析 + 事实溯源 + 一致性校验）', () => 
     })
     const result = parseRewrite(reply, makeInput())
     expect(result.changes[0]?.source).toBe('original')
+  })
+
+  it('排序豁免仅限 sectionOrder：别名节名（order/排序）不豁免 before 锚点校验（#95 review F2）', () => {
+    const reply = JSON.stringify({
+      resume: RESUME,
+      changes: [{ section: 'order', before: '不存在的原文', after: 'basics,education,projects,skills', reason: 'R3 实习前置', source: 'original' }]
+    })
+    expect(() => parseRewrite(reply, makeInput())).toThrow(/before 未能在简历原文中找到对应文本/)
+  })
+
+  it('inferred 且 reason 含「推断」措辞 → 仍追加显式「待确认」标记（#95 review F3）', () => {
+    const reply = JSON.stringify({
+      resume: RESUME,
+      changes: [{ section: 'highlights', before: 'C2C 二手交易', after: 'C2C 二手交易，推断转化率提升 20%', reason: '推断：转化率数据', source: 'inferred' }]
+    })
+    const result = parseRewrite(reply, makeInput())
+    expect(result.changes[0]?.source).toBe('inferred')
+    const reason = result.changes[0]!.reason
+    expect(reason.endsWith('（推断-待确认）')).toBe(true)
+    expect(reason.match(/待确认/g)?.length).toBe(1)
+  })
+
+  it('reason 已以「待确认」结尾 → 不重复追加标记（#95 review F3）', () => {
+    const reply = JSON.stringify({
+      resume: RESUME,
+      changes: [{ section: 'highlights', before: 'C2C 二手交易', after: 'C2C 二手交易，转化率提升 20%', reason: '新增事实待确认', source: 'inferred' }]
+    })
+    const result = parseRewrite(reply, makeInput())
+    expect(result.changes[0]?.reason).toBe('新增事实待确认')
   })
 
   it('非法 source 值 → 保守降级 inferred 并标记待确认', () => {
