@@ -1,9 +1,11 @@
-import type { Resume } from '../../shared/types/resume'
+import type { Resume, ResumeSectionKey } from '../../shared/types/resume'
+import { resolveSectionOrder } from '../../shared/types/resume'
 
 /**
  * 简历 A4 渲染（F-15/#30）：prototype/resume-model 模板的 TS 移植（纯函数，无 IO）。
  * 输出完整 HTML 文档（含 A4 打印样式 @media print），渲染层 iframe srcdoc 预览、
  * 主进程 printToPDF 导出共用。用户字段一律 HTML 转义（防注入/样式破坏）。
+ * #91：分节顺序遵循 resume.sectionOrder（缺省按默认顺序），项目渲染优先 highlights。
  */
 
 export function renderResumeHtml(resume: Resume, photoDataUri?: string): string {
@@ -95,86 +97,98 @@ export function renderSheet(resume: Resume, photoDataUri?: string): string {
     )
   }
 
-  if ((resume.education ?? []).length > 0) {
-    parts.push('<h2>教育背景</h2>')
-    for (const e of resume.education ?? []) {
-      parts.push(
-        `<div class="entry"><div class="entry-head"><span>${esc(e.school)}　${esc(e.degree)} · ${esc(e.major)}</span><span>${esc(dateRange(e.startDate, e.endDate))}</span></div>`
-      )
-      const bits = [e.gpa !== undefined && e.gpa !== '' ? `GPA ${e.gpa}` : null, e.rank !== undefined && e.rank !== '' ? `排名 ${e.rank}` : null].filter((v): v is string => v !== null)
-      if (bits.length > 0) parts.push(`<div class="entry-sub"><span>${esc(bits.join('　·　'))}</span></div>`)
-      if ((e.courses ?? []).length > 0) parts.push(`<div class="inline">相关课程：${(e.courses ?? []).map((c) => `<span class="tag">${esc(c)}</span>`).join('')}</div>`)
-      parts.push('</div>')
-    }
-  }
-
-  if ((resume.experience ?? []).length > 0) {
-    parts.push('<h2>实习经历</h2>')
-    for (const x of resume.experience ?? []) {
-      parts.push(
-        `<div class="entry"><div class="entry-head"><span>${esc(x.company ?? '')}　<em>${esc(x.title ?? '')}</em></span><span>${esc(dateRange(x.startDate, x.endDate))}</span></div>`
-      )
-      if ((x.highlights ?? []).length > 0) parts.push(`<ul>${(x.highlights ?? []).map((h) => `<li>${esc(h)}</li>`).join('')}</ul>`)
-      if ((x.techStack ?? []).length > 0) parts.push(`<div class="tags">${(x.techStack ?? []).map((t) => `<span class="tag">${esc(t)}</span>`).join('')}</div>`)
-      parts.push('</div>')
-    }
-  }
-
-  if ((resume.projects ?? []).length > 0) {
-    parts.push('<h2>项目经历</h2>')
-    for (const p of resume.projects ?? []) {
-      parts.push(
-        `<div class="entry"><div class="entry-head"><span>${esc(p.name ?? '')}</span><span>${esc(dateRange(p.startDate, p.endDate))}</span></div>`
-      )
-      if (p.description !== undefined && p.description !== '') parts.push(renderDescLines(p.description))
-      if ((p.techStack ?? []).length > 0) parts.push(`<div class="tags">${(p.techStack ?? []).map((t) => `<span class="tag">${esc(t)}</span>`).join('')}</div>`)
-      parts.push('</div>')
-    }
-  }
-
-  // 全空条目不渲染；标题/内容/成果全空 → 整节省略
-  const research = (resume.research ?? []).filter(
-    (r) =>
-      (r.title ?? '') !== '' ||
-      (r.description ?? '') !== '' ||
-      (r.achievement ?? '') !== ''
-  )
-  if (research.length > 0) {
-    parts.push('<h2>科研经历</h2>')
-    for (const r of research) {
-      parts.push(
-        `<div class="entry"><div class="entry-head"><span>${esc(r.title ?? '')}</span><span>${esc(dateRange(r.startDate, r.endDate))}</span></div>`
-      )
-      if (r.description !== undefined && r.description !== '') parts.push(renderDescLines(r.description))
-      if (r.achievement !== undefined && r.achievement !== '') parts.push(`<div class="inline">成果：${esc(r.achievement)}</div>`)
-      parts.push('</div>')
-    }
-  }
-
-  // 竞赛与荣誉：顶层字段（从教育经历拆出），单行 · 连接
-  const honors = resume.honors ?? []
-  if (honors.length > 0) {
-    parts.push('<h2>竞赛与荣誉</h2>')
-    parts.push(
-      `<div class="inline">${honors.map((h, i) => `${esc(h)}${i < honors.length - 1 ? '<span class="dot">·</span>' : ''}`).join('')}</div>`
-    )
-  }
-
-  // 技能节置于简历末尾之前（用户定稿顺序：教育 → 实习 → 项目 → 科研 → 荣誉 → 技能 → 自我评价）
-  if ((resume.skills ?? []).length > 0) {
-    parts.push('<h2>技能和其他</h2>')
-    for (const s of resume.skills ?? []) {
-      parts.push(`<p class="skill-p"><span class="skills-cat">${esc(s.category)}</span>：${esc(s.text)}</p>`)
-    }
-  }
-
-  if (resume.selfAssessment !== undefined && resume.selfAssessment !== '') {
-    parts.push('<h2>自我评价</h2>')
-    parts.push(`<div class="desc">${esc(resume.selfAssessment)}</div>`)
+  // #91：分节顺序遵循 resume.sectionOrder（缺省默认顺序）；basics 头部恒在首位
+  for (const section of resolveSectionOrder(resume.sectionOrder)) {
+    if (section === 'basics') continue // 头部已在上面渲染
+    parts.push(renderSection(resume, section))
   }
 
   parts.push('</div>')
   return parts.join('\n')
+}
+
+/** 按节渲染（#91：sectionOrder 驱动的分节渲染）。 */
+function renderSection(resume: Resume, section: ResumeSectionKey): string {
+  switch (section) {
+    case 'education': {
+      if ((resume.education ?? []).length === 0) return ''
+      const entry = (resume.education ?? [])
+        .map(
+          (e) =>
+            `<div class="entry"><div class="entry-head"><span>${esc(e.school)}　${esc(e.degree)} · ${esc(e.major)}</span><span>${esc(dateRange(e.startDate, e.endDate))}</span></div>` +
+            (() => {
+              const bits = [e.gpa !== undefined && e.gpa !== '' ? `GPA ${e.gpa}` : null, e.rank !== undefined && e.rank !== '' ? `排名 ${e.rank}` : null].filter((v): v is string => v !== null)
+              const sub = bits.length > 0 ? `<div class="entry-sub"><span>${esc(bits.join('　·　'))}</span></div>` : ''
+              const courses = (e.courses ?? []).length > 0 ? `<div class="inline">相关课程：${(e.courses ?? []).map((c) => `<span class="tag">${esc(c)}</span>`).join('')}</div>` : ''
+              return sub + courses
+            })() +
+            '</div>'
+        )
+        .join('')
+      return `<h2>教育背景</h2>${entry}`
+    }
+    case 'experience': {
+      if ((resume.experience ?? []).length === 0) return ''
+      const entry = (resume.experience ?? [])
+        .map((x) => {
+          const bullets = (x.highlights ?? []).length > 0 ? `<ul>${(x.highlights ?? []).map((h) => `<li>${esc(h)}</li>`).join('')}</ul>` : ''
+          const tags = (x.techStack ?? []).length > 0 ? `<div class="tags">${(x.techStack ?? []).map((t) => `<span class="tag">${esc(t)}</span>`).join('')}</div>` : ''
+          return `<div class="entry"><div class="entry-head"><span>${esc(x.company ?? '')}　<em>${esc(x.title ?? '')}</em></span><span>${esc(dateRange(x.startDate, x.endDate))}</span></div>${bullets}${tags}</div>`
+        })
+        .join('')
+      return `<h2>实习经历</h2>${entry}`
+    }
+    case 'projects': {
+      if ((resume.projects ?? []).length === 0) return ''
+      const entry = (resume.projects ?? [])
+        .map((p) => {
+          // #91：优先渲染结构化要点（≤4 条）；无要点时回退到 description（旧数据）
+          const content =
+            (p.highlights ?? []).length > 0
+              ? `<ul>${(p.highlights ?? []).map((h) => `<li>${esc(h)}</li>`).join('')}</ul>`
+              : p.description !== undefined && p.description !== ''
+                ? renderDescLines(p.description)
+                : ''
+          const tags = (p.techStack ?? []).length > 0 ? `<div class="tags">${(p.techStack ?? []).map((t) => `<span class="tag">${esc(t)}</span>`).join('')}</div>` : ''
+          return `<div class="entry"><div class="entry-head"><span>${esc(p.name ?? '')}</span><span>${esc(dateRange(p.startDate, p.endDate))}</span></div>${content}${tags}</div>`
+        })
+        .join('')
+      return `<h2>项目经历</h2>${entry}`
+    }
+    case 'research': {
+      const research = (resume.research ?? []).filter(
+        (r) =>
+          (r.title ?? '') !== '' ||
+          (r.description ?? '') !== '' ||
+          (r.achievement ?? '') !== ''
+      )
+      if (research.length === 0) return ''
+      const entry = research
+        .map((r) => {
+          const desc = r.description !== undefined && r.description !== '' ? renderDescLines(r.description) : ''
+          const achievement = r.achievement !== undefined && r.achievement !== '' ? `<div class="inline">成果：${esc(r.achievement)}</div>` : ''
+          return `<div class="entry"><div class="entry-head"><span>${esc(r.title ?? '')}</span><span>${esc(dateRange(r.startDate, r.endDate))}</span></div>${desc}${achievement}</div>`
+        })
+        .join('')
+      return `<h2>科研经历</h2>${entry}`
+    }
+    case 'honors': {
+      const honors = resume.honors ?? []
+      if (honors.length === 0) return ''
+      return `<h2>竞赛与荣誉</h2><div class="inline">${honors.map((h, i) => `${esc(h)}${i < honors.length - 1 ? '<span class="dot">·</span>' : ''}`).join('')}</div>`
+    }
+    case 'skills': {
+      if ((resume.skills ?? []).length === 0) return ''
+      const skills = (resume.skills ?? []).map((s) => `<p class="skill-p"><span class="skills-cat">${esc(s.category)}</span>：${esc(s.text)}</p>`).join('')
+      return `<h2>技能和其他</h2>${skills}`
+    }
+    case 'selfAssessment': {
+      if (resume.selfAssessment === undefined || resume.selfAssessment === '') return ''
+      return `<h2>自我评价</h2><div class="desc">${esc(resume.selfAssessment)}</div>`
+    }
+    case 'basics':
+      return ''
+  }
 }
 
 /** 描述按行拆条：1 条 → 直接显示（desc）；多条 → 每行一条列表（不揉成一段话）。 */

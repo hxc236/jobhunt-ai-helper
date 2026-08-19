@@ -4,6 +4,7 @@ import type { Resume, ResumeImportProvenance, StoredResume } from '../../shared/
 import { PhotoStoreError, type PhotoStore } from './photo-store'
 import { assertValidResume } from './resume-schema'
 import { renderResumeHtml } from './resume-render'
+import { backfillContentOptimizationData } from './resume-content-backfill'
 
 const LIST = 'SELECT json FROM resumes ORDER BY created_at, id'
 const GET = 'SELECT json FROM resumes WHERE id = ?'
@@ -165,6 +166,17 @@ export class ResumeService {
   /** 照片 data URI（表单缩略图）：文件缺失返回 undefined。 */
   photoDataUri(fileName: string): string | undefined {
     return this.photos?.dataUri(fileName)
+  }
+
+  /**
+   * 内容优化数据补齐（#91）：存量简历首次进入内容优化时调用——生成项目 ID、
+   * 推断 sectionOrder、description 迁移为要点起点。幂等：无缺失字段时不改动。
+   * 返回补齐结果（resume 与是否实际变更），调用方决定是否落库。
+   */
+  prepareContentOptimization(id: string): { resume: Resume; changed: boolean } {
+    const resume = this.get(id)
+    if (resume === undefined) throw new ResumeNotFoundError(id)
+    return backfillContentOptimizationData(resume)
   }
 
   /**

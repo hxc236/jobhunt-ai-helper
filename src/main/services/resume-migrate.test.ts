@@ -46,6 +46,25 @@ describe('isLegacyResume 形状检测', () => {
     }
     expect(isLegacyResume(v2)).toBe(false)
   })
+
+  it('#91 新结构含项目 id+highlights（无 role/link）→ false，不被误判为旧结构', () => {
+    const v2WithHighlights: Resume = {
+      meta: { title: '基准简历' },
+      basics: { name: '张伟' },
+      education: [{ school: '北京理工大学', degree: '本科', major: '计算机科学与技术' }],
+      skills: [{ category: '工程能力', text: 'Java、Python 服务端开发' }],
+      projects: [
+        {
+          id: 'proj-abc',
+          name: '二手平台',
+          description: 'C2C 平台',
+          highlights: ['接口 p95 < 200ms'],
+          techStack: ['Java']
+        }
+      ]
+    }
+    expect(isLegacyResume(v2WithHighlights)).toBe(false)
+  })
 })
 
 describe('transformLegacyResume', () => {
@@ -78,6 +97,18 @@ describe('transformLegacyResume', () => {
     const next = transformLegacyResume({ ...legacyResume, skills: [{ category: '工具', items: [] }] })
     expect(next.skills).toEqual([])
   })
+
+  it('#91 防御性：项目若带 id（v2 字段）则原样保留', () => {
+    const next = transformLegacyResume({
+      ...legacyResume,
+      projects: [{ ...legacyResume.projects![0]!, id: 'proj-keep' }]
+    })
+    expect(next.projects?.[0]?.id).toBe('proj-keep')
+    // 旧结构裁剪行为不变：role/highlights/link 仍被剥离
+    expect(next.projects?.[0]).not.toHaveProperty('role')
+    expect(next.projects?.[0]).not.toHaveProperty('highlights')
+    expect(next.projects?.[0]).not.toHaveProperty('link')
+  })
 })
 
 describe('migrateLegacyResumes（库级扫描）', () => {
@@ -102,5 +133,40 @@ describe('migrateLegacyResumes（库级扫描）', () => {
 
     // 幂等：新结构不再转换
     expect(migrateLegacyResumes(db)).toBe(0)
+  })
+
+  it('#91 新结构含项目 id+highlights 的行不转换：id/highlights 原样保留（修复数据丢失回归）', () => {
+    const db = openDatabase()
+    const v2WithHighlights: Resume = {
+      meta: { title: '基准简历' },
+      basics: { name: '张伟' },
+      education: [{ school: '北京理工大学', degree: '本科', major: '计算机科学与技术' }],
+      skills: [{ category: '工程能力', text: 'Java、Python 服务端开发' }],
+      sectionOrder: ['basics', 'education', 'skills'],
+      projects: [
+        {
+          id: 'proj-abc',
+          name: '二手平台',
+          description: 'C2C 平台',
+          highlights: ['接口 p95 < 200ms'],
+          techStack: ['Java']
+        }
+      ]
+    }
+    db.prepare('INSERT INTO resumes (id, json, created_at) VALUES (?, ?, ?)').run(
+      'v2-highlights',
+      JSON.stringify(v2WithHighlights),
+      '2026-01-01'
+    )
+
+    expect(migrateLegacyResumes(db)).toBe(0)
+
+    const row = db.prepare('SELECT json FROM resumes WHERE id = ?').get('v2-highlights') as {
+      json: string
+    }
+    const after = JSON.parse(row.json) as Resume
+    expect(after.projects?.[0]?.id).toBe('proj-abc')
+    expect(after.projects?.[0]?.highlights).toEqual(['接口 p95 < 200ms'])
+    expect(after.sectionOrder).toEqual(['basics', 'education', 'skills'])
   })
 })

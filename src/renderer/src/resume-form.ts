@@ -18,6 +18,8 @@ export function defaultBaseTitle(name: string): string {
 
 export interface ResumeForm {
   meta: { title: string; baseResumeId: string | null; targetJobId: string | null }
+  /** 模块顺序（#91：表单不改顺序，仅随保存往返保留） */
+  sectionOrder: string[]
   basics: {
     name: string
     /** 照片文件名（导入后由服务端复制到照片目录） */
@@ -49,10 +51,12 @@ export interface ResumeForm {
   }>
   skills: Record<SkillCategory, string>
   projects: Array<{
+    id: string
     name: string
     startDate: string
     endDate: string
     description: string
+    highlightsText: string
     techStackText: string
   }>
   experience: Array<{
@@ -80,6 +84,7 @@ export interface ResumeForm {
 export function emptyResumeForm(): ResumeForm {
   return {
     meta: { title: '', baseResumeId: null, targetJobId: null },
+    sectionOrder: [],
     basics: {
       name: '',
       photo: '',
@@ -111,6 +116,7 @@ export function resumeToForm(resume: Resume): ResumeForm {
     baseResumeId: resume.meta?.baseResumeId ?? null,
     targetJobId: resume.meta?.targetJobId ?? null
   }
+  form.sectionOrder = resume.sectionOrder ?? []
   const b = resume.basics ?? {}
   form.basics = {
     name: b.name ?? '',
@@ -144,10 +150,12 @@ export function resumeToForm(resume: Resume): ResumeForm {
     if (SKILL_CATEGORIES.includes(s.category)) form.skills[s.category] = s.text
   }
   form.projects = (resume.projects ?? []).map((p) => ({
+    id: p.id ?? '',
     name: p.name ?? '',
     startDate: p.startDate ?? '',
     endDate: p.endDate ?? '',
     description: p.description ?? '',
+    highlightsText: (p.highlights ?? []).join('\n'),
     techStackText: (p.techStack ?? []).join('\n')
   }))
   form.experience = (resume.experience ?? []).map((x) => ({
@@ -197,13 +205,20 @@ export function formToResume(form: ResumeForm): Resume {
   }))
 
   const projects: ResumeProject[] = form.projects
-    .map((p) => ({
-      name: clean(p.name),
-      startDate: clean(p.startDate),
-      endDate: clean(p.endDate),
-      description: clean(p.description),
-      techStack: splitLines(p.techStackText)
-    }))
+    .map((p) => {
+      const highlights = splitLines(p.highlightsText)
+      const project: ResumeProject = {
+        id: clean(p.id),
+        name: clean(p.name),
+        startDate: clean(p.startDate),
+        endDate: clean(p.endDate),
+        description: clean(p.description),
+        techStack: splitLines(p.techStackText)
+      }
+      // 空要点不输出字段（与旧简历 round-trip 兼容：无 highlights 即未结构化）
+      if (highlights.length > 0) project.highlights = highlights
+      return project
+    })
     .filter(isNonEmptyEntry)
 
   const experience = form.experience
@@ -258,6 +273,8 @@ export function formToResume(form: ResumeForm): Resume {
     honors: splitLines(form.honorsText),
     selfAssessment: clean(form.selfAssessment)
   }
+  // 空 sectionOrder 不输出字段（旧数据兼容）
+  if (form.sectionOrder.length > 0) resume.sectionOrder = [...form.sectionOrder]
   return resume
 }
 
@@ -275,17 +292,19 @@ function splitLines(text: string): string[] {
     .filter((line) => line !== '')
 }
 
-/** 整行全空的条目（如用户新增未填的教育行）在提交时丢弃。 */
-function isNonEmptyEntry(entry: Record<string, unknown>): boolean {
-  return Object.values(entry).some((value) => {
+/** 整行全空的条目（如用户新增未填的教育行）在提交时丢弃。id（稳定 ID）不计入内容判定。 */
+function isNonEmptyEntry<T extends object>(entry: T): boolean {
+  return Object.entries(entry).some(([key, value]) => {
+    if (key === 'id') return false
     if (Array.isArray(value)) return value.length > 0
     return value !== undefined && value !== null && value !== ''
   })
 }
 
-/** 整行全空（与 isNonEmptyEntry 互为否定；字符串需 trim 后判断）。 */
+/** 整行全空（与 isNonEmptyEntry 互为否定；字符串需 trim 后判断；id 不计入）。 */
 function isAllEmpty(entry: Record<string, unknown>): boolean {
-  return Object.values(entry).every((value) => {
+  return Object.entries(entry).every(([key, value]) => {
+    if (key === 'id') return true
     if (typeof value === 'string') return value.trim() === ''
     if (Array.isArray(value)) return value.length === 0
     return value === undefined || value === null
@@ -371,6 +390,7 @@ const FIELD_LABELS: Record<string, string> = {
   role: '角色',
   description: '描述',
   highlights: '要点',
+  id: '项目 ID',
   techStack: '技术栈',
   link: '链接',
   company: '公司',

@@ -1,5 +1,6 @@
 import JSZip from 'jszip'
-import type { Resume } from '../../shared/types/resume'
+import type { Resume, ResumeSectionKey } from '../../shared/types/resume'
+import { resolveSectionOrder } from '../../shared/types/resume'
 import { dateRange, esc } from './resume-render'
 
 /**
@@ -7,6 +8,7 @@ import { dateRange, esc } from './resume-render'
  * - 用 jszip 直接生成最小合法 DOCX 包（WordprocessingML），不使用整页图片；
  * - 章节与 A4 PDF（resume-render.renderSheet）顺序一致：头部 → 教育背景 → 实习经历
  *   → 项目经历 → 科研经历 → 竞赛与荣誉 → 技能和其他 → 自我评价；空章节不输出；
+ * - #91：分节顺序遵循 resume.sectionOrder（缺省默认顺序），项目渲染优先 highlights；
  * - 文字为真实段落（w:p/w:t），列表为 Word 编号（w:numPr），照片以内嵌图片（media + drawing）；
  * - Word/WPS 中可继续编辑；分页由 Word 自然处理（不承诺像素级分页一致）。
  */
@@ -206,7 +208,13 @@ function renderProjects(projects: Resume['projects']): string {
   const parts: string[] = []
   for (const p of projects ?? []) {
     parts.push(entryHead(p.name ?? '', dateRange(p.startDate, p.endDate)))
-    if (p.description !== undefined && p.description !== '') parts.push(descLines(p.description))
+    // #91：优先渲染结构化要点（≤4 条）；无要点时回退到 description（旧数据）
+    const highlights = (p.highlights ?? []).filter((h) => h.trim() !== '')
+    if (highlights.length > 0) {
+      for (const h of highlights) parts.push(bullet(h))
+    } else if (p.description !== undefined && p.description !== '') {
+      parts.push(descLines(p.description))
+    }
     if ((p.techStack ?? []).length > 0) parts.push(tagLine('技术栈', p.techStack ?? []))
   }
   return parts.join('')
@@ -229,6 +237,44 @@ function renderSkills(skills: Resume['skills']): string {
     .join('')
 }
 
+/** 按节渲染（#91：sectionOrder 驱动的分节渲染）；空节返回空串。 */
+function renderDocxSection(resume: Resume, section: ResumeSectionKey): string {
+  switch (section) {
+    case 'education':
+      return (resume.education ?? []).length > 0
+        ? `${sectionHeading('教育背景')}${renderEducation(resume.education ?? [])}`
+        : ''
+    case 'experience':
+      return (resume.experience ?? []).length > 0
+        ? `${sectionHeading('实习经历')}${renderExperience(resume.experience ?? [])}`
+        : ''
+    case 'projects':
+      return (resume.projects ?? []).length > 0
+        ? `${sectionHeading('项目经历')}${renderProjects(resume.projects ?? [])}`
+        : ''
+    case 'research': {
+      const research = (resume.research ?? []).filter(
+        (r) => (r.title ?? '') !== '' || (r.description ?? '') !== '' || (r.achievement ?? '') !== ''
+      )
+      return research.length > 0 ? `${sectionHeading('科研经历')}${renderResearch(research)}` : ''
+    }
+    case 'honors':
+      return (resume.honors ?? []).length > 0
+        ? `${sectionHeading('竞赛与荣誉')}${bodyP((resume.honors ?? []).join('　·　'))}`
+        : ''
+    case 'skills':
+      return (resume.skills ?? []).length > 0
+        ? `${sectionHeading('技能和其他')}${renderSkills(resume.skills ?? [])}`
+        : ''
+    case 'selfAssessment':
+      return resume.selfAssessment !== undefined && resume.selfAssessment !== ''
+        ? `${sectionHeading('自我评价')}${bodyP(resume.selfAssessment)}`
+        : ''
+    case 'basics':
+      return ''
+  }
+}
+
 // ---------- DOCX 包组装 ----------
 
 /** 简历 → 可编辑 DOCX 二进制（Word/WPS 可打开；空章节省略，长内容自然分页）。 */
@@ -237,29 +283,11 @@ export async function buildResumeDocx(resume: Resume, photo?: DocxPhoto): Promis
   const mediaExt = photo !== undefined ? normalizeExt(photo.ext) : 'png'
 
   const parts: string[] = [renderHeader(resume, photo)]
-  if ((resume.education ?? []).length > 0) {
-    parts.push(sectionHeading('教育背景'), renderEducation(resume.education ?? []))
-  }
-  if ((resume.experience ?? []).length > 0) {
-    parts.push(sectionHeading('实习经历'), renderExperience(resume.experience ?? []))
-  }
-  if ((resume.projects ?? []).length > 0) {
-    parts.push(sectionHeading('项目经历'), renderProjects(resume.projects ?? []))
-  }
-  const research = (resume.research ?? []).filter(
-    (r) => (r.title ?? '') !== '' || (r.description ?? '') !== '' || (r.achievement ?? '') !== ''
-  )
-  if (research.length > 0) {
-    parts.push(sectionHeading('科研经历'), renderResearch(research))
-  }
-  if ((resume.honors ?? []).length > 0) {
-    parts.push(sectionHeading('竞赛与荣誉'), bodyP((resume.honors ?? []).join('　·　')))
-  }
-  if ((resume.skills ?? []).length > 0) {
-    parts.push(sectionHeading('技能和其他'), renderSkills(resume.skills ?? []))
-  }
-  if (resume.selfAssessment !== undefined && resume.selfAssessment !== '') {
-    parts.push(sectionHeading('自我评价'), bodyP(resume.selfAssessment))
+  // #91：分节顺序遵循 resume.sectionOrder（缺省默认顺序）；头部恒在首位
+  for (const section of resolveSectionOrder(resume.sectionOrder)) {
+    if (section === 'basics') continue
+    const sectionHtml = renderDocxSection(resume, section)
+    if (sectionHtml !== '') parts.push(sectionHtml)
   }
 
   const documentXml = `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><w:body>${parts.join(

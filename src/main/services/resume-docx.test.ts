@@ -142,4 +142,37 @@ describe('buildResumeDocx', () => {
     expect(text).toContain('其他能力：英语 CET-6')
     expect(text).not.toContain('科研能力：')
   })
+
+  it('#91 项目要点（highlights）优先于 description 渲染；技术栈独立展示', async () => {
+    const resume = fullResume()
+    resume.projects = [
+      {
+        name: '平台',
+        highlights: ['简介：C2C 交易平台', '难点：订单一致性', '行动：引入 Redis 缓存'],
+        description: '旧描述（不回退展示）',
+        techStack: ['Java', 'Redis']
+      }
+    ]
+    const buf = await buildResumeDocx(resume)
+    const text = docText((await unzipDocx(buf)).get('word/document.xml') ?? '')
+    expect(text).toContain('简介：C2C 交易平台')
+    expect(text).toContain('行动：引入 Redis 缓存')
+    expect(text).not.toContain('旧描述')
+    expect(text).toContain('技术栈：Java、Redis')
+  })
+
+  it('#91 分节顺序遵循 sectionOrder（技能提前、自评置前）', async () => {
+    const resume = fullResume()
+    resume.sectionOrder = ['basics', 'skills', 'selfAssessment', 'education', 'experience', 'projects', 'research', 'honors']
+    const buf = await buildResumeDocx(resume)
+    const text = docText((await unzipDocx(buf)).get('word/document.xml') ?? '')
+    const order = ['技能和其他', '自我评价', '教育背景', '实习经历', '项目经历', '科研经历', '竞赛与荣誉']
+    let last = -1
+    for (const h of order) {
+      const idx = text.indexOf(h)
+      expect(idx, `章节「${h}」应存在`).toBeGreaterThan(-1)
+      expect(idx, `章节「${h}」应保持 sectionOrder 顺序`).toBeGreaterThan(last)
+      last = idx
+    }
+  })
 })

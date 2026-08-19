@@ -1,4 +1,5 @@
 import type { Resume } from '@shared/types/resume'
+import { resolveSectionOrder } from '@shared/types/resume'
 import type { OptimizeChange } from '@shared/types'
 
 /**
@@ -6,6 +7,7 @@ import type { OptimizeChange } from '@shared/types'
  * - diffResumeSections：基准 vs 优化稿 按节对比（JSON 深度相等），输出改动节 + 理由
  *   （从 changes[] 按节名匹配；changes 未覆盖的改动节 reason 为空）——「对比视图高亮正确」依据；
  * - buildDerivedResume：确认入库的派生稿（meta.baseResumeId/targetJobId 关联职位卡）。
+ * - #91：对比节顺序遵循优化稿的 sectionOrder（缺省默认顺序），含 basics 头部。
  */
 
 export interface SectionDiff {
@@ -14,24 +16,12 @@ export interface SectionDiff {
   reason?: string
 }
 
-/** 参与对比的简历节（顺序即展示顺序，与 A4 预览一致：教育 → 实习 → 项目 → 科研 → 荣誉 → 技能 → 自评）。 */
-const SECTIONS = [
-  'basics',
-  'education',
-  'experience',
-  'projects',
-  'research',
-  'honors',
-  'skills',
-  'selfAssessment'
-] as const
-
 export function diffResumeSections(base: Resume, optimized: Resume, changes: OptimizeChange[]): SectionDiff[] {
   const reasonBySection = new Map<string, string>()
   for (const c of changes) {
     if (!reasonBySection.has(c.section)) reasonBySection.set(c.section, c.reason)
   }
-  return SECTIONS.map((section) => {
+  return resolveSectionOrder(optimized.sectionOrder).map((section) => {
     const before = (base as unknown as Record<string, unknown>)[section]
     const after = (optimized as unknown as Record<string, unknown>)[section]
     const changed = JSON.stringify(before ?? null) !== JSON.stringify(after ?? null)

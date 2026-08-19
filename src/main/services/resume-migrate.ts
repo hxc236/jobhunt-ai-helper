@@ -15,6 +15,7 @@ interface LegacySkillGroup {
 }
 
 interface LegacyProject {
+  id?: string
   name?: string
   role?: string
   startDate?: string
@@ -44,7 +45,8 @@ type LegacyResume = Omit<Resume, 'skills' | 'projects' | 'education'> & {
   certificates?: Array<{ name?: string; issuer?: string; date?: string }>
 }
 
-/** 形状检测：技能 items/proficiency、项目 role/highlights/link、certificates、教育条目带 honors → 旧结构。 */
+/** 形状检测：技能 items/proficiency、项目 role/link（v1 独有；highlights 仅在无 id 时视为旧）、certificates、教育条目带 honors → 旧结构。
+ * #91 起 `projects.highlights` 是合法 v2 字段（且 v2 项目必有稳定 `id`），故 highlights 单独不足以判旧。 */
 export function isLegacyResume(value: unknown): value is LegacyResume {
   if (typeof value !== 'object' || value === null) return false
   const resume = value as Partial<LegacyResume>
@@ -52,7 +54,7 @@ export function isLegacyResume(value: unknown): value is LegacyResume {
     (s) => Array.isArray(s.items) || s.proficiency !== undefined
   )
   const legacyProject = (resume.projects ?? []).some(
-    (p) => p.role !== undefined || Array.isArray(p.highlights) || p.link !== undefined
+    (p) => p.role !== undefined || p.link !== undefined || (Array.isArray(p.highlights) && p.id === undefined)
   )
   const legacyHonors = (resume.education ?? []).some((e) => Array.isArray(e.honors))
   return legacySkill || legacyProject || Array.isArray(resume.certificates) || legacyHonors
@@ -74,6 +76,8 @@ export function transformLegacyResume(legacy: LegacyResume): Resume {
   }
 
   const projects: ResumeProject[] = (legacy.projects ?? []).map((p) => ({
+    // #91 防御：即使项目带 v2 字段 id（正常不会走此路径），也保留而不丢弃
+    ...(p.id !== undefined ? { id: p.id } : {}),
     name: p.name,
     startDate: p.startDate,
     endDate: p.endDate,

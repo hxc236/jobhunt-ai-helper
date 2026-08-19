@@ -91,11 +91,13 @@
       "items": {
         "type": "object",
         "properties": {
+          "id": { "type": "string", "description": "项目稳定 ID（内容优化引用；可选，向后兼容）" },
           "name": { "type": "string" },
           "startDate": { "type": "string" },
           "endDate": { "type": "string" },
-          "description": { "type": "string", "description": "一段话描述（ADR-0009：删除 角色/要点/链接）" },
-          "techStack": { "type": "array", "items": { "type": "string" }, "description": "技术栈（匹配度计算依据）" }
+          "description": { "type": "string", "description": "一段话描述（ADR-0009：删除 角色/要点/链接；内容优化保留作为要点起点）" },
+          "highlights": { "type": "array", "items": { "type": "string" }, "maxItems": 4, "description": "结构化要点（≤4 条；简介占 1 条，难点/个人工作量/结果可合并，技术栈单独展示不计条数）" },
+          "techStack": { "type": "array", "items": { "type": "string" }, "description": "技术栈（匹配度计算依据；单独展示，不计入要点条数）" }
         },
         "additionalProperties": false
       }
@@ -130,6 +132,15 @@
       },
       "description": "科研经历（标题/时间选填/研究内容/成果）"
     },
-    "selfAssessment": { "type": "string", "description": "自我评价（可留空，优化稿生成）" }
+    "selfAssessment": { "type": "string", "description": "自我评价（可留空，优化稿生成）" },
+    "sectionOrder": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["basics", "education", "experience", "projects", "research", "honors", "skills", "selfAssessment"]
+      },
+      "uniqueItems": true,
+      "description": "模块顺序（内容优化：#91；A4 预览与对比遵循实际顺序）"
+    }
   }
 }

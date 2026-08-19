@@ -192,6 +192,43 @@ describe('resume-render A4 模板（F-15/#30）', () => {
     expect(without).toContain('<h1>张伟</h1>')
   })
 
+  it('#91 项目要点（highlights）优先于 description 渲染；技术栈独立展示', () => {
+    const sheet = renderSheet({
+      ...sample,
+      projects: [
+        {
+          name: '平台',
+          highlights: ['简介：C2C 交易平台', '难点：订单一致性', '行动：引入 Redis 缓存'],
+          description: '旧描述（不回退展示）',
+          techStack: ['Java', 'Redis']
+        }
+      ]
+    })
+    expect(sheet).toContain('<ul><li>简介：C2C 交易平台</li><li>难点：订单一致性</li><li>行动：引入 Redis 缓存</li></ul>')
+    expect(sheet).not.toContain('旧描述')
+    expect(sheet).toContain('<span class="tag">Java</span>')
+    expect(sheet).toContain('<span class="tag">Redis</span>')
+  })
+
+  it('#91 项目无 highlights 时回退渲染 description（旧数据兼容）', () => {
+    const sheet = renderSheet({
+      ...sample,
+      experience: [],
+      projects: [{ name: '平台', description: '旧描述', techStack: ['Java'] }]
+    })
+    expect(sheet).toContain('<div class="desc">旧描述</div>')
+    expect(sheet).not.toContain('<ul>')
+  })
+
+  it('#91 分节顺序遵循 sectionOrder（技能提前、自评置前）', () => {
+    const sheet = renderSheet({
+      ...sample,
+      sectionOrder: ['basics', 'skills', 'selfAssessment', 'education', 'experience', 'projects', 'research', 'honors']
+    })
+    const headings = [...sheet.matchAll(/<h2>([^<]+)<\/h2>/g)].map((m) => m[1])
+    expect(headings).toEqual(['技能和其他', '自我评价', '教育背景', '实习经历', '项目经历', '竞赛与荣誉'])
+  })
+
   it('空节省略：无经历/证书/自评 → 不输出对应分节', () => {
     const empty: Resume = {
       meta: {},
