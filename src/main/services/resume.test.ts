@@ -160,6 +160,66 @@ describe('ResumeService', () => {
       const legacy = svc.create({ meta: {}, basics: { name: '张伟' }, education: [] })
       expect(legacy.research).toBeUndefined()
     })
+
+    it('#91 内容优化数据基础：项目 id/highlights 与简历 sectionOrder 可入库', () => {
+      const svc = makeService()
+      const created = svc.create({
+        meta: {},
+        basics: { name: '张伟' },
+        education: [],
+        projects: [
+          {
+            id: 'proj-1',
+            name: '平台',
+            description: 'C2C 平台',
+            highlights: ['简介', '难点', '解决行动'],
+            techStack: ['Java']
+          }
+        ],
+        sectionOrder: ['basics', 'education', 'experience', 'projects', 'honors']
+      })
+      expect(created.projects?.[0]?.id).toBe('proj-1')
+      expect(created.projects?.[0]?.highlights).toEqual(['简介', '难点', '解决行动'])
+      expect(created.sectionOrder).toEqual(['basics', 'education', 'experience', 'projects', 'honors'])
+    })
+
+    it('#91 硬约束：项目要点超过 4 条被拒；sectionOrder 非法值被拒', () => {
+      const svc = makeService()
+      expect(() =>
+        svc.create(
+          invalidResume({
+            meta: {},
+            basics: { name: '张伟' },
+            education: [],
+            projects: [{ name: '平台', highlights: ['1', '2', '3', '4', '5'] }]
+          })
+        )
+      ).toThrow(ResumeValidationError)
+      expect(() =>
+        svc.create(
+          invalidResume({
+            meta: {},
+            basics: { name: '张伟' },
+            education: [],
+            sectionOrder: ['basics', 'bogus']
+          })
+        )
+      ).toThrow(ResumeValidationError)
+      expect(svc.list()).toEqual([])
+    })
+
+    it('#91 旧简历无新字段（无 id/highlights/sectionOrder）依旧通过校验', () => {
+      const svc = makeService()
+      const legacy = svc.create({
+        meta: {},
+        basics: { name: '张伟' },
+        education: [],
+        projects: [{ name: '平台', description: '旧描述', techStack: ['Java'] }]
+      })
+      expect(legacy.projects?.[0]?.id).toBeUndefined()
+      expect(legacy.projects?.[0]?.highlights).toBeUndefined()
+      expect(legacy.sectionOrder).toBeUndefined()
+    })
   })
 
   describe('create（多份基准简历）', () => {
@@ -214,6 +274,36 @@ describe('ResumeService', () => {
         ResumeValidationError
       )
       expect(svc.get(created.meta.id)).toEqual(created)
+    })
+  })
+
+  describe('prepareContentOptimization（#91 内容优化数据补齐）', () => {
+    it('存量简历补齐项目 id / highlights / sectionOrder；幂等', () => {
+      const svc = makeService()
+      const created = svc.create({
+        meta: { title: '基准简历' },
+        basics: { name: '张伟' },
+        education: [],
+        projects: [{ name: '平台', description: '简介\n难点', techStack: ['Java'] }]
+      })
+
+      const first = svc.prepareContentOptimization(created.meta.id)
+      expect(first.changed).toBe(true)
+      expect(first.resume.projects?.[0]?.id).toMatch(/^proj-/)
+      expect(first.resume.projects?.[0]?.highlights).toEqual(['简介', '难点'])
+      expect(first.resume.sectionOrder).toEqual(['basics', 'projects'])
+
+      // 幂等：调用方将补齐结果落库后，再次调用不再生成（重复运行结果稳定）
+      svc.update(created.meta.id, first.resume)
+      const second = svc.prepareContentOptimization(created.meta.id)
+      expect(second.changed).toBe(false)
+      expect(second.resume.projects?.[0]?.id).toBe(first.resume.projects?.[0]?.id)
+      expect(second.resume.projects?.[0]?.highlights).toEqual(first.resume.projects?.[0]?.highlights)
+    })
+
+    it('id 不存在 → ResumeNotFoundError', () => {
+      const svc = makeService()
+      expect(() => svc.prepareContentOptimization('res-missing')).toThrow(ResumeNotFoundError)
     })
   })
 

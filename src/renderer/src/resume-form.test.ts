@@ -82,6 +82,50 @@ describe('resumeToForm / formToResume 往返', () => {
     expect(resume.skills?.[0]).toEqual({ category: '工程能力', text: 'Java\nPython\nTypeScript' })
     expect(resume.honors).toEqual(['一等奖学金', '蓝桥杯省二等奖'])
   })
+
+  it('#91 项目要点与稳定 ID 随表单往返；空要点不输出 highlights 字段', () => {
+    const withContent: Resume = {
+      ...sample,
+      projects: [
+        {
+          id: 'proj-abc',
+          name: '平台',
+          description: '简介',
+          highlights: ['要点一', '要点二'],
+          techStack: ['Java']
+        }
+      ]
+    }
+    const form = resumeToForm(withContent)
+    expect(form.projects[0]!.id).toBe('proj-abc')
+    expect(form.projects[0]!.highlightsText).toBe('要点一\n要点二')
+
+    const resume = formToResume(form)
+    expect(resume.projects?.[0]?.id).toBe('proj-abc')
+    expect(resume.projects?.[0]?.highlights).toEqual(['要点一', '要点二'])
+    expect(resume.projects?.[0]?.description).toBe('简介')
+
+    // 空要点 → 不输出 highlights（旧数据兼容）
+    const form2 = resumeToForm(sample)
+    expect(form2.projects[0]!.highlightsText).toBe('')
+    const resume2 = formToResume(form2)
+    expect(resume2.projects?.[0]).not.toHaveProperty('highlights')
+  })
+
+  it('#91 sectionOrder 随表单往返保留；空 sectionOrder 不输出字段', () => {
+    const withOrder: Resume = {
+      ...sample,
+      sectionOrder: ['basics', 'education', 'experience', 'projects', 'honors']
+    }
+    const form = resumeToForm(withOrder)
+    expect(form.sectionOrder).toEqual(['basics', 'education', 'experience', 'projects', 'honors'])
+    const resume = formToResume(form)
+    expect(resume.sectionOrder).toEqual(['basics', 'education', 'experience', 'projects', 'honors'])
+
+    // 空 sectionOrder → 不输出（旧数据兼容）
+    const resume2 = formToResume(emptyResumeForm())
+    expect(resume2).not.toHaveProperty('sectionOrder')
+  })
 })
 
 describe('formToResume 归一化', () => {
@@ -191,7 +235,7 @@ describe('issueSection 校验错误定位（F-13/#25 验收：保存时校验错
 describe('keepEmptyRows（保存回填保留空行：自动保存不清掉刚添加的空表单）', () => {
   const formWithEmpty: ResumeForm = (() => {
     const f = resumeToForm(sample)
-    f.projects.push({ name: '', startDate: '', endDate: '', description: '', techStackText: '' }) // 末尾空行
+    f.projects.push({ id: '', name: '', startDate: '', endDate: '', description: '', highlightsText: '', techStackText: '' }) // 末尾空行
     f.experience.unshift({ company: '', title: '', startDate: '', endDate: '', highlightsText: '', techStackText: '' }) // 中间空行
     f.basics.links.push({ label: '', url: '' })
     return f
@@ -204,7 +248,7 @@ describe('keepEmptyRows（保存回填保留空行：自动保存不清掉刚添
     const merged = keepEmptyRows(formWithEmpty, filled)
     // 项目：非空行 + 末尾空行
     expect(merged.projects).toHaveLength(2)
-    expect(merged.projects[1]).toEqual({ name: '', startDate: '', endDate: '', description: '', techStackText: '' })
+    expect(merged.projects[1]).toEqual({ id: '', name: '', startDate: '', endDate: '', description: '', highlightsText: '', techStackText: '' })
     // 实习：中间空行保留在第 1 位，已填行在第 2 位（保序）
     expect(merged.experience).toHaveLength(2)
     expect(merged.experience[0].company).toBe('')
@@ -218,7 +262,7 @@ describe('keepEmptyRows（保存回填保留空行：自动保存不清掉刚添
 
   it('全部空行时：filled 为空数组，空行全部保留', () => {
     const f = emptyResumeForm()
-    f.projects.push({ name: '', startDate: '', endDate: '', description: '', techStackText: '' })
+    f.projects.push({ id: '', name: '', startDate: '', endDate: '', description: '', highlightsText: '', techStackText: '' })
     const filled = resumeToForm(formToResume(f))
     expect(filled.projects).toHaveLength(0)
     const merged = keepEmptyRows(f, filled)

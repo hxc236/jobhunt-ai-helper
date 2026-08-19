@@ -88,12 +88,16 @@ export interface ResumeSkillGroup {
 }
 
 export interface ResumeProject {
+  /** 项目稳定 ID（内容优化引用；可选，向后兼容，未补时 undefined） */
+  id?: string
   name?: string
   startDate?: string
   endDate?: string
-  /** 一段话描述（ADR-0009：删除 角色/要点/链接） */
+  /** 一段话描述（ADR-0009：删除 角色/要点/链接；内容优化后保留作为要点起点） */
   description?: string
-  /** 技术栈（匹配度计算依据） */
+  /** 结构化要点（≤4 条；简介占 1 条，难点/个人工作量/结果可合并，技术栈单独展示不计条数） */
+  highlights?: string[]
+  /** 技术栈（匹配度计算依据；单独展示，不计入要点条数） */
   techStack?: string[]
 }
 
@@ -131,9 +135,61 @@ export interface Resume {
   honors?: string[]
   /** 自我评价（可留空，优化稿生成） */
   selfAssessment?: string
+  /** 模块顺序（内容优化：#91；A4 预览与对比遵循实际顺序；缺省按默认顺序渲染） */
+  sectionOrder?: string[]
 }
 
 /** 入库后的简历：meta.id / meta.updatedAt 必填（服务端写入）。 */
 export type StoredResume = Omit<Resume, 'meta'> & {
   meta: ResumeMeta & { id: string; updatedAt: string }
+}
+
+/** 可排序的简历节（A4 预览 / 对比 / sectionOrder 值的集合，ADR-0003 单一 schema）。 */
+export const RESUME_SECTION_KEYS = [
+  'basics',
+  'education',
+  'experience',
+  'projects',
+  'research',
+  'honors',
+  'skills',
+  'selfAssessment'
+] as const
+
+export type ResumeSectionKey = (typeof RESUME_SECTION_KEYS)[number]
+
+/** 默认模块顺序：头部 → 教育 → 实习 → 项目 → 科研 → 荣誉 → 技能 → 自评（用户定稿顺序）。 */
+export const DEFAULT_SECTION_ORDER: readonly ResumeSectionKey[] = [
+  'basics',
+  'education',
+  'experience',
+  'projects',
+  'research',
+  'honors',
+  'skills',
+  'selfAssessment'
+]
+
+/**
+ * 解析 sectionOrder → 完整顺序：去重、忽略非法值，缺失的节按默认顺序补到末尾。
+ * 缺省/空 → 默认顺序。供 A4 渲染、DOCX 导出、对比视图共同遵循（#91）。
+ */
+export function resolveSectionOrder(sectionOrder?: readonly string[]): ResumeSectionKey[] {
+  if (sectionOrder === undefined || sectionOrder.length === 0) return [...DEFAULT_SECTION_ORDER]
+  const seen = new Set<ResumeSectionKey>()
+  const order: ResumeSectionKey[] = []
+  for (const key of sectionOrder) {
+    const section = key as ResumeSectionKey
+    if (RESUME_SECTION_KEYS.includes(section) && !seen.has(section)) {
+      seen.add(section)
+      order.push(section)
+    }
+  }
+  for (const key of DEFAULT_SECTION_ORDER) {
+    if (!seen.has(key)) {
+      seen.add(key)
+      order.push(key)
+    }
+  }
+  return order
 }

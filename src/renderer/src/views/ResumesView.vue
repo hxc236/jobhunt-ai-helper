@@ -709,7 +709,7 @@ const EMPTY_EDU: ResumeForm['education'][number] = {
   school: '', degree: '', major: '', startDate: '', endDate: '', gpa: '', rank: '', coursesText: ''
 }
 const EMPTY_PROJECT: ResumeForm['projects'][number] = {
-  name: '', startDate: '', endDate: '', description: '', techStackText: ''
+  id: '', name: '', startDate: '', endDate: '', description: '', highlightsText: '', techStackText: ''
 }
 const EMPTY_EXP: ResumeForm['experience'][number] = {
   company: '', title: '', startDate: '', endDate: '', highlightsText: '', techStackText: ''
@@ -1088,6 +1088,7 @@ onMounted(() => {
                 <label class="field"><span class="label">开始时间（YYYY-MM）</span><input v-model="p.startDate" placeholder="2025-03" /></label>
                 <label class="field"><span class="label">结束时间</span><input v-model="p.endDate" placeholder="2025-08" /></label>
                 <label class="field span2"><span class="label">描述（每行一条）</span><textarea v-model="p.description" rows="3" placeholder="做了什么、结果如何——每行一条，多条自动分条显示" /></label>
+                <label class="field span2"><span class="label">要点（每行一条，最多 4 条）</span><textarea v-model="p.highlightsText" rows="3" placeholder="结构化要点，最多 4 条——每条独立一行；技术栈另填不计条数" /></label>
                 <label class="field span2"><span class="label">技术栈（每行一个）</span><textarea v-model="p.techStackText" rows="2" /></label>
               </div>
             </div>

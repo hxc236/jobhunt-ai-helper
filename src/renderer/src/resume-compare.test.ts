@@ -73,6 +73,29 @@ describe('diffResumeSections（F-20/#34 验收：对比视图高亮正确）', (
     expect(diffs.find((d) => d.section === 'experience')?.changed).toBe(true)
     expect(diffs.find((d) => d.section === 'skills')?.changed).toBe(false) // 双方均无 → 未改
   })
+
+  it('#91 对比节顺序遵循优化稿 sectionOrder（技能提前、自评置前）', () => {
+    const ordered: Resume = {
+      ...base,
+      sectionOrder: ['basics', 'skills', 'selfAssessment', 'education', 'experience', 'projects', 'honors']
+    }
+    const diffs = diffResumeSections(base, ordered, [])
+    const order = diffs.map((d) => d.section)
+    // 未列出的节（research）按默认顺序补到末尾
+    expect(order).toEqual(['basics', 'skills', 'selfAssessment', 'education', 'experience', 'projects', 'honors', 'research'])
+    // sectionOrder 缺失时仍按默认顺序（头部 → 教育 → 实习 → 项目 → 科研 → 荣誉 → 技能 → 自评）
+    const defaults = diffResumeSections(base, base, []).map((d) => d.section)
+    expect(defaults).toEqual(['basics', 'education', 'experience', 'projects', 'research', 'honors', 'skills', 'selfAssessment'])
+  })
+
+  it('#91 项目 highlights 变化被检出（projects 节 JSON 深度相等）', () => {
+    const withHighlights: Resume = {
+      ...base,
+      projects: [{ name: '平台', highlights: ['简介', '难点'] }]
+    }
+    const diffs = diffResumeSections(base, withHighlights, [])
+    expect(diffs.find((d) => d.section === 'projects')?.changed).toBe(true)
+  })
 })
 
 describe('buildDerivedResume（F-20/#34 验收：确认后派生稿入库且关联职位卡）', () => {
