@@ -5,6 +5,7 @@ import type {
   ContentProjectDecision,
   ContentRewrite
 } from './types'
+import { flattenValue, normalizeText } from './text-utils'
 
 /**
  * #90/T06 内容优化「确认、对比与整合」纯函数（shared：主进程整合/门禁与渲染层确认区共用）。
@@ -113,8 +114,9 @@ export function buildIntegrationSummary(
     const originalText = projectText(project)
     const rewrittenText = projectText(rewritten)
     if (normalizeText(originalText) === normalizeText(rewrittenText)) {
-      // 语义一致但原文有差异 → 标点/格式修复（R2）
-      if (originalText !== rewrittenText) punctuationFixed.push(id)
+      // 语义一致但原文有差异 → 标点/格式修复（R2）——仅接受改写的项目计入
+      // （被拒项目最终保留原文，不产生实际修复，不应出现在修复汇总里）
+      if (decision === 'accept' && originalText !== rewrittenText) punctuationFixed.push(id)
       continue
     }
     if (decision === 'reject') unresolvedProjects.push(id)
@@ -145,9 +147,10 @@ function detectOrderingAdjustments(original: Resume, rewrite: ContentRewrite): s
  * 最终简历 = 改写稿 + 按项目决策整合：
  * - 接受（accept）：采用改写稿版本；删除建议接受 = 确认删除（不进入最终稿）；
  * - 拒绝（reject）：该项目保留原文；删除建议拒绝 = 保留原文（+ 警告，见 summary）；
- * - 新增项目（改写稿独有）：随改写稿进入（有 change 记录，可溯源）；
+ * - 新增项目（改写稿独有）：随改写稿追加末尾（有 change 记录，可溯源）；
  * - 非项目节（basics/education/experience/skills/honors/sectionOrder 等）整体采用改写稿。
- * 顺序：改写稿项目顺序保留（被拒项目在原位置替换为原文）；被保留的删除建议项目追加末尾。
+ * 顺序：原文项目保持原相对顺序（接受的项目原位替换为改写稿版本、被拒项目原位保留原文、
+ * 拒绝删除的项目留在原位置），新增项目追加末尾——避免拒绝删除时静默重排。
  */
 export function buildFinalResume(
   original: Resume,
@@ -156,31 +159,30 @@ export function buildFinalResume(
 ): Resume {
   const rewritten = rewrite.resume
   const rewrittenProjects = rewritten.projects ?? []
-  const originalById = new Map(
-    (original.projects ?? [])
+  const rewrittenById = new Map(
+    rewrittenProjects
       .filter((p) => p.id !== undefined)
       .map((p) => [p.id!, p] as const)
   )
 
   const finalProjects: ResumeProject[] = []
   const seen = new Set<string>()
-  for (const project of rewrittenProjects) {
-    const id = project.id
-    if (id !== undefined) {
-      seen.add(id)
-      const originalProject = originalById.get(id)
-      if (originalProject !== undefined && projectDecision(decisions, id) === 'reject') {
-        finalProjects.push(originalProject)
-        continue
-      }
-    }
-    finalProjects.push(project)
-  }
-  // 删除建议被拒 → 保留原文（追加末尾；原位置在改写稿中不存在）
   for (const project of original.projects ?? []) {
     const id = project.id
-    if (id === undefined || seen.has(id)) continue
-    if (projectDecision(decisions, id) === 'accept') continue // 确认删除
+    if (id === undefined) continue
+    seen.add(id)
+    const rewrittenProject = rewrittenById.get(id)
+    if (rewrittenProject === undefined) {
+      // 删除建议：接受=确认删除（跳过）；拒绝=保留原文（原位置）
+      if (projectDecision(decisions, id) !== 'accept') finalProjects.push(project)
+      continue
+    }
+    finalProjects.push(projectDecision(decisions, id) === 'reject' ? project : rewrittenProject)
+  }
+  // 新增/无 id 项目（改写稿独有，原文无法对应）追加末尾
+  for (const project of rewrittenProjects) {
+    const id = project.id
+    if (id !== undefined && seen.has(id)) continue
     finalProjects.push(project)
   }
 
@@ -193,18 +195,38 @@ export function resumesDiffer(a: Resume, b: Resume): boolean {
     const { meta: _meta, ...rest } = r
     return rest
   }
-  return JSON.stringify(stripMeta(a)) !== JSON.stringify(stripMeta(b))
+  return !deepEqual(stripMeta(a), stripMeta(b))
 }
 
-/** 宽松归一（与 rewrite-engine.normalizeText 同实现；shared 层避免依赖 main）。 */
-function normalizeText(text: string): string {
-  return text
-    .replace(/[\s\u3000]+/g, '')
-    .replace(
-      /[，。、,.;；:：!！?？()（）「」『』【】\[\]{}"'“”‘’\u2010-\u2015—_/\\]/g,
-      ''
-    )
-    .toLowerCase()
+/**
+ * 深度比较：对象键序不敏感（键集合一致即相等）、数组有序、基础值严格相等。
+ * 简历 JSON 无函数/Date 等特殊值，此实现即足够（JSON.stringify 键序敏感，不可用）。
+ */
+function deepEqual(x: unknown, y: unknown): boolean {
+  if (x === y) return true
+  if (Array.isArray(x) && Array.isArray(y)) {
+    if (x.length !== y.length) return false
+    return x.every((value, index) => deepEqual(value, y[index]))
+  }
+  if (
+    typeof x === 'object' &&
+    x !== null &&
+    typeof y === 'object' &&
+    y !== null &&
+    !Array.isArray(y)
+  ) {
+    const xRecord = x as Record<string, unknown>
+    const yRecord = y as Record<string, unknown>
+    const xKeys = Object.keys(xRecord)
+    const yKeys = Object.keys(yRecord)
+    if (xKeys.length !== yKeys.length) return false
+    for (const key of xKeys) {
+      if (!(key in yRecord)) return false
+      if (!deepEqual(xRecord[key], yRecord[key])) return false
+    }
+    return true
+  }
+  return false
 }
 
 /** 项目文本扁平化（id/name/描述/要点/技术栈等全部文本，供语义一致比较）。 */
@@ -212,11 +234,3 @@ function projectText(project: ResumeProject): string {
   return flattenValue(project as unknown as Record<string, unknown>)
 }
 
-function flattenValue(value: unknown): string {
-  if (typeof value === 'string') return value
-  if (Array.isArray(value)) return value.map((item) => flattenValue(item)).join('\n')
-  if (typeof value === 'object' && value !== null) {
-    return Object.values(value as Record<string, unknown>).map((v) => flattenValue(v)).join('\n')
-  }
-  return ''
-}

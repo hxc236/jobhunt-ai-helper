@@ -4,6 +4,7 @@ import type { Resume } from '@shared/types/resume'
 import {
   emptyReviewDraft,
   isInferredConfirmed,
+  nonProjectChanges,
   pendingInferredCount,
   reviewDecision,
   reviewGroups,
@@ -121,5 +122,25 @@ describe('content-review-state — 门禁计数与项目组', () => {
     const noRewrite = taskWithRewrite(REWRITE, { rewrite: null })
     expect(reviewGroups(RESUME, noRewrite)).toEqual([])
     expect(pendingInferredCount(noRewrite, emptyReviewDraft(noRewrite))).toBe(0)
+  })
+
+  it('节级（非项目）改动：nonProjectChanges 返回无 projectId 改动；inferred 节级勾选后可解除门禁（防确认死锁）', () => {
+    const sectionRewrite: ContentRewrite = {
+      resume: { ...REWRITE.resume },
+      changes: [
+        { id: 'chg-sec-1', section: 'experience', before: '', after: '某公司 实习', reason: '（推断-待确认）', source: 'inferred' },
+        { id: 'chg-sec-2', section: 'sectionOrder', before: 'a', after: 'b', reason: 'R3', source: 'original' }
+      ]
+    }
+    const task = taskWithRewrite(sectionRewrite)
+    const draft = emptyReviewDraft(task)
+    // 非项目改动单独列出（项目组不含节级改动）
+    expect(nonProjectChanges(task).map((c) => c.id)).toEqual(['chg-sec-1', 'chg-sec-2'])
+    expect(reviewGroups(RESUME, task).flatMap((g) => g.changes.map((c) => c.id))).toEqual([])
+    // 门禁：inferred 节级改动待勾选 → 勾选后解除
+    expect(pendingInferredCount(task, draft)).toBe(1)
+    toggleInferredConfirmed(draft, 'chg-sec-1')
+    expect(isInferredConfirmed(draft, 'chg-sec-1')).toBe(true)
+    expect(pendingInferredCount(task, draft)).toBe(0)
   })
 })

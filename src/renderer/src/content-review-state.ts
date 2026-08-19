@@ -84,6 +84,16 @@ export function pendingInferredCount(task: ContentOptimizeTask, draft: ReviewDra
 }
 
 /**
+ * 节级（非项目）改动：无 projectId 的 change（sectionOrder/experience 等节整体改动）。
+ * 与项目组分开展示（「其他改动」区）；inferred 节级改动也需勾选后才能确认
+ * （#96 review 修复：此前节级 inferred 改动被门禁计数但无勾选入口 → 确认死锁）。
+ */
+export function nonProjectChanges(task: ContentOptimizeTask): ContentOptimizeChange[] {
+  if (task.rewrite === null) return []
+  return (task.rewrite.changes ?? []).filter((c) => c.projectId === undefined)
+}
+
+/**
  * 逐项目确认组（原文 ∪ 改写稿，按改写稿顺序；被删除项目追加末尾）。
  * 新增项目（仅改写稿存在）也列出（state=unchanged），其改动随组展示。
  */

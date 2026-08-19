@@ -108,6 +108,19 @@ describe('content-review — US17 推断-待确认门禁', () => {
     const pending = pendingInferredChanges(REWRITE, null, [])
     expect(pending.some((c) => c.source !== 'inferred')).toBe(false)
   })
+
+  it('节级（无 projectId）inferred 改动被计入待勾选——即使缺 id 也保守待勾选（防确认死锁门禁）', () => {
+    const sectionRewrite: ContentRewrite = {
+      resume: { ...REWRITE.resume },
+      changes: [
+        { id: 'chg-sec-1', section: 'experience', before: '', after: '某公司 实习（纯新增）', reason: '（推断-待确认）', source: 'inferred' },
+        { section: 'basics', before: '', after: '无 id 的推断新增', reason: '（推断-待确认）', source: 'inferred' }
+      ]
+    }
+    const pending = pendingInferredChanges(sectionRewrite, null, [])
+    expect(pending.map((c) => c.id)).toEqual(['chg-sec-1', undefined])
+    expect(pendingInferredChanges(sectionRewrite, null, ['chg-sec-1']).map((c) => c.id)).toEqual([undefined])
+  })
 })
 
 describe('content-review — 整合汇总（US15/18/19）', () => {
@@ -143,6 +156,24 @@ describe('content-review — 整合汇总（US15/18/19）', () => {
     const summary = buildIntegrationSummary(ORIGINAL, REWRITE, { p1: 'reject' })
     expect(summary.unresolvedProjects).toEqual(['p1'])
     expect(summary.punctuationFixed).toEqual([])
+  })
+
+  it('纯标点修复被拒 → 不计入标点修复（最终版保留原文，无实际修复）', () => {
+    const punctuationRewrite: ContentRewrite = {
+      resume: {
+        ...ORIGINAL,
+        projects: [
+          { ...ORIGINAL_PROJECTS[0]!, description: 'C2C二手交易系统。' },
+          ORIGINAL_PROJECTS[1]!
+        ]
+      },
+      changes: [
+        { id: 'chg-p0', projectId: 'p1', section: 'projects', before: 'C2C 二手交易系统', after: 'C2C二手交易系统。', reason: 'R2 标点修复', source: 'original' }
+      ]
+    }
+    const summary = buildIntegrationSummary(ORIGINAL, punctuationRewrite, { p1: 'reject' })
+    expect(summary.punctuationFixed).toEqual([]) // 被拒项目最终保留原文 → 无标点修复
+    expect(summary.unresolvedProjects).toEqual([]) // 语义一致，不算「未解决」
   })
 
   it('删除建议接受 → 计入删除；拒绝 → 保留原文 + 警告（US18）', () => {
@@ -183,6 +214,30 @@ describe('content-review — 最终简历整合（buildFinalResume）', () => {
     const kept = buildFinalResume(ORIGINAL, deletionRewrite(), { p2: 'reject' })
     const p2 = kept.projects?.find((p) => p.id === 'p2')
     expect(p2?.description).toBe('智能推荐系统') // 原文保留
+    expect(kept.projects?.map((p) => p.id)).toEqual(['p1', 'p2']) // 拒绝删除 → 保留原位置（不追加末尾）
+  })
+
+  it('删除拒绝：中间位置的删除建议项目留在原位置，不静默重排到末尾', () => {
+    const threeOriginal: Resume = {
+      ...ORIGINAL,
+      projects: [
+        { id: 'p1', name: '项目一', description: '描述一', techStack: [] },
+        { id: 'p2', name: '大赛作品', description: '智能推荐系统', techStack: ['Python'] },
+        { id: 'p3', name: '项目三', description: '描述三', techStack: [] }
+      ]
+    }
+    const delP2Rewrite: ContentRewrite = {
+      resume: { ...threeOriginal, projects: [threeOriginal.projects![0]!, threeOriginal.projects![2]!] },
+      changes: [
+        { id: 'chg-del-p2', projectId: 'p2', section: 'projects', before: '大赛作品', after: '（建议删除）', reason: '无可补充内容', source: 'original' }
+      ]
+    }
+    // 全接受：删除确认 → p2 不进最终稿，其余按原文顺序
+    const deleted = buildFinalResume(threeOriginal, delP2Rewrite, null)
+    expect(deleted.projects?.map((p) => p.id)).toEqual(['p1', 'p3'])
+    // 拒绝删除：p2 保留在 p1 与 p3 之间（原位置），而非追加末尾
+    const kept = buildFinalResume(threeOriginal, delP2Rewrite, { p2: 'reject' })
+    expect(kept.projects?.map((p) => p.id)).toEqual(['p1', 'p2', 'p3'])
   })
 
   it('全部拒绝 → 最终稿与原简历一致（无改动不建版本判定用）', () => {
@@ -192,6 +247,37 @@ describe('content-review — 最终简历整合（buildFinalResume）', () => {
     // 若改写稿与原文除 meta 外一致 → 视为无改动
     const sameRewrite: ContentRewrite = { resume: { ...ORIGINAL }, changes: [] }
     expect(resumesDiffer(ORIGINAL, buildFinalResume(ORIGINAL, sameRewrite, null))).toBe(false)
+  })
+
+  it('resumesDiffer 对对象键序不敏感（数组仍有序比较）；meta 差异忽略', () => {
+    const reordered: Resume = {
+      meta: { title: '另一个标题' },
+      basics: { name: '张伟' },
+      education: [],
+      projects: [
+        { techStack: ['Java'], name: '二手交易平台', id: 'p1', description: 'C2C 二手交易系统' },
+        { techStack: ['Python'], name: '大赛作品', id: 'p2', description: '智能推荐系统' }
+      ],
+      sectionOrder: ['basics', 'projects']
+    }
+    const original: Resume = {
+      meta: { title: '基准简历' },
+      basics: { name: '张伟' },
+      education: [],
+      projects: [
+        { id: 'p1', name: '二手交易平台', description: 'C2C 二手交易系统', techStack: ['Java'] },
+        { id: 'p2', name: '大赛作品', description: '智能推荐系统', techStack: ['Python'] }
+      ],
+      sectionOrder: ['basics', 'projects']
+    }
+    expect(resumesDiffer(original, reordered)).toBe(false) // 键序不同不算改动
+    const different: Resume = { ...original, basics: { name: '李四' } }
+    expect(resumesDiffer(original, different)).toBe(true)
+    const reorderedArray: Resume = {
+      ...original,
+      projects: [original.projects![1]!, original.projects![0]!]
+    }
+    expect(resumesDiffer(original, reorderedArray)).toBe(true) // 数组顺序敏感
   })
 
   it('新增项目（仅改写稿存在）随改写稿进入最终稿', () => {

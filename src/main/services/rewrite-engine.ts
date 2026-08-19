@@ -11,6 +11,7 @@ import {
   contentQuestionKeys
 } from '../../shared/content-answers'
 import { CONTENT_RULE_NAMES } from '../../shared/types'
+import { flattenObject, flattenValue, normalizeText } from '../../shared/text-utils'
 import { extractJson } from './optimize'
 import { assertValidResume } from './resume-schema'
 
@@ -308,28 +309,6 @@ function flattenResume(resume: Resume): string {
     if (value !== undefined) parts.push(flattenValue(value))
   }
   return parts.join('\n')
-}
-
-function flattenValue(value: unknown): string {
-  if (typeof value === 'string') return value
-  if (Array.isArray(value)) return value.map((item) => flattenValue(item)).join('\n')
-  if (typeof value === 'object' && value !== null) return flattenObject(value as Record<string, unknown>)
-  return ''
-}
-
-function flattenObject(obj: Record<string, unknown>): string {
-  return Object.values(obj).map((v) => flattenValue(v)).join('\n')
-}
-
-/** 宽松归一：去空白（含全角空格）、去常见标点、小写。 */
-export function normalizeText(text: string): string {
-  return text
-    .replace(/[\s\u3000]+/g, '')
-    .replace(
-      /[，。、,.;；:：!！?？()（）「」『』【】\[\]{}"'“”‘’\u2010-\u2015—_/\\]/g,
-      ''
-    )
-    .toLowerCase()
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

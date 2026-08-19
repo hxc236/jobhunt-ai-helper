@@ -100,3 +100,5 @@
 
 **F-35 内容优化任务骨架（T02）**：行为：基准简历行「内容优化」入口 → ContentOptimizeService 异步任务（状态机 `created→diagnosing→awaiting_answers→rewriting→ready_for_review→confirmed`；failed 手动重试、cancelled 续接或作废、应用重启自动恢复中断轮次）；LLM 轮次全局串行队列（每轮超时 60s、重试 1 次）；任务记录存 `content_optimize_tasks` 独立存储；首次触发自动补齐项目稳定 ID/≤4 条要点/sectionOrder（#91）；空诊断（全部保持）→「无需修改」不创建新版本；事件 `content-optimize:changed` 实时推送阶段流转。E2E 基建：`JOBHUNT_FAKE_AGENT=1` 假 agent + 真实启动 Electron + CDP 鼠标/键盘驱动 + 截图/无障碍快照断言 + 落库断言。规则：#90-27（只对基准简历开放）、#90-21（确认后成为新基准简历）。验收：状态机/重试/取消续接/单基准单草稿/持久化单测绿；E2E 冒烟（`npm run e2e:content-optimize`）通过。
 
+**F-36 确认、对比与整合（T06）**：行为：改写完成进入可确认后，逐项目对比确认区（接受改写/保留原文；删除建议「确认删除/保留原文+警告」）；推断-待确认改动（`source=inferred`）须显式勾选「确认纳入最终版」（含节级非项目改动）后才可确认（US17）；确认时服务端整合：接受项目采用改写稿、拒绝项目保留原文且不阻塞其他项目、拒绝删除项目留在原位置（US15/18/19）、标点/排序自动修复仅计入实际采纳改动；最终稿与原文无差异（`resumesDiffer` 键序无关深度比较）时不创建新版本（US20）；确认后生成新基准简历（#90-21），任务卡片保留整合汇总（标点修复/顺序调整/删除/保留原文警告/仍有未解决项目）。setReview 决策与推断勾选落库（`decisions_json`/`inferred_confirmed_json`，migration v12）。验收：确认/门禁/整合纯函数单测绿；E2E questions 场景含确认区断言通过。
+

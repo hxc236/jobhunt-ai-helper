@@ -21,6 +21,7 @@ import {
 import {
   emptyReviewDraft,
   isInferredConfirmed,
+  nonProjectChanges,
   pendingInferredCount,
   reviewDecision,
   reviewGroups,
@@ -675,6 +676,11 @@ function reviewGroupsFor(task: ContentOptimizeTask) {
   return reviewGroups(original, task)
 }
 
+/** 节级（非项目）改动列表（「其他改动」区；含推断勾选入口，防确认死锁）。 */
+function nonProjectChangesFor(task: ContentOptimizeTask) {
+  return nonProjectChanges(task)
+}
+
 /** 该项目待勾选的推断-待确认改动（门禁提示）。 */
 function pendingInferredFor(task: ContentOptimizeTask): number {
   return pendingInferredCount(task, reviewDraftFor(task))
@@ -1236,6 +1242,27 @@ onMounted(() => {
             </template>
             <div v-if="group.changes.length > 0" class="opt-review-changes">
               <div v-for="(c, ci) in group.changes" :key="c.id ?? ci" class="opt-review-change">
+                <span class="opt-diag-rule-id">{{ CHANGE_SOURCE_LABELS[c.source] }}</span>
+                <span class="opt-review-change-text">{{ c.before }} → {{ c.after }}</span>
+                <p class="opt-review-muted">{{ c.reason }}</p>
+                <label v-if="c.source === 'inferred'" class="opt-review-confirm">
+                  <input
+                    type="checkbox"
+                    :checked="isInferredConfirmed(reviewDraftFor(t), c.id)"
+                    @change="onToggleInferred(t, c.id)"
+                  />
+                  确认纳入最终版
+                </label>
+              </div>
+            </div>
+          </div>
+          <!-- 节级（非项目）改动：与项目组分开展示；inferred 改动同样需勾选（防确认死锁） -->
+          <div v-if="nonProjectChangesFor(t).length > 0" class="opt-review-project">
+            <div class="opt-review-project-head">
+              <span class="opt-diag-project-name">其他改动（非项目）</span>
+            </div>
+            <div class="opt-review-changes">
+              <div v-for="(c, ci) in nonProjectChangesFor(t)" :key="c.id ?? ci" class="opt-review-change">
                 <span class="opt-diag-rule-id">{{ CHANGE_SOURCE_LABELS[c.source] }}</span>
                 <span class="opt-review-change-text">{{ c.before }} → {{ c.after }}</span>
                 <p class="opt-review-muted">{{ c.reason }}</p>
