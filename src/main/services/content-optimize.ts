@@ -10,13 +10,15 @@ import {
   type ContentRewrite
 } from '../../shared/types'
 import { contentQuestionKeys } from '../../shared/content-answers'
-import type { Resume } from '../../shared/types/resume'
-import { extractJson } from './optimize'
 import {
   buildDiagnosisPrompt as buildRulesDiagnosisPrompt,
   parseDiagnosis as parseDiagnosisReply
 } from './diagnosis-engine'
-import { assertValidResume } from './resume-schema'
+import {
+  buildRewritePrompt as buildRewriteEnginePrompt,
+  parseRewrite as parseRewriteEngineReply,
+  type RewriteRoundInput
+} from './rewrite-engine'
 
 /**
  * ContentOptimizeService（#90 业务① / T02）：简历内容优化异步任务骨架。
@@ -416,7 +418,7 @@ export class ContentOptimizeService {
       const rewrite = await this.runLlmRound(
         task,
         (t) => this.buildRewritePrompt(t),
-        (reply) => this.parseRewrite(reply)
+        (reply) => this.parseRewrite(reply, task)
       )
       if (this.isCancelled(taskId)) return this.finishCancelled(taskId)
       const current = this.requireTask(taskId)
@@ -597,16 +599,15 @@ export class ContentOptimizeService {
     return buildRulesDiagnosisPrompt(resume!)
   }
 
-  /** 改写轮提示词：T05 逐项目改写；T02 保留骨架。 */
+  /** 改写轮提示词：委托 rewrite-engine（T05 规则化逐项目改写 + 事实使用规则）。 */
   private buildRewritePrompt(task: ContentOptimizeTask): string {
-    return [
-      '[内容优化 2/2：项目改写] 基于诊断与用户回答，逐项目一次改写（融合所有适用规则），输出 JSON：',
-      '{ "resume": {简历对象，符合 resume.schema.json}, "changes": [{ "projectId": "proj-1", "section": "projects", "before": "原文", "after": "改后", "reason": "理由", "source": "original|user-answer|inferred" }] }',
-      '',
-      `诊断：${JSON.stringify(task.diagnosis)}`,
-      `用户回答：${JSON.stringify(task.answers)}`,
-      `简历 JSON：\n${JSON.stringify(this.resumes.get(task.resumeId))}`
-    ].join('\n')
+    const resume = this.resumes.get(task.resumeId)
+    const input: RewriteRoundInput = {
+      resume: resume!,
+      diagnosis: task.diagnosis,
+      answers: task.answers
+    }
+    return buildRewriteEnginePrompt(input)
   }
 
   /** 解析诊断轮输出：委托 diagnosis-engine（JSON 结构校验 + 项目判定一致性推导）。 */
@@ -622,24 +623,22 @@ export class ContentOptimizeService {
     }
   }
 
-  /** 解析改写轮输出：JSON 结构 + resume 过 schema 校验。 */
-  private parseRewrite(reply: string): ContentRewrite {
-    const parsed = extractJson(reply)
-    if (!isRecord(parsed) || !isRecord(parsed.resume)) {
-      throw new ContentOptimizeError('bad-json', '改写输出结构非法（缺 resume 对象）')
+  /** 解析改写轮输出：委托 rewrite-engine（JSON + schema + 事实溯源 + 一致性校验）。 */
+  private parseRewrite(reply: string, task: ContentOptimizeTask): ContentRewrite {
+    const resume = this.resumes.get(task.resumeId)
+    try {
+      return parseRewriteEngineReply(reply, {
+        resume: resume!,
+        diagnosis: task.diagnosis,
+        answers: task.answers
+      })
+    } catch (err) {
+      if (err instanceof ContentOptimizeError) throw err
+      throw new ContentOptimizeError(
+        'bad-json',
+        err instanceof Error ? err.message : '改写输出结构非法'
+      )
     }
-    assertValidResume(parsed.resume) // 非法抛 ResumeValidationError（含定位）
-    const changes = Array.isArray(parsed.changes)
-      ? parsed.changes.filter(isRecord).map((c) => ({
-          ...(c.projectId !== undefined ? { projectId: String(c.projectId) } : {}),
-          section: String(c.section ?? ''),
-          before: String(c.before ?? ''),
-          after: String(c.after ?? ''),
-          reason: String(c.reason ?? ''),
-          source: isChangeSource(c.source) ? c.source : ('original' as const)
-        }))
-      : []
-    return { resume: parsed.resume as unknown as Resume, changes }
   }
 }
 
@@ -666,14 +665,6 @@ function phaseFromResumeTo(
   if (task.diagnosis !== null && task.diagnosis.questions.length > 0) return 'awaiting_answers'
   if (task.noChanges) return 'ready_for_review'
   return 'diagnosing'
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-function isChangeSource(value: unknown): value is 'original' | 'user-answer' | 'inferred' {
-  return value === 'original' || value === 'user-answer' || value === 'inferred'
 }
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
