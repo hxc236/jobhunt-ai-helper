@@ -8,6 +8,7 @@ import { IpcEvent } from '@shared/protocol'
 import { defaultBaseTitle, emptyResumeForm, formToResume, issueSection, keepEmptyRows, resumeToForm, SKILL_CATEGORIES, type ResumeForm } from '../resume-form'
 import { FACT_SOURCE_LABELS, PROJECT_VERDICT_LABELS, RULE_STATUS_LABELS, ruleName } from '../content-diagnosis-view'
 import {
+  ANSWER_ACTION_LABELS,
   answerCounts,
   applyCandidate,
   buildAnswersRecord,
@@ -1084,10 +1085,10 @@ onMounted(() => {
                 @input="onAnswerInput(t, item.key, $event)"
               ></textarea>
               <div class="opt-ans-actions">
-                <button type="button" @click="onAnswerAction(t, item.question, item.key, 'confirm')">确认属实</button>
-                <button type="button" @click="onAnswerAction(t, item.question, item.key, 'edit')">编辑后确认</button>
-                <button type="button" @click="onAnswerAction(t, item.question, item.key, 'deny')">不属实</button>
-                <button type="button" @click="onAnswerAction(t, item.question, item.key, 'cannot')">无法补充</button>
+                <button type="button" @click="onAnswerAction(t, item.question, item.key, 'confirm')">{{ ANSWER_ACTION_LABELS.confirm }}</button>
+                <button type="button" @click="onAnswerAction(t, item.question, item.key, 'edit')">{{ ANSWER_ACTION_LABELS.edit }}</button>
+                <button type="button" @click="onAnswerAction(t, item.question, item.key, 'deny')">{{ ANSWER_ACTION_LABELS.deny }}</button>
+                <button type="button" @click="onAnswerAction(t, item.question, item.key, 'cannot')">{{ ANSWER_ACTION_LABELS.cannot }}</button>
               </div>
             </div>
           </div>

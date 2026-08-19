@@ -182,6 +182,31 @@ describe('ContentOptimizeService — 任务状态机与持久化（T02/#92）', 
     expect(ready.noChanges).toBe(true)
   })
 
+  it('追问阶段（awaiting_answers）取消 → 立即取消（resumeTo=awaiting_answers）；续接恢复且不入队轮次', async () => {
+    const h = makeHarness({ diagnosis: () => JSON.stringify(withQuestions()) })
+    const task = h.service.start(h.resumeId)
+    const awaiting = await waitForStatus(h, task.id, (t) => t.status === 'awaiting_answers')
+    expect(awaiting.diagnosis?.questions.length).toBe(1)
+
+    // 非轮次阶段取消：立即取消，记录 resumeTo=awaiting_answers（可直接续接）
+    const cancelled = h.service.cancel(task.id)
+    expect(cancelled.status).toBe('cancelled')
+    const row = h.db
+      .prepare('SELECT resume_to FROM content_optimize_tasks WHERE id = ?')
+      .get(task.id) as { resume_to: string | null }
+    expect(row.resume_to).toBe('awaiting_answers')
+
+    // 续接：恢复 awaiting_answers，诊断保留，不再入队 LLM 轮次
+    const resumed = h.service.resume(task.id)
+    expect(resumed.status).toBe('awaiting_answers')
+    expect(resumed.diagnosis?.questions.length).toBe(1)
+    const eventsAfterResume = h.emitEvents.length
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    const persisted = h.service.get(task.id)
+    expect(persisted?.status).toBe('awaiting_answers') // 无轮次自动推进
+    expect(h.emitEvents.length).toBe(eventsAfterResume) // 未入队轮次（无新状态事件）
+  })
+
   it('诊断轮失败 → failed 保留状态 → 手动重试成功', async () => {
     let fail = true
     const h = makeHarness({
@@ -278,6 +303,33 @@ describe('ContentOptimizeService — 任务状态机与持久化（T02/#92）', 
       expect(submitted.status).toBe('rewriting')
       const ready = await waitForStatus(h, task.id, (t) => t.status === 'ready_for_review')
       expect(ready.answers).toEqual({})
+    })
+
+    it('空/纯空白回答值 → 拒绝（invalid-answers），任务状态不变；哨兵值仍允许', async () => {
+      const h = makeHarness({
+        diagnosis: () =>
+          JSON.stringify({
+            rules: [],
+            projects: [{ projectId: 'proj-1', verdict: 'needs-info' }],
+            questions: [
+              { id: 'q1', projectId: 'proj-1', field: '难点', question: '最大的技术难点？', evidence: 'e', candidates: [] },
+              { id: 'q2', projectId: 'proj-1', field: '结果', question: '结果？', evidence: 'e', candidates: [] }
+            ]
+          })
+      })
+      const task = h.service.start(h.resumeId)
+      await waitForStatus(h, task.id, (t) => t.status === 'awaiting_answers')
+
+      expect(() => h.service.submitAnswers(task.id, { q1: '   ' })).toThrowError(ContentOptimizeError)
+      expect(() => h.service.submitAnswers(task.id, { q1: '   ' })).toThrowError(/空回答/)
+      expect(() => h.service.submitAnswers(task.id, { q1: '' })).toThrowError(/空回答/)
+      expect(h.service.get(task.id)?.status).toBe('awaiting_answers')
+
+      // 哨兵值（不属实/无法补充）是合法非空字符串，仍可通过
+      const submitted = h.service.submitAnswers(task.id, { q1: '[不属实]', q2: '[无法补充]' })
+      expect(submitted.status).toBe('rewriting')
+      const ready = await waitForStatus(h, task.id, (t) => t.status === 'ready_for_review')
+      expect(ready.answers).toEqual({ q1: '[不属实]', q2: '[无法补充]' })
     })
   })
 

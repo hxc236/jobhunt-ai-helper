@@ -271,6 +271,12 @@ export class ContentOptimizeService {
     if (unknown.length > 0) {
       throw new ContentOptimizeError('invalid-answers', `包含未知问题键：${unknown.join(', ')}`)
     }
+    const emptyValues = Object.entries(answers)
+      .filter(([, value]) => value.trim() === '')
+      .map(([key]) => key)
+    if (emptyValues.length > 0) {
+      throw new ContentOptimizeError('invalid-answers', `包含空回答值：${emptyValues.join(', ')}`)
+    }
     const next = this.mutate(task, {
       answers,
       status: 'rewriting',

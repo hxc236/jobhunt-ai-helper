@@ -28,6 +28,11 @@ export const ANSWER_ACTION_LABELS: Record<Exclude<AnswerAction, 'none'>, string>
   free: '自由输入'
 }
 
+/** 候选文本：下标越界返回 undefined（confirm 用；applyCandidate/setAnswerAction/draftAnswerText 共用）。 */
+function candidateText(question: ContentQuestion, index: number): string | undefined {
+  return question.candidates[index]
+}
+
 /** 单题草稿（组件内受控状态）。 */
 export interface AnswerDraft {
   action: AnswerAction
@@ -50,8 +55,7 @@ export function emptyDrafts(questions: ContentQuestion[]): Record<string, Answer
 export function applyCandidate(draft: AnswerDraft, question: ContentQuestion, candidateIndex: number): void {
   draft.action = 'confirm'
   draft.candidateIndex = candidateIndex
-  const candidate = question.candidates[candidateIndex]
-  draft.text = candidate ?? ''
+  draft.text = candidateText(question, candidateIndex) ?? ''
 }
 
 /** 切换动作（编辑/自由输入沿用文本；不属实/无法补充清空文本；确认属实取所选候选）。 */
@@ -64,8 +68,7 @@ export function setAnswerAction(
   if (action === 'deny' || action === 'cannot') {
     draft.text = ''
   } else if (action === 'confirm') {
-    const candidate = question.candidates[draft.candidateIndex]
-    draft.text = candidate ?? ''
+    draft.text = candidateText(question, draft.candidateIndex) ?? ''
   }
   // edit / free：保留现有文本，由输入框继续编辑
 }
@@ -74,7 +77,7 @@ export function setAnswerAction(
 export function draftAnswerText(draft: AnswerDraft, question: ContentQuestion): string | null {
   switch (draft.action) {
     case 'confirm': {
-      const candidate = question.candidates[draft.candidateIndex]
+      const candidate = candidateText(question, draft.candidateIndex)
       return candidate !== undefined && candidate !== '' ? candidate : null
     }
     case 'edit':
