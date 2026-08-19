@@ -126,7 +126,8 @@ function withQuestions(): ContentDiagnosis {
     projects: [{ projectId: 'proj-1', verdict: 'needs-info' }],
     questions: [
       { projectId: 'proj-1', field: '难点', question: '项目最大的技术难点是什么？', evidence: '原文证据', candidates: ['分布式锁'] }
-    ]
+    ],
+    promotions: []
   }
 }
 
@@ -1027,5 +1028,216 @@ describe('ContentQuestion 类型约束', () => {
     }
     expect(q.field).toBe('难点')
     expect(q.candidates.length).toBe(1)
+  })
+})
+
+describe('大赛提升为项目（T08/#98）', () => {
+  /** 带大赛荣誉的简历（h1=大赛；h2=普通荣誉）。 */
+  function baseWithHonors(): Resume {
+    return {
+      ...BASE_RESUME,
+      honors: ['全国大学生数学建模竞赛省一等奖', '校三好学生']
+    }
+  }
+
+  /** 诊断回复：返回大赛提升建议（第 1 轮）。 */
+  const PROMOTION_DIAGNOSIS = (prompt: string): string => {
+    const resume = extractResumeFromPrompt(prompt)
+    const projects = (resume?.projects ?? []).map((p) => ({ projectId: p.id ?? '', verdict: 'keep' as const }))
+    return JSON.stringify({
+      rules: [],
+      projects,
+      questions: [],
+      promotions: [
+        { id: 'promo-0', honorIndex: 0, honorName: '全国大学生数学建模竞赛省一等奖', evidence: '原文：竞赛省一等奖', missingFields: ['startDate', 'techStack', 'description'] }
+      ]
+    })
+  }
+
+  it('诊断含提升建议 → awaiting_answers（等待回答含提升计数）', async () => {
+    const harness = makeHarness({ diagnosis: PROMOTION_DIAGNOSIS })
+    harness.resumes.update(harness.resumeId, baseWithHonors())
+    const created = harness.service.start(harness.resumeId)
+    const task = await waitForStatus(harness, created.id, (t) => t.status === 'awaiting_answers')
+    expect(task.diagnosis?.promotions).toHaveLength(1)
+    expect(task.progress).toContain('大赛提升建议')
+  })
+
+  it('confirmPromotion：honors 移除大赛 → projects 追加新项目（字段来自回答），随后重新诊断', async () => {
+    const harness = makeHarness({ diagnosis: PROMOTION_DIAGNOSIS })
+    harness.resumes.update(harness.resumeId, baseWithHonors())
+    const created = harness.service.start(harness.resumeId)
+    const task = await waitForStatus(harness, created.id, (t) => t.status === 'awaiting_answers')
+    const promotionId = task.diagnosis!.promotions[0]!.id
+
+    const next = harness.service.confirmPromotion(task.id, promotionId, {
+      'promotion-promo-0-startDate': '2023-04',
+      'promotion-promo-0-techStack': 'Python、Pandas',
+      'promotion-promo-0-description': '为高校数学建模竞赛优化求解方案'
+    })
+    // 状态回到 diagnosing（重新诊断轮已入队）
+    expect(next.status).toBe('diagnosing')
+    expect(next.progress).toContain('重新诊断')
+    // 提升回答并入任务 answers
+    expect(next.answers?.['promotion-promo-0-startDate']).toBe('2023-04')
+    // 简历已更新：honors 移除大赛；projects 追加提升项目
+    const updated = harness.resumes.get(harness.resumeId)!
+    expect(updated.honors).toEqual(['校三好学生'])
+    const promoted = updated.projects?.find((p) => p.name === '全国大学生数学建模竞赛省一等奖')
+    expect(promoted).toBeDefined()
+    expect(promoted!.id).toBeDefined()
+    expect(promoted!.startDate).toBe('2023-04')
+    expect(promoted!.techStack).toEqual(['Python', 'Pandas'])
+    expect(promoted!.description).toBe('为高校数学建模竞赛优化求解方案')
+    // 原项目保留
+    expect(updated.projects).toHaveLength(2)
+  })
+
+  it('confirmPromotion 哨兵（不属实/无法补充）不写入项目字段；未答字段缺失', async () => {
+    const harness = makeHarness({ diagnosis: PROMOTION_DIAGNOSIS })
+    harness.resumes.update(harness.resumeId, baseWithHonors())
+    const created = harness.service.start(harness.resumeId)
+    const task = await waitForStatus(harness, created.id, (t) => t.status === 'awaiting_answers')
+    harness.service.confirmPromotion(task.id, task.diagnosis!.promotions[0]!.id, {
+      'promotion-promo-0-startDate': '[不属实]',
+      'promotion-promo-0-description': '[无法补充]'
+    })
+    const updated = harness.resumes.get(harness.resumeId)!
+    const promoted = updated.projects?.find((p) => p.name === '全国大学生数学建模竞赛省一等奖')
+    expect(promoted!.startDate).toBeUndefined()
+    expect(promoted!.description).toBeUndefined()
+    expect(promoted!.techStack).toBeUndefined()
+  })
+
+  it('confirmPromotion 校验：非 awaiting_answers / 未知建议 / 未知回答键 / 空回答值 / 下标越界', async () => {
+    const harness = makeHarness({ diagnosis: PROMOTION_DIAGNOSIS })
+    harness.resumes.update(harness.resumeId, baseWithHonors())
+    const created = harness.service.start(harness.resumeId)
+    const task = await waitForStatus(harness, created.id, (t) => t.status === 'awaiting_answers')
+
+    // 未知回答键
+    expect(() =>
+      harness.service.confirmPromotion(task.id, task.diagnosis!.promotions[0]!.id, { 'promotion-promo-0-nope': 'x' })
+    ).toThrowError(ContentOptimizeError)
+    // 空回答值
+    expect(() =>
+      harness.service.confirmPromotion(task.id, task.diagnosis!.promotions[0]!.id, { 'promotion-promo-0-startDate': '  ' })
+    ).toThrowError(ContentOptimizeError)
+    // 未知提升建议
+    expect(() => harness.service.confirmPromotion(task.id, 'promo-missing', {})).toThrowError(ContentOptimizeError)
+
+    // 错误状态：提交回答后（rewriting 由改写轮接管前）再确认提升 → 拒绝
+    await harness.service.confirmPromotion(task.id, task.diagnosis!.promotions[0]!.id, {})
+    expect(() =>
+      harness.service.confirmPromotion(task.id, task.diagnosis!.promotions[0]!.id, {})
+    ).toThrowError(ContentOptimizeError)
+  })
+
+  it('#98 review：honorName 与实际荣誉不符（诊断后简历被改）→ 拒绝提升（invalid-promotion）', async () => {
+    const harness = makeHarness({ diagnosis: PROMOTION_DIAGNOSIS })
+    harness.resumes.update(harness.resumeId, baseWithHonors())
+    const created = harness.service.start(harness.resumeId)
+    const task = await waitForStatus(harness, created.id, (t) => t.status === 'awaiting_answers')
+
+    // 诊断后用户改了荣誉文本（下标仍为 0，但名称不再是大赛）
+    harness.resumes.update(harness.resumeId, { ...baseWithHonors(), honors: ['优秀志愿者', '校三好学生'] })
+    expect(() =>
+      harness.service.confirmPromotion(task.id, task.diagnosis!.promotions[0]!.id, {
+        'promotion-promo-0-startDate': '2023-04'
+      })
+    ).toThrowError(/荣誉名称与提升建议不符/)
+    // 简历未被改动
+    expect(harness.resumes.get(harness.resumeId)!.projects).toHaveLength(1)
+    expect(harness.resumes.get(harness.resumeId)!.honors).toEqual(['优秀志愿者', '校三好学生'])
+  })
+
+  it('#98 review：honorName 宽松匹配（标点/空白差异）不误拒', async () => {
+    const harness = makeHarness({ diagnosis: PROMOTION_DIAGNOSIS })
+    harness.resumes.update(harness.resumeId, baseWithHonors())
+    const created = harness.service.start(harness.resumeId)
+    const task = await waitForStatus(harness, created.id, (t) => t.status === 'awaiting_answers')
+
+    // 荣誉原文带标点/全角空格，与建议名有差异但宽松等价
+    harness.resumes.update(harness.resumeId, {
+      ...baseWithHonors(),
+      honors: ['全国大学生数学建模竞赛省一等奖（2023）', '校三好学生']
+    })
+    // 建议名与原文不完全一致（不同文本）→ 仍拒绝，保证匹配是有意义的
+    expect(() =>
+      harness.service.confirmPromotion(task.id, task.diagnosis!.promotions[0]!.id, {})
+    ).toThrowError(/荣誉名称与提升建议不符/)
+  })
+
+  it('AC3：提升后的项目参与规则诊断与改写（重新诊断产出该项目规则 → 改写轮引用）', async () => {
+    let diagnosisRound = 0
+    const harness = makeHarness({
+      diagnosis: (prompt: string) => {
+        diagnosisRound += 1
+        const resume = extractResumeFromPrompt(prompt)
+        const projects = (resume?.projects ?? []).map((p) => ({ projectId: p.id ?? '', verdict: 'keep' as const }))
+        if (diagnosisRound === 1) {
+          return JSON.stringify({
+            rules: [],
+            projects,
+            questions: [],
+            promotions: [
+              { id: 'promo-0', honorIndex: 0, honorName: '全国大学生数学建模竞赛省一等奖', evidence: '原文：竞赛省一等奖', missingFields: ['description'] }
+            ]
+          })
+        }
+        // 第 2 轮：提升项目已入库（projects 含提升项），按项目规则判定 rewrite
+        const promotedId = resume?.projects?.find((p) => p.name === '全国大学生数学建模竞赛省一等奖')?.id
+        expect(promotedId).toBeDefined()
+        return JSON.stringify({
+          rules: [
+            { ruleId: 'R1', target: `project:${promotedId}`, status: 'improve', evidence: '原文：竞赛省一等奖', issue: '缺难点与解决行动', suggestion: '补充解决行动', factSource: 'original' }
+          ],
+          projects: [
+            ...projects,
+            { projectId: promotedId, verdict: 'rewrite' }
+          ],
+          questions: [],
+          promotions: []
+        })
+      },
+      rewrite: (prompt: string) => {
+        const resume = extractResumeFromPrompt(prompt)
+        const promotedId = resume?.projects?.find((p) => p.name === '全国大学生数学建模竞赛省一等奖')?.id ?? ''
+        const rewritten = {
+          ...resume,
+          projects: (resume?.projects ?? []).map((p) =>
+            p.name === '全国大学生数学建模竞赛省一等奖'
+              ? { ...p, highlights: ['参赛并获省一等奖', '优化求解方案提升效率'] }
+              : p
+          )
+        }
+        return JSON.stringify({
+          resume: rewritten,
+          changes: [
+            {
+              projectId: promotedId,
+              section: 'highlights',
+              before: '全国大学生数学建模竞赛省一等奖',
+              after: '参赛并获省一等奖；优化求解方案提升效率',
+              reason: 'R1 补充解决行动',
+              source: 'original'
+            }
+          ]
+        })
+      }
+    })
+    harness.resumes.update(harness.resumeId, baseWithHonors())
+    const created = harness.service.start(harness.resumeId)
+    const task = await waitForStatus(harness, created.id, (t) => t.status === 'awaiting_answers')
+    await harness.service.confirmPromotion(task.id, task.diagnosis!.promotions[0]!.id, {
+      'promotion-promo-0-description': '为高校数学建模竞赛优化求解方案'
+    })
+    // 重新诊断产出提升项目规则 → rewrite → 改写轮 → ready_for_review
+    const reviewed = await waitForStatus(harness, created.id, (t) => t.status === 'ready_for_review')
+    const promotedId = reviewed.rewrite?.resume.projects?.find(
+      (p) => p.name === '全国大学生数学建模竞赛省一等奖'
+    )?.id
+    expect(promotedId).toBeDefined()
+    expect(reviewed.rewrite?.changes.some((c) => c.projectId === promotedId && c.section === 'highlights')).toBe(true)
   })
 })

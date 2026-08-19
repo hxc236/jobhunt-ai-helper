@@ -23,7 +23,8 @@ const DIAGNOSIS: ContentDiagnosis = {
     { projectId: 'proj-1', verdict: 'rewrite' },
     { projectId: 'proj-2', verdict: 'needs-info' }
   ],
-  questions: []
+  questions: [],
+  promotions: []
 }
 
 describe('content-diagnosis-view（#93 任务卡片判定展示辅助）', () => {
@@ -81,7 +82,7 @@ describe('content-diagnosis-view（#93 任务卡片判定展示辅助）', () =>
   })
 
   it('空诊断 → 空分组', () => {
-    expect(projectRules({ rules: [], projects: [], questions: [] }, 'proj-1')).toEqual([])
-    expect(globalRules({ rules: [], projects: [], questions: [] })).toEqual([])
+    expect(projectRules({ rules: [], projects: [], questions: [], promotions: [] }, 'proj-1')).toEqual([])
+    expect(globalRules({ rules: [], projects: [], questions: [], promotions: [] })).toEqual([])
   })
 })

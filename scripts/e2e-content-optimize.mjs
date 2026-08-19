@@ -119,6 +119,51 @@ function assertQuestionsDatabase(userDataDir, taskId) {
   }
 }
 
+/** 断言落库状态（promotion 场景）：任务 confirmed + honors→projects 提升落库 + 无新版本。 */
+function assertPromotionDatabase(userDataDir, taskId) {
+  const db = new Database(join(userDataDir, 'jobhunt.db'), { readonly: true })
+  try {
+    const task = db
+      .prepare('SELECT status, no_changes, answers_json, created_resume_id, archived_at FROM content_optimize_tasks WHERE id = ?')
+      .get(taskId)
+    if (task === undefined) throw new Error(`任务 ${taskId} 未落库`)
+    if (task.status !== 'confirmed') throw new Error(`任务状态应为 confirmed，实际 ${task.status}`)
+    if (task.no_changes !== 1) throw new Error('提升后空诊断 no_changes 应为 1')
+    if (task.archived_at === null) throw new Error('promotion 场景确认也应归档')
+    if (task.created_resume_id !== null) {
+      throw new Error(`提升后无改动不应建新版本：created_resume_id 应为 null，实际 ${task.created_resume_id}`)
+    }
+    // 提升回答落库（promotion-promo-0-* 键）
+    const answers = JSON.parse(task.answers_json)
+    if (answers['promotion-promo-0-startDate'] !== '2023-04') {
+      throw new Error(`提升 startDate 回答未落库：${JSON.stringify(answers)}`)
+    }
+    if (!String(answers['promotion-promo-0-description'] ?? '').includes('数学建模')) {
+      throw new Error(`提升 description 回答未落库：${JSON.stringify(answers)}`)
+    }
+    // 简历落库：honors 移除大赛（保留校三好学生），projects 追加提升项目
+    const resumeRow = db.prepare('SELECT json FROM resumes LIMIT 1').get()
+    const resume = JSON.parse(resumeRow.json)
+    if (resume.honors.length !== 1 || resume.honors[0] !== '校三好学生') {
+      throw new Error(`honors 未移除大赛条目：${JSON.stringify(resume.honors)}`)
+    }
+    const promoted = (resume.projects ?? []).find((p) => p.name === '全国大学生数学建模竞赛省一等奖')
+    if (promoted === undefined) {
+      throw new Error(`提升项目未入库：${JSON.stringify((resume.projects ?? []).map((p) => p.name))}`)
+    }
+    if (promoted.id === undefined) throw new Error('提升项目缺少稳定 id')
+    if (promoted.startDate !== '2023-04') throw new Error(`提升项目 startDate 异常：${promoted.startDate}`)
+    if (!(promoted.techStack ?? []).includes('Python')) throw new Error(`提升项目 techStack 异常：${JSON.stringify(promoted.techStack)}`)
+    const resumeCount = db.prepare('SELECT COUNT(*) AS n FROM resumes').get().n
+    if (resumeCount !== 1) {
+      throw new Error(`提升后无改动不应创建新版本：resumes 应为 1，实际 ${resumeCount}`)
+    }
+    console.log(`  [db] task=${task.status} honors=1 projects=${(resume.projects ?? []).length} promoted=${promoted.name} resumes=${resumeCount} answers=${JSON.stringify(answers)} ✓`)
+  } finally {
+    db.close()
+  }
+}
+
 /** empty 场景：触发 → 无需修改 → 键盘确认 → 断言。 */
 async function runEmptyFlow(page, userDataDir) {
   await page.locator('.nav-item', { hasText: '简历' }).first().click()
@@ -243,6 +288,80 @@ async function runQuestionsFlow(page, userDataDir) {
   assertQuestionsDatabase(userDataDir, taskRow.id)
 }
 
+/** promotion 场景（T08）：触发 → 等待回答（大赛提升建议区：证据/缺失字段追问）→ 确认提升 → 重新诊断 → 无需修改 → 确认。 */
+async function runPromotionFlow(page, userDataDir) {
+  await page.locator('.nav-item', { hasText: '简历' }).first().click()
+  await page.waitForSelector('.view.cols', { timeout: 10_000 })
+  await page.waitForSelector('.res-row', { timeout: 10_000 })
+
+  const row = page.locator('.res-row').first()
+  await row.locator('button', { hasText: '内容优化' }).first().click()
+
+  // 等待任务卡片出现「大赛提升建议」区
+  await page.waitForSelector('.opt-task-card', { timeout: 10_000 })
+  await page.waitForSelector('.opt-promotions', { timeout: 15_000 })
+  await page.waitForFunction(() => {
+    const card = document.querySelector('.opt-task-card')
+    return card !== null && card.textContent.includes('大赛提升建议')
+  }, undefined, { timeout: 15_000 })
+
+  // 无障碍快照断言：大赛名 / 原文证据 / 缺失字段追问 / 确认提升按钮
+  const promoA11y = await page.locator('.opt-promotions').ariaSnapshot()
+  for (const expectText of [
+    '全国大学生数学建模竞赛省一等奖',
+    '原文证据：',
+    '开始时间',
+    '技术栈',
+    '项目描述',
+    '确认提升为项目',
+    '暂不提升'
+  ]) {
+    if (!promoA11y.includes(expectText)) {
+      throw new Error(`大赛提升建议区缺少「${expectText}」：${promoA11y.slice(0, 400)}`)
+    }
+  }
+  console.log('  大赛提升建议区（证据/缺失字段/确认按钮）无障碍快照断言 ✓')
+
+  // 键盘驱动补齐缺失字段：开始时间 / 技术栈 / 项目描述
+  const fields = [
+    { text: '开始时间', value: '2023-04' },
+    { text: '技术栈', value: 'Python' },
+    { text: '项目描述', value: '为高校数学建模竞赛优化求解方案' }
+  ]
+  for (const { text, value } of fields) {
+    const q = page.locator('.opt-promotion-card .opt-ans-question', { hasText: text }).first()
+    await q.locator('textarea').click()
+    await page.keyboard.type(value)
+  }
+  console.log('  缺失字段（开始时间/技术栈/描述）键盘输入 ✓')
+
+  const shotPath = join(userDataDir, 'task-card-promotions.png')
+  await page.screenshot({ path: shotPath, fullPage: false })
+  console.log(`  截图：${shotPath}`)
+
+  // 确认提升 → 重新诊断（honors 已无大赛 → 全部保持 → 无需修改）
+  await page.locator('.opt-promotion-card button', { hasText: '确认提升为项目' }).first().click()
+  await page.waitForFunction(() => {
+    const card = document.querySelector('.opt-task-card')
+    return card !== null && card.textContent.includes('无需修改')
+  }, undefined, { timeout: 20_000 })
+  console.log('  确认提升 → 重新诊断 → 无需修改（提升项目参与诊断后判定保持）✓')
+
+  // 键盘确认
+  const confirmBtn = page.locator('.opt-task-card button', { hasText: '确认' }).first()
+  await confirmBtn.focus()
+  await page.keyboard.press('Enter')
+  await page.waitForFunction(() => {
+    const card = document.querySelector('.opt-task-card')
+    return card !== null && card.textContent.includes('已确认')
+  }, undefined, { timeout: 10_000 })
+  console.log('  确认后任务卡片状态 = 已确认（键盘 Enter 驱动）✓')
+
+  const taskRow = readTaskRow(userDataDir)
+  if (taskRow === undefined) throw new Error('未发现内容优化任务落库')
+  assertPromotionDatabase(userDataDir, taskRow.id)
+}
+
 async function main() {
   const scenario = process.env['JOBHUNT_E2E_SCENARIO'] ?? 'empty'
 
@@ -262,7 +381,9 @@ async function main() {
     JOBHUNT_FAKE_AGENT: '1',
     JOBHUNT_E2E_SEED: '1',
     JOBHUNT_USER_DATA_DIR: userDataDir,
-    ...(scenario === 'questions' ? { JOBHUNT_E2E_SCENARIO: 'questions' } : {})
+    ...(scenario === 'questions' || scenario === 'promotion'
+      ? { JOBHUNT_E2E_SCENARIO: scenario }
+      : {})
   }
   delete env['ELECTRON_RUN_AS_NODE']
   const app = spawn(electronPath, [projectRoot], { env, stdio: ['ignore', 'pipe', 'pipe'] })
@@ -288,6 +409,8 @@ async function main() {
 
     if (scenario === 'questions') {
       await runQuestionsFlow(page, userDataDir)
+    } else if (scenario === 'promotion') {
+      await runPromotionFlow(page, userDataDir)
     } else {
       await runEmptyFlow(page, userDataDir)
     }

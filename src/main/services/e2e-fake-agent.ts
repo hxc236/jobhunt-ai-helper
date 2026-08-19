@@ -11,13 +11,23 @@ import type { Resume } from '../../shared/types/resume'
  *   - `empty`（默认）：全部「保持」的空诊断（projects: keep / questions: []）→ 无需修改 → 不建版本；
  *   - `questions`（JOBHUNT_E2E_SCENARIO=questions）：含追问的诊断（项目需补充信息，
  *     questions 带稳定 id）→ awaiting_answers → 追问表单 → 提交回答 → 改写轮；
+ *   - `promotion`（JOBHUNT_E2E_SCENARIO=promotion）：honors 含大赛（种子简历带荣誉）→
+ *     输出大赛提升建议 → 追问表单确认提升 → 重新诊断（提升后 honors 已无大赛 → 全部保持）；
  * - 内容优化改写轮（提示词含 `[内容优化 2/2`）：questions 场景返回合法最小 ContentRewrite
  *   （原简历原样 + 一条 change），empty 场景不会触发；
  * - 其他任务类型回显（不会在 E2E 中触发真实模型）。
  */
 
-/** E2E 假 agent 场景：empty=空诊断（T02 垂直切片）；questions=追问流程（T04）。 */
-export type E2eContentScenario = 'empty' | 'questions'
+/** E2E 假 agent 场景：empty=空诊断（T02 垂直切片）；questions=追问流程（T04）；promotion=大赛提升（T08）。 */
+export type E2eContentScenario = 'empty' | 'questions' | 'promotion'
+
+/** 大赛/竞赛特征词（种子简历 honors 判定；真实场景由 LLM 判定）。 */
+const COMPETITION_PATTERN = /大赛|竞赛|挑战赛|比赛|杯赛|杯/
+
+/** 从 honors 中找第一个大赛条目下标（无则 -1）。 */
+export function findCompetitionHonorIndex(honors: string[] | undefined): number {
+  return (honors ?? []).findIndex((h) => COMPETITION_PATTERN.test(h))
+}
 
 /** 从提示词中提取简历 JSON（标记 `简历 JSON：` 之后的对象）。 */
 export function extractResumeFromPrompt(prompt: string): Resume | null {
@@ -57,8 +67,9 @@ export function extractResumeFromPrompt(prompt: string): Resume | null {
 export function createContentOptimizeFakeProvider(
   options: { scenario?: E2eContentScenario } = {}
 ): FakeAgentProvider {
+  const envScenario = process.env['JOBHUNT_E2E_SCENARIO']
   const scenario: E2eContentScenario =
-    options.scenario ?? (process.env['JOBHUNT_E2E_SCENARIO'] === 'questions' ? 'questions' : 'empty')
+    options.scenario ?? (envScenario === 'questions' || envScenario === 'promotion' ? envScenario : 'empty')
   return new FakeAgentProvider({
     onPrompt: (prompt, session) => {
       if (session.task !== 'content_optimize') return `echo: ${prompt}`
@@ -68,6 +79,28 @@ export function createContentOptimizeFakeProvider(
           projectId: p.id ?? '',
           verdict: 'keep' as const
         }))
+        if (scenario === 'promotion') {
+          // T08 大赛提升场景：honors 中仍有大赛 → 输出提升建议；已提升（honors 无大赛）→ 全部保持。
+          const honorIndex = findCompetitionHonorIndex(resume?.honors)
+          if (honorIndex !== -1) {
+            const honorName = resume?.honors?.[honorIndex] ?? '大赛'
+            return JSON.stringify({
+              rules: [],
+              projects,
+              questions: [],
+              promotions: [
+                {
+                  id: 'promo-0',
+                  honorIndex,
+                  honorName,
+                  evidence: `原文：${honorName}`,
+                  missingFields: ['startDate', 'techStack', 'description']
+                }
+              ]
+            })
+          }
+          return JSON.stringify({ rules: [], projects, questions: [], promotions: [] })
+        }
         if (scenario === 'questions' && projects.length > 0) {
           // T04 追问场景：首个项目需补充信息（难点/结果），带稳定 id 的追问
           const pid = projects[0]!.projectId

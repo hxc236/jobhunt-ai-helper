@@ -165,6 +165,9 @@ export function registerIpcHandlers({ settings, agent, positions, resumes, resum
   handleRequest(IpcChannel.ContentOptimizeSubmitAnswers, (request) =>
     contentOptimize.submitAnswers(request.taskId, request.answers)
   )
+  handleRequest(IpcChannel.ContentOptimizeConfirmPromotion, (request) =>
+    contentOptimize.confirmPromotion(request.taskId, request.promotionId, request.answers)
+  )
   handleRequest(IpcChannel.ContentOptimizeSetReview, (request) =>
     contentOptimize.setReview(request.taskId, {
       decisions: request.decisions,

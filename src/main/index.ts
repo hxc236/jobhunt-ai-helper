@@ -194,7 +194,11 @@ app.whenReady().then(() => {
       basics: { name: '张伟', phone: '13800001234', email: 'z@example.com' },
       education: [{ school: '北京理工大学', degree: '本科', major: '计算机科学与技术' }],
       skills: [{ category: '工程能力', text: 'Java、Spring Boot 服务端开发' }],
-      projects: [{ name: '二手交易平台', description: 'C2C 二手交易系统', techStack: ['Java', 'Spring Boot'] }]
+      projects: [{ name: '二手交易平台', description: 'C2C 二手交易系统', techStack: ['Java', 'Spring Boot'] }],
+      // T08/#98：promotion 场景种子带大赛荣誉（提升为项目）；其余场景无 honors
+      ...(process.env['JOBHUNT_E2E_SCENARIO'] === 'promotion'
+        ? { honors: ['全国大学生数学建模竞赛省一等奖', '校三好学生'] }
+        : {})
     })
   }
   // F-19（#33）：学习清单服务（jd_analysis → 优先级 1-5 清单 + 人工 CRUD + 三态）

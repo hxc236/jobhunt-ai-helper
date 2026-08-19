@@ -118,6 +118,7 @@ export const IpcChannel = {
   ContentOptimizeList: 'content-optimize:list',
   ContentOptimizeGet: 'content-optimize:get',
   ContentOptimizeSubmitAnswers: 'content-optimize:submit-answers',
+  ContentOptimizeConfirmPromotion: 'content-optimize:confirm-promotion',
   ContentOptimizeSetReview: 'content-optimize:set-review',
   ContentOptimizeConfirm: 'content-optimize:confirm',
   ContentOptimizeCancel: 'content-optimize:cancel',
@@ -241,6 +242,11 @@ export interface IpcProtocol {
   [IpcChannel.ContentOptimizeGet]: { request: { taskId: string }; response: ContentOptimizeTask | null }
   [IpcChannel.ContentOptimizeSubmitAnswers]: {
     request: { taskId: string; answers: Record<string, string> }
+    response: ContentOptimizeTask
+  }
+  // T08/#98：确认大赛提升为项目（honors → projects，缺失字段由回答补齐；随后重新诊断）。
+  [IpcChannel.ContentOptimizeConfirmPromotion]: {
+    request: { taskId: string; promotionId: string; answers: Record<string, string> }
     response: ContentOptimizeTask
   }
   // T06/#96：保存按项目接受/拒绝决策 + 推断-待确认改动勾选（ready_for_review 有改写时；持久化供中断续接）。
@@ -487,6 +493,12 @@ export interface ContentOptimizeApi {
   get: (taskId: string) => Promise<ContentOptimizeTask | null>
   /** 提交追问回答（awaiting_answers → rewriting）。 */
   submitAnswers: (taskId: string, answers: Record<string, string>) => Promise<ContentOptimizeTask>
+  /** T08/#98：确认大赛提升为项目（honors → projects，缺失字段由回答补齐；随后重新诊断）。 */
+  confirmPromotion: (
+    taskId: string,
+    promotionId: string,
+    answers: Record<string, string>
+  ) => Promise<ContentOptimizeTask>
   /** T06/#96：保存按项目接受/拒绝决策 + 推断-待确认改动勾选（US15/US17；持久化供中断续接）。 */
   setReview: (
     taskId: string,

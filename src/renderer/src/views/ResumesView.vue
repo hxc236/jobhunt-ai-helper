@@ -5,6 +5,8 @@ import type { ResumeDraft, ContentOptimizeTask, ContentQuestion, ContentProjectD
 import { CONTENT_STATUS_LABELS } from '@shared/types'
 import { contentQuestionKey } from '@shared/content-answers'
 import { CHANGE_SOURCE_LABELS, buildIntegrationSummary } from '@shared/content-review'
+import { PROMOTION_MISSING_FIELD_LABELS, promotionQuestionKey, promotionQuestionText } from '@shared/content-promotions'
+import type { ContentPromotionMissingField, ContentPromotionSuggestion } from '@shared/types'
 import { archiveSummaryFor } from '../content-task-view'
 import { IpcEvent } from '@shared/protocol'
 import { defaultBaseTitle, emptyResumeForm, formToResume, issueSection, keepEmptyRows, resumeToForm, SKILL_CATEGORIES, type ResumeForm } from '../resume-form'
@@ -30,6 +32,13 @@ import {
   toggleInferredConfirmed,
   type ReviewDraft
 } from '../content-review-state'
+import {
+  buildPromotionAnswers,
+  emptyPromotionDrafts,
+  onPromotionInput,
+  setPromotionAction,
+  type PromotionDraft
+} from '../content-promotions-view'
 import Modal from '../components/Modal.vue'
 import Resizer from '../components/Resizer.vue'
 import Icon from '../components/Icon.vue'
@@ -497,6 +506,12 @@ const contentTaskError = ref('')
 /** 追问批量回答草稿（#94/T04：按任务 id → 问题键 → 草稿；任务卡存在期间保留）。 */
 const answerDrafts = ref<Record<string, Record<string, AnswerDraft>>>({})
 
+/** 大赛提升回答草稿（#98/T08：按任务 id → 追问键 → 草稿；确认提升后清空）。 */
+const promotionDrafts = ref<Record<string, Record<string, Record<string, PromotionDraft>>>>({})
+
+/** 暂不提升的大赛建议（本地隐藏；仅本次查看，不持久化）。 */
+const skippedPromotions = ref<Record<string, string[]>>({})
+
 /** 按项目确认草稿（T06/#96：按任务 id → 决策/推断-待确认勾选；改动即持久化）。 */
 const reviewDrafts = ref<Record<string, ReviewDraft>>({})
 
@@ -657,6 +672,80 @@ async function submitContentAnswers(task: ContentOptimizeTask): Promise<void> {
   } catch (err) {
     contentTaskError.value = String(err)
   }
+}
+
+// ---- 大赛提升（#98/T08：honors → 项目；缺失字段经追问补齐后确认提升） ----
+
+/** 任务中可展示的提升建议（已「暂不提升」的隐藏；仅本地状态）。 */
+function visiblePromotions(task: ContentOptimizeTask): ContentPromotionSuggestion[] {
+  const skipped = skippedPromotions.value[task.id] ?? []
+  return (task.diagnosis?.promotions ?? []).filter((p) => !skipped.includes(p.id))
+}
+
+/** 提升建议字段草稿（懒初始化）。 */
+function promotionDraftsFor(
+  task: ContentOptimizeTask,
+  promotion: ContentPromotionSuggestion
+): Record<string, PromotionDraft> {
+  let perTask = promotionDrafts.value[task.id]
+  if (perTask === undefined) {
+    perTask = {}
+    promotionDrafts.value[task.id] = perTask
+  }
+  let drafts = perTask[promotion.id]
+  if (drafts === undefined) {
+    drafts = emptyPromotionDrafts(promotion)
+    perTask[promotion.id] = drafts
+  }
+  return drafts
+}
+
+/** 四选一动作（无候选：确认属实/编辑后确认 = 当前输入为准；不属实/无法补充清空）。 */
+function onPromotionAction(
+  task: ContentOptimizeTask,
+  promotion: ContentPromotionSuggestion,
+  field: ContentPromotionMissingField,
+  action: Exclude<AnswerAction, 'none'>
+): void {
+  const key = promotionQuestionKey(promotion, field)
+  const draft = promotionDraftsFor(task, promotion)[key]
+  if (draft !== undefined) setPromotionAction(draft, action)
+}
+
+/** 输入框编辑（自由输入/编辑候选）。 */
+function onPromotionFieldInput(
+  task: ContentOptimizeTask,
+  promotion: ContentPromotionSuggestion,
+  field: ContentPromotionMissingField,
+  event: Event
+): void {
+  const key = promotionQuestionKey(promotion, field)
+  const draft = promotionDraftsFor(task, promotion)[key]
+  if (draft !== undefined) onPromotionInput(draft, (event.target as HTMLTextAreaElement).value)
+}
+
+/** 确认提升：提交缺失字段回答 → 服务端应用提升并重新诊断（提升项目参与规则判定）。 */
+async function confirmPromotion(
+  task: ContentOptimizeTask,
+  promotion: ContentPromotionSuggestion
+): Promise<void> {
+  contentTaskError.value = ''
+  const answers = buildPromotionAnswers(promotion, promotionDraftsFor(task, promotion))
+  try {
+    await window.api.contentOptimize.confirmPromotion(task.id, promotion.id, answers)
+    delete promotionDrafts.value[task.id]
+    // 提升后重新诊断会替换诊断结果（含常规追问）——一并清空回答草稿
+    delete answerDrafts.value[task.id]
+    await loadContentTasks()
+  } catch (err) {
+    contentTaskError.value = String(err)
+  }
+}
+
+/** 暂不提升（本地隐藏本次建议；honors 保留，可下次任务再提升）。 */
+function skipPromotion(task: ContentOptimizeTask, promotion: ContentPromotionSuggestion): void {
+  const skipped = skippedPromotions.value[task.id] ?? []
+  skippedPromotions.value[task.id] = [...skipped, promotion.id]
 }
 
 // ---- 逐项目确认区（T06/#96：按项目接受/拒绝 + 推断-待确认勾选 + 整合汇总） ----
@@ -1136,6 +1225,44 @@ onMounted(() => {
               </div>
             </div>
           </template>
+        </div>
+        <!-- #98/T08 大赛提升建议区（awaiting_answers：确认提升 + 缺失字段追问，优先于常规问答） -->
+        <div
+          v-if="t.status === 'awaiting_answers' && t.diagnosis && visiblePromotions(t).length > 0"
+          class="opt-promotions"
+        >
+          <div class="opt-diag-heading">大赛提升建议</div>
+          <div v-for="promotion in visiblePromotions(t)" :key="promotion.id" class="opt-promotion-card">
+            <div class="opt-promotion-title">{{ promotion.honorName }}</div>
+            <p v-if="promotion.evidence" class="opt-diag-line">原文证据：{{ promotion.evidence }}</p>
+            <div
+              v-for="field in promotion.missingFields"
+              :key="field"
+              class="opt-ans-question"
+            >
+              <div class="opt-ans-q-head">
+                <span class="opt-diag-rule-id">{{ PROMOTION_MISSING_FIELD_LABELS[field] }}</span>
+                <span class="opt-ans-q-text">{{ promotionQuestionText(promotion, field) }}</span>
+              </div>
+              <textarea
+                class="opt-ans-input"
+                :value="promotionDraftsFor(t, promotion)[promotionQuestionKey(promotion, field)]?.text ?? ''"
+                placeholder="自由输入…"
+                @input="onPromotionFieldInput(t, promotion, field, $event)"
+              ></textarea>
+              <div class="opt-ans-actions">
+                <button type="button" @click="onPromotionAction(t, promotion, field, 'confirm')">{{ ANSWER_ACTION_LABELS.confirm }}</button>
+                <button type="button" @click="onPromotionAction(t, promotion, field, 'edit')">{{ ANSWER_ACTION_LABELS.edit }}</button>
+                <button type="button" @click="onPromotionAction(t, promotion, field, 'deny')">{{ ANSWER_ACTION_LABELS.deny }}</button>
+                <button type="button" @click="onPromotionAction(t, promotion, field, 'cannot')">{{ ANSWER_ACTION_LABELS.cannot }}</button>
+              </div>
+            </div>
+            <div class="opt-promotion-actions">
+              <button class="btn primary" type="button" @click="confirmPromotion(t, promotion)">确认提升为项目</button>
+              <button class="btn ghost" type="button" @click="skipPromotion(t, promotion)">暂不提升</button>
+            </div>
+          </div>
+          <p class="opt-promotion-note">提升后项目将按项目规则参与诊断与改写；「暂不提升」保留荣誉原文。</p>
         </div>
         <!-- #94/T04 追问批量回答表单（awaiting_answers：分组/证据/候选/四选一/自由输入/跳过） -->
         <div
@@ -2444,6 +2571,32 @@ onMounted(() => {
   padding: 1px 5px;
 }
 
+/* #98/T08 大赛提升建议区 */
+.opt-promotions {
+  margin-top: 8px;
+  border-top: 1px dashed var(--border, rgba(128, 128, 128, 0.3));
+  padding-top: 8px;
+}
+.opt-promotion-card {
+  border: 1px solid var(--border, rgba(128, 128, 128, 0.3));
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+}
+.opt-promotion-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.opt-promotion-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.opt-promotion-note {
+  font-size: 12px;
+  opacity: 0.75;
+  margin: 4px 0 8px;
+}
 /* #94/T04 追问批量回答表单 */
 .opt-answers {
   margin-top: 8px;

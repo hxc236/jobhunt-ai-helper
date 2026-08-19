@@ -101,7 +101,8 @@ describe('buildRewritePrompt（#95 逐项目改写提示词）', () => {
         diagnosis: {
           rules: [],
           projects: [{ projectId: 'proj-1', verdict: 'rewrite' }],
-          questions: [{ id: 'q1', projectId: 'proj-1', field: '难点', question: '最大的技术难点？', evidence: 'e', candidates: ['分布式锁'] }]
+          questions: [{ id: 'q1', projectId: 'proj-1', field: '难点', question: '最大的技术难点？', evidence: 'e', candidates: ['分布式锁'] }],
+          promotions: []
         },
         answers: { q1: '[不属实]' }
       })
@@ -271,7 +272,8 @@ describe('parseRewrite（#95 解析 + 事实溯源 + 一致性校验）', () => 
       diagnosis: {
         rules: [],
         projects: [{ projectId: 'proj-1', verdict: 'rewrite' }],
-        questions: [{ id: 'q1', projectId: 'proj-1', field: '难点', question: '最大的技术难点？', evidence: 'e', candidates: ['分布式锁保证一致性'] }]
+        questions: [{ id: 'q1', projectId: 'proj-1', field: '难点', question: '最大的技术难点？', evidence: 'e', candidates: ['分布式锁保证一致性'] }],
+        promotions: []
       },
       answers: { q1: '[不属实]' }
     })
@@ -293,7 +295,8 @@ describe('parseRewrite（#95 解析 + 事实溯源 + 一致性校验）', () => 
       diagnosis: {
         rules: [],
         projects: [{ projectId: 'proj-1', verdict: 'rewrite' }],
-        questions: [{ id: 'q1', projectId: 'proj-1', field: '结果', question: '结果？', evidence: 'e', candidates: ['上线后转化率提升 20%'] }]
+        questions: [{ id: 'q1', projectId: 'proj-1', field: '结果', question: '结果？', evidence: 'e', candidates: ['上线后转化率提升 20%'] }],
+        promotions: []
       },
       answers: { q1: '[无法补充]' }
     })
@@ -315,7 +318,8 @@ describe('parseRewrite（#95 解析 + 事实溯源 + 一致性校验）', () => 
       diagnosis: {
         rules: [],
         projects: [{ projectId: 'proj-1', verdict: 'rewrite' }],
-        questions: [{ id: 'q1', projectId: 'proj-1', field: '难点', question: '最大的技术难点？', evidence: 'e', candidates: ['Spring Boot 实现'] }]
+        questions: [{ id: 'q1', projectId: 'proj-1', field: '难点', question: '最大的技术难点？', evidence: 'e', candidates: ['Spring Boot 实现'] }],
+        promotions: []
       },
       answers: { q1: '[不属实]' }
     })

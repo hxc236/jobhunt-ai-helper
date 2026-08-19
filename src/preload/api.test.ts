@@ -390,6 +390,20 @@ describe('createRendererApi（渲染侧 api 客户端）', () => {
     ])
   })
 
+  it('contentOptimize.confirmPromotion 映射到 content-optimize:confirm-promotion 并传 { taskId, promotionId, answers }（T08）', async () => {
+    const fake = makeFakeBridge()
+    const api = createRendererApi(fake.bridge)
+    await api.contentOptimize.confirmPromotion('cot-1', 'promo-0', {
+      'promotion-promo-0-startDate': '2023-04'
+    })
+    expect(fake.invocations).toEqual([
+      {
+        channel: IpcChannel.ContentOptimizeConfirmPromotion,
+        args: [{ taskId: 'cot-1', promotionId: 'promo-0', answers: { 'promotion-promo-0-startDate': '2023-04' } }]
+      }
+    ])
+  })
+
   it('contentOptimize.void 映射到 content-optimize:void 并传 { taskId }', async () => {
     const fake = makeFakeBridge()
     const api = createRendererApi(fake.bridge)
