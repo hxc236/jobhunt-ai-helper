@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { Db } from '../db/migrations'
 import type { AgentService } from './agent'
 import type { ResumeService } from './resume'
+import { generateProjectId } from './resume-content-backfill'
 import {
   CONTENT_CONFIRMED_NO_CHANGES_LABEL,
   CONTENT_STATUS_LABELS,
@@ -10,9 +11,17 @@ import {
   type ContentOptimizeStatus,
   type ContentOptimizeTask,
   type ContentProjectDecision,
+  type ContentPromotionMissingField,
+  type ContentPromotionSuggestion,
   type ContentRewrite
 } from '../../shared/types'
+import type { Resume, ResumeProject } from '../../shared/types/resume'
 import { contentQuestionKeys } from '../../shared/content-answers'
+import {
+  isPromotionAnswerSentinel,
+  promotionQuestionKey,
+  promotionQuestionKeys
+} from '../../shared/content-promotions'
 import {
   buildFinalResume,
   buildIntegrationSummary,
@@ -68,6 +77,7 @@ export class ContentOptimizeError extends Error {
       | 'bad-json'
       | 'invalid-state'
       | 'invalid-answers'
+      | 'invalid-promotion'
       | 'no-rewrite'
       | 'invalid-decisions'
       | 'inferred-pending',
@@ -317,6 +327,68 @@ export class ContentOptimizeService {
       resumeTo: 'rewriting'
     })
     void this.queue.enqueue(() => this.runRewrite(taskId))
+    return next
+  }
+
+  /**
+   * 确认大赛提升为项目（T08/#98）：honors 中大赛条目 → 新项目（缺失字段由追问回答补齐）。
+   *
+   * 语义：
+   * - 仅 awaiting_answers 可确认（诊断已产出提升建议）；
+   * - 回答键必须是该提升建议的缺失字段键（promotion-<id>-<字段>），哨兵值
+   *   （不属实/无法补充）不写入项目字段，键缺失 = 该字段不填；
+   * - 应用提升：honors 移除该条目 → projects 追加新项目（稳定 id，字段来自回答），
+   *   更新基准简历并持久化；提升回答并入任务 answers（改写轮可引用已确认事实）；
+   * - 重新跑诊断轮：提升后的项目以真实项目 id 参与规则诊断（R1/R4 判定、追问、改写）。
+   *   注意：重新诊断会替换诊断结果（含常规追问）——提升确认应在表单顶部优先完成。
+   */
+  confirmPromotion(taskId: string, promotionId: string, answers: Record<string, string>): ContentOptimizeTask {
+    const task = this.requireTask(taskId)
+    if (task.status !== 'awaiting_answers') {
+      throw new ContentOptimizeError('invalid-state', `当前状态不可确认提升：${task.status}`)
+    }
+    const promotion = (task.diagnosis?.promotions ?? []).find((p) => p.id === promotionId)
+    if (promotion === undefined) {
+      throw new ContentOptimizeError('invalid-promotion', `提升建议不存在：${promotionId}`)
+    }
+    // 回答键校验：只接受该建议缺失字段的追问键；值非空（哨兵允许）
+    const known = new Set(promotionQuestionKeys(promotion))
+    const unknown = Object.keys(answers).filter((key) => !known.has(key))
+    if (unknown.length > 0) {
+      throw new ContentOptimizeError('invalid-answers', `包含未知回答键：${unknown.join(', ')}`)
+    }
+    const emptyValues = Object.entries(answers)
+      .filter(([, value]) => value.trim() === '')
+      .map(([key]) => key)
+    if (emptyValues.length > 0) {
+      throw new ContentOptimizeError('invalid-answers', `包含空回答值：${emptyValues.join(', ')}`)
+    }
+    const resume = this.resumes.get(task.resumeId)
+    if (resume === undefined) {
+      throw new ContentOptimizeError('resume-not-found', `简历不存在：${task.resumeId}`)
+    }
+    const honors = resume.honors ?? []
+    const honor = honors[promotion.honorIndex]
+    if (honor === undefined) {
+      throw new ContentOptimizeError('invalid-promotion', `荣誉条目不存在：honors[${promotion.honorIndex}]`)
+    }
+    // 应用提升：honors 移除该条目，projects 追加新项目（字段由回答补齐，哨兵不写入）
+    const project = buildPromotedProject(promotion, answers)
+    const nextResume: Resume = {
+      ...resume,
+      honors: honors.filter((_, index) => index !== promotion.honorIndex),
+      projects: [...(resume.projects ?? []), project]
+    }
+    this.resumes.update(task.resumeId, nextResume)
+    // 提升回答并入任务 answers（改写轮可引用）；随后重新诊断（提升项目参与规则判定）
+    const mergedAnswers = { ...(task.answers ?? {}), ...answers }
+    const next = this.mutate(task, {
+      answers: mergedAnswers,
+      status: 'diagnosing',
+      progress: '提升后重新诊断…',
+      resumeTo: 'diagnosing'
+    })
+    void this.queue.enqueue(() => this.runDiagnosis(taskId))
     return next
   }
 
@@ -615,16 +687,20 @@ export class ContentOptimizeService {
     }
   }
 
-  /** 诊断完成分派：有追问 → awaiting_answers；有改写 → rewriting；全部保持 → 无需修改。 */
+  /** 诊断完成分派：有追问或大赛提升建议 → awaiting_answers；有改写 → rewriting；全部保持 → 无需修改。 */
   private completeDiagnosis(taskId: string, diagnosis: ContentDiagnosis): void {
     const task = this.requireTask(taskId)
+    const hasPromotions = diagnosis.promotions.length > 0
     const hasQuestions = diagnosis.questions.length > 0
     const needsRewrite = diagnosis.projects.some((p) => p.verdict === 'rewrite')
-    if (hasQuestions) {
+    if (hasQuestions || hasPromotions) {
+      const parts: string[] = []
+      if (hasPromotions) parts.push(`${diagnosis.promotions.length} 项大赛提升建议`)
+      if (hasQuestions) parts.push(`${diagnosis.questions.length} 项追问`)
       this.mutate(task, {
         diagnosis,
         status: 'awaiting_answers',
-        progress: `等待回答（${diagnosis.questions.length} 项追问）`,
+        progress: `等待回答（${parts.join('、')}）`,
         resumeTo: 'awaiting_answers'
       })
       return
@@ -811,6 +887,43 @@ const INSERT = `
 
 function isRoundPhase(status: ContentOptimizeStatus): status is 'diagnosing' | 'rewriting' {
   return status === 'diagnosing' || status === 'rewriting'
+}
+
+/**
+ * 提升为项目（T08/#98）：由提升建议 + 用户回答构建新项目。
+ * - 项目名 = 大赛名（honorName，来自荣誉原文）；稳定 id 由 backfill 同源生成；
+ * - 缺失字段（时间/技术栈/描述）由回答补齐；哨兵（不属实/无法补充）与空回答不写入；
+ * - 技术栈回答按常见分隔符拆分（,，、;；/），未答不填。
+ */
+function buildPromotedProject(
+  promotion: ContentPromotionSuggestion,
+  answers: Record<string, string>
+): ResumeProject {
+  const fieldValue = (field: ContentPromotionMissingField): string | undefined => {
+    const raw = answers[promotionQuestionKey(promotion, field)]
+    if (raw === undefined || isPromotionAnswerSentinel(raw)) return undefined
+    const trimmed = raw.trim()
+    return trimmed === '' ? undefined : trimmed
+  }
+  const project: ResumeProject = { id: generateProjectId(), name: promotion.honorName }
+  const startDate = fieldValue('startDate')
+  if (startDate !== undefined) project.startDate = startDate
+  const endDate = fieldValue('endDate')
+  if (endDate !== undefined) project.endDate = endDate
+  const techStack = fieldValue('techStack')
+  if (techStack !== undefined) project.techStack = splitList(techStack)
+  const description = fieldValue('description')
+  if (description !== undefined) project.description = description
+  return project
+}
+
+/** 技术栈回答拆分（逗号/顿号/分号/斜杠分隔，去空与重复）。 */
+function splitList(value: string): string[] {
+  const parts = value
+    .split(/[,，、;；/]+/)
+    .map((part) => part.trim())
+    .filter((part) => part !== '')
+  return [...new Set(parts)]
 }
 
 /** 从 resume_to（或状态推断）取阶段轮目标。 */

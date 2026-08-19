@@ -177,7 +177,8 @@ describe('parseDiagnosis（#93 规则判定解析与一致性推导）', () => {
     expect(d).toEqual<ContentDiagnosis>({
       rules: [],
       projects: [{ projectId: 'proj-1', verdict: 'keep' }],
-      questions: []
+      questions: [],
+      promotions: []
     })
   })
 
@@ -265,5 +266,65 @@ describe('deriveProjectVerdict（#93 一致性推导纯函数）', () => {
 
   it('无该项目规则 → keep（调用方再决定是否用 LLM 判定兜底）', () => {
     expect(deriveProjectVerdict('p1', [])).toBe('keep')
+  })
+})
+
+describe('parseDiagnosis 大赛提升建议（T08/#98）', () => {
+  it('解析合法 promotions（缺失字段子集 + 稳定 id + honorIndex）', () => {
+    const reply = JSON.stringify({
+      rules: [],
+      projects: [],
+      questions: [],
+      promotions: [
+        { id: 'promo-0', honorIndex: 0, honorName: '全国大学生数学建模竞赛省一等奖', evidence: '原文：竞赛省一等奖', missingFields: ['startDate', 'techStack', 'description'] }
+      ]
+    })
+    const d = parseDiagnosis(reply)
+    expect(d.promotions).toEqual([
+      {
+        id: 'promo-0',
+        honorIndex: 0,
+        honorName: '全国大学生数学建模竞赛省一等奖',
+        evidence: '原文：竞赛省一等奖',
+        missingFields: ['startDate', 'techStack', 'description']
+      }
+    ])
+  })
+
+  it('缺失 id 时按 promo-<honorIndex> 兜底；缺失字段缺省为空数组', () => {
+    const d = parseDiagnosis(
+      JSON.stringify({ rules: [], projects: [], questions: [], promotions: [{ honorIndex: 2, honorName: '挑战杯', evidence: 'e' }] })
+    )
+    expect(d.promotions).toEqual([{ id: 'promo-2', honorIndex: 2, honorName: '挑战杯', evidence: 'e', missingFields: [] }])
+  })
+
+  it('非法条目跳过：honorIndex 非数字、missingFields 含非法字段', () => {
+    const d = parseDiagnosis(
+      JSON.stringify({
+        rules: [],
+        projects: [],
+        questions: [],
+        promotions: [
+          { id: 'bad', honorIndex: 'x', honorName: '非法', evidence: 'e' },
+          { id: 'ok', honorIndex: 1, honorName: '合法', evidence: 'e', missingFields: ['startDate', 'illegal', 'startDate'] }
+        ]
+      })
+    )
+    // 非法条目被跳过；合法条目 missingFields 过滤非法 + 去重
+    expect(d.promotions).toEqual([{ id: 'ok', honorIndex: 1, honorName: '合法', evidence: 'e', missingFields: ['startDate'] }])
+  })
+
+  it('非大赛荣誉（无 promotions 字段/空数组）→ 空数组，不破坏空诊断语义', () => {
+    const d = parseDiagnosis(JSON.stringify({ rules: [], projects: [{ projectId: 'p1', verdict: 'keep' }], questions: [] }))
+    expect(d.promotions).toEqual([])
+    expect(d.projects).toEqual([{ projectId: 'p1', verdict: 'keep' }])
+  })
+
+  it('提示词包含大赛提升契约（honorIndex/missingFields/非大赛不输出）', () => {
+    const prompt = buildDiagnosisPrompt({ meta: { title: 'x' }, basics: { name: 'n' }, education: [] })
+    expect(prompt).toContain('promotions')
+    expect(prompt).toContain('honorIndex')
+    expect(prompt).toContain('missingFields')
+    expect(prompt).toContain('非大赛荣誉')
   })
 })

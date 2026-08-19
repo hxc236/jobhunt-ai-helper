@@ -90,6 +90,8 @@ export function createRendererApi(bridge: IpcBridge): Omit<RendererApi, 'getPath
       get: (taskId) => bridge.invoke(IpcChannel.ContentOptimizeGet, { taskId }),
       submitAnswers: (taskId, answers) =>
         bridge.invoke(IpcChannel.ContentOptimizeSubmitAnswers, { taskId, answers }),
+      confirmPromotion: (taskId, promotionId, answers) =>
+        bridge.invoke(IpcChannel.ContentOptimizeConfirmPromotion, { taskId, promotionId, answers }),
       setReview: (taskId, decisions, inferredConfirmed) =>
         bridge.invoke(IpcChannel.ContentOptimizeSetReview, {
           taskId,

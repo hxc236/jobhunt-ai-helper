@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { AgentService } from './agent'
 import { FakeAgentProvider } from './fake-agent-provider'
-import { createContentOptimizeFakeProvider, extractResumeFromPrompt } from './e2e-fake-agent'
+import { createContentOptimizeFakeProvider, extractResumeFromPrompt, findCompetitionHonorIndex } from './e2e-fake-agent'
 
 describe('E2E 假 agent（#90/T02：dev 模式开关）', () => {
   it('从诊断提示词提取简历 JSON（简历 JSON：标记之后）', () => {
@@ -119,5 +119,61 @@ describe('E2E 假 agent（#90/T02：dev 模式开关）', () => {
     } finally {
       session.dispose()
     }
+  })
+})
+
+describe('E2E 假 agent 大赛提升场景（T08/#98）', () => {
+  const resumeWithHonors = {
+    basics: { name: '张伟' },
+    projects: [{ id: 'proj-1', name: '平台' }],
+    honors: ['全国大学生数学建模竞赛省一等奖', '校三好学生']
+  }
+
+  it('promotion 场景：honors 含大赛 → 诊断返回提升建议（honorIndex/缺失字段）', async () => {
+    const provider = createContentOptimizeFakeProvider({ scenario: 'promotion' })
+    const agent = new AgentService(provider)
+    const session = await agent.createSession('content_optimize')
+    try {
+      const reply = await session.prompt(
+        ['[内容优化 1/2：规则诊断]', '简历 JSON：', JSON.stringify(resumeWithHonors)].join('\n')
+      )
+      const parsed = JSON.parse(reply) as { promotions: Array<{ id: string; honorIndex: number; honorName: string; missingFields: string[] }> }
+      expect(parsed.promotions).toHaveLength(1)
+      expect(parsed.promotions[0]!.honorIndex).toBe(0)
+      expect(parsed.promotions[0]!.honorName).toBe('全国大学生数学建模竞赛省一等奖')
+      expect(parsed.promotions[0]!.missingFields).toEqual(['startDate', 'techStack', 'description'])
+    } finally {
+      session.dispose()
+    }
+  })
+
+  it('promotion 场景：honors 已无大赛（提升完成）→ 全部保持空诊断（promotions 空）', async () => {
+    const provider = createContentOptimizeFakeProvider({ scenario: 'promotion' })
+    const agent = new AgentService(provider)
+    const session = await agent.createSession('content_optimize')
+    try {
+      const reply = await session.prompt(
+        [
+          '[内容优化 1/2：规则诊断]',
+          '简历 JSON：',
+          JSON.stringify({
+            basics: { name: '张伟' },
+            projects: [{ id: 'proj-1', name: '平台' }, { id: 'proj-2', name: '全国大学生数学建模竞赛省一等奖' }],
+            honors: ['校三好学生']
+          })
+        ].join('\n')
+      )
+      const parsed = JSON.parse(reply) as { projects: unknown[]; promotions: unknown[] }
+      expect(parsed.promotions).toEqual([])
+      expect(parsed.projects).toHaveLength(2)
+    } finally {
+      session.dispose()
+    }
+  })
+
+  it('findCompetitionHonorIndex：识别大赛条目下标；无大赛返回 -1', () => {
+    expect(findCompetitionHonorIndex(['校三好学生', '全国大学生数学建模竞赛省一等奖'])).toBe(1)
+    expect(findCompetitionHonorIndex(['校三好学生', '优秀学生干部'])).toBe(-1)
+    expect(findCompetitionHonorIndex(undefined)).toBe(-1)
   })
 })

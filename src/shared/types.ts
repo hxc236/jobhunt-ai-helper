@@ -631,11 +631,30 @@ export interface ContentQuestion {
   candidates: string[]
 }
 
-/** 诊断输出（规则判定 + 项目判定 + 追问问题）。 */
+/** 大赛/竞赛经历提升为项目时可能缺失、需通过追问补齐的字段（T08/#98）。 */
+export type ContentPromotionMissingField = 'startDate' | 'endDate' | 'techStack' | 'description'
+
+/** 大赛经历提升为项目的建议（T08/#98：诊断引擎识别 honors 中的大赛/竞赛条目）。 */
+export interface ContentPromotionSuggestion {
+  /** 稳定键（追问草稿/确认提升引用；解析缺省 promo-<honorIndex>）。 */
+  id: string
+  /** honors 数组下标（作用对象）。 */
+  honorIndex: number
+  /** 大赛名称（来自荣誉原文）。 */
+  honorName: string
+  /** 原文证据。 */
+  evidence: string
+  /** 缺失字段（时间/技术栈/描述）——经追问补齐后提升为项目。 */
+  missingFields: ContentPromotionMissingField[]
+}
+
+/** 诊断输出（规则判定 + 项目判定 + 追问问题 + 大赛提升建议）。 */
 export interface ContentDiagnosis {
   rules: ContentRuleVerdict[]
   projects: Array<{ projectId: string; verdict: ContentProjectVerdict }>
   questions: ContentQuestion[]
+  /** 大赛提升为项目的建议（T08/#98；无大赛时为空数组）。 */
+  promotions: ContentPromotionSuggestion[]
 }
 
 /** 逐处改动说明（含来源，防幻觉依据）。 */

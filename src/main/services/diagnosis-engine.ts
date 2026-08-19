@@ -2,10 +2,15 @@ import type { Resume } from '../../shared/types/resume'
 import type {
   ContentDiagnosis,
   ContentProjectVerdict,
+  ContentPromotionSuggestion,
   ContentRuleStatus,
   ContentRuleVerdict
 } from '../../shared/types'
-import { CONTENT_PROJECT_TARGET_PREFIX, CONTENT_RULE_NAMES } from '../../shared/types'
+import {
+  CONTENT_PROJECT_TARGET_PREFIX,
+  CONTENT_RULE_NAMES
+} from '../../shared/types'
+import { isPromotionMissingField } from '../../shared/content-promotions'
 import { extractJson } from './optimize'
 
 /**
@@ -30,6 +35,10 @@ import { extractJson } from './optimize'
  * LLM 返回的项目判定仅在该项目没有任何规则条目时兜底采用。
  *
  * 边界：不做岗位相关性判断；不输出总分/等级。
+ *
+ * 大赛提升（T08/#98）：honors 中像大赛/竞赛的条目（含 大赛/竞赛/挑战赛/比赛/杯/赛 等字样
+ * 或描述为参赛获奖）可提升为项目——诊断输出 promotions 建议（honorIndex/honorName/evidence/缺失字段），
+ * 由用户在追问环节确认并补齐缺失字段后提升为项目，再按项目规则参与诊断与改写。
  */
 
 /** 规则矩阵定义（提示词与 UI 展示共用规则名，单一来源 CONTENT_RULE_NAMES）。 */
@@ -70,6 +79,10 @@ export function buildDiagnosisPrompt(resume: Resume): string {
     '每维度状态：pass（通过）/ improve（需改进）/ insufficient（信息不足）/ na（不适用）。',
     '每项目判定：keep（保持）/ rewrite（可直接改写）/ needs-info（需要补充信息）。',
     '需要用户补充的事实写入 questions（按项目分组：简介/难点/个人工作量/结果/技术栈，含原文证据与候选）。',
+    'honors 中的大赛/竞赛经历可提升为项目（#90 业务①规则，T08）：',
+    '  仅当 honors 条目明显是大赛/竞赛（含「大赛/竞赛/挑战赛/比赛/杯/赛」等字样，或描述为参赛获奖）时输出 promotions 建议；',
+    '  每条建议含 honorIndex（honors 数组下标）、honorName、evidence（原文）、missingFields（缺失字段子集：startDate/endDate/techStack/description）；',
+    '  非大赛荣誉（奖学金/荣誉称号等）不输出提升建议。',
     '只输出 JSON，不要多余文字：',
     JSON.stringify({
       rules: [
@@ -86,6 +99,9 @@ export function buildDiagnosisPrompt(resume: Resume): string {
       projects: [{ projectId: '<项目id>', verdict: 'keep|rewrite|needs-info' }],
       questions: [
         { id: '<可选稳定键，如 q1；省略时按序号 q0/q1/…>', projectId: '<项目id>', field: '简介|难点|个人工作量|结果|技术栈', question: '追问问题', evidence: '原文证据', candidates: ['候选1', '候选2'] }
+      ],
+      promotions: [
+        { id: '<稳定键，如 promo-0>', honorIndex: 0, honorName: '大赛名称', evidence: '原文证据', missingFields: ['startDate', 'endDate', 'techStack', 'description'] }
       ]
     }),
     '',
@@ -128,7 +144,32 @@ export function parseDiagnosis(reply: string): ContentDiagnosis {
           }
         })
       : deriveProjectsFromRules(rules)
-  return { rules, projects, questions }
+  // 大赛提升建议（T08/#98）：非法条目（下标非数字/缺失字段非法）跳过，其余保留。
+  const promotions = Array.isArray(parsed.promotions)
+    ? parsed.promotions
+        .filter(isRecord)
+        .map(parsePromotion)
+        .filter((p): p is ContentPromotionSuggestion => p !== null)
+    : []
+  return { rules, projects, questions, promotions }
+}
+
+/** 解析单条大赛提升建议；字段缺失/下标非法返回 null（跳过）。 */
+function parsePromotion(raw: Record<string, unknown>): ContentPromotionSuggestion | null {
+  const honorIndex = typeof raw.honorIndex === 'number' ? raw.honorIndex : Number(raw.honorIndex)
+  if (!Number.isInteger(honorIndex) || honorIndex < 0) return null
+  const missingFields = Array.isArray(raw.missingFields)
+    ? raw.missingFields
+        .filter(isPromotionMissingField)
+        .filter((field, index, all) => all.indexOf(field) === index)
+    : []
+  return {
+    id: raw.id !== undefined && raw.id !== null && String(raw.id) !== '' ? String(raw.id) : `promo-${honorIndex}`,
+    honorIndex,
+    honorName: String(raw.honorName ?? ''),
+    evidence: String(raw.evidence ?? ''),
+    missingFields
+  }
 }
 
 /** 项目级规则 → 按项目分组推导判定（LLM 未返回 projects 数组时的兜底）。 */
