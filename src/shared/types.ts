@@ -576,6 +576,21 @@ export const CONTENT_STATUS_LABELS: Record<ContentOptimizeStatus, string> = {
   cancelled: '已取消'
 }
 
+/** 项目级规则作用对象前缀（target=`project:<项目id>`；T03/#93：引擎/视图共用，避免字符串约定漂移）。 */
+export const CONTENT_PROJECT_TARGET_PREFIX = 'project:'
+
+/** 内容优化规则中文名（T03/#93：诊断提示词与任务卡片判定展示共用，单一来源）。 */
+export const CONTENT_RULE_NAMES: Record<string, string> = {
+  R1: '含金量：难点+解决行动',
+  R2: '全局可读性：标点/结构化拆解/突出重点/可读性',
+  R3: '实习前置（无条件相对顺序）',
+  'R4-简介': '四要素：简介（问题/场景/目标用户）',
+  'R4-难点': '四要素：难点（业务/技术，含具体目标与约束）',
+  'R4-工作量': '四要素：个人工作量（本人边界/关键行动/方案选择/可归因成果）',
+  'R4-结果': '四要素：结果（交付/验证/证据等级）',
+  'R4-技术栈': '四要素：技术栈（真实）'
+}
+
 /** 规则判定状态（每维度：通过 / 需改进 / 信息不足 / 不适用）。 */
 export type ContentRuleStatus = 'pass' | 'improve' | 'insufficient' | 'na'
 

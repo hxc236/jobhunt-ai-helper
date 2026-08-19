@@ -11,6 +11,10 @@ import {
 } from '../../shared/types'
 import type { Resume } from '../../shared/types/resume'
 import { extractJson } from './optimize'
+import {
+  buildDiagnosisPrompt as buildRulesDiagnosisPrompt,
+  parseDiagnosis as parseDiagnosisReply
+} from './diagnosis-engine'
 import { assertValidResume } from './resume-schema'
 
 /**
@@ -570,30 +574,12 @@ export class ContentOptimizeService {
     this.emit?.(task)
   }
 
-  // ---- 提示词与解析（T02 骨架；T03 替换诊断提示词，T05 替换改写轮） ----
+  // ---- 提示词与解析（T02 骨架；T03 规则诊断引擎，T05 替换改写轮） ----
 
-  /** 诊断轮提示词：结构对齐 #90 规则判定（规则 ID/作用对象/状态/证据/问题/建议/来源）。 */
+  /** 诊断轮提示词：委托 diagnosis-engine 完整规则矩阵（R1–R4+结果，含质量维度定义）。 */
   private buildDiagnosisPrompt(task: ContentOptimizeTask): string {
     const resume = this.resumes.get(task.resumeId)
-    return [
-      '[内容优化 1/2：规则诊断] 你是一名简历内容优化专家。以下为一份应届生中文简历（无 JD、无岗位方向）。',
-      '按预设规则逐条对照：',
-      'R1 有效内容（项目写清难点与解决行动）；R2 标点/结构化拆解/突出重点/可读性（全局）；R3 实习经历前置（无条件相对顺序）；R4 项目四要素（简介/难点/个人工作量/技术栈）+ 结果检查。',
-      '每个维度判定为 pass（通过）/ improve（需改进）/ insufficient（信息不足）/ na（不适用）；每个项目判定为 keep（保持）/ rewrite（可直接改写）/ needs-info（需要补充信息）。',
-      '需要用户补充的事实写入 questions（按项目分组：简介/难点/个人工作量/结果/技术栈，含原文证据与候选）。',
-      '不输出总分/等级。只输出 JSON，不要多余文字：',
-      JSON.stringify({
-        rules: [
-          { ruleId: 'R1', target: 'project:<projectId>', status: 'pass|improve|insufficient|na', evidence: '原文证据', issue: '问题说明', suggestion: '建议动作', factSource: 'original|user-answer|inferred' }
-        ],
-        projects: [{ projectId: '<projectId>', verdict: 'keep|rewrite|needs-info' }],
-        questions: [
-          { projectId: '<projectId>', field: '简介|难点|个人工作量|结果|技术栈', question: '追问问题', evidence: '原文证据', candidates: ['候选1', '候选2'] }
-        ]
-      }),
-      '',
-      `简历 JSON：\n${JSON.stringify(resume)}`
-    ].join('\n')
+    return buildRulesDiagnosisPrompt(resume!)
   }
 
   /** 改写轮提示词：T05 逐项目改写；T02 保留骨架。 */
@@ -608,37 +594,17 @@ export class ContentOptimizeService {
     ].join('\n')
   }
 
-  /** 解析诊断轮输出：JSON 结构校验（T03 起扩展规则字段）。 */
+  /** 解析诊断轮输出：委托 diagnosis-engine（JSON 结构校验 + 项目判定一致性推导）。 */
   private parseDiagnosis(reply: string): ContentDiagnosis {
-    const parsed = extractJson(reply)
-    if (!isRecord(parsed)) throw new ContentOptimizeError('bad-json', '诊断输出结构非法')
-    const projects = Array.isArray(parsed.projects)
-      ? parsed.projects.filter(isRecord).map((p) => ({
-          projectId: String(p.projectId ?? ''),
-          verdict: isVerdict(p.verdict) ? p.verdict : 'keep'
-        }))
-      : []
-    const questions = Array.isArray(parsed.questions)
-      ? parsed.questions.filter(isRecord).map((q) => ({
-          projectId: String(q.projectId ?? ''),
-          field: String(q.field ?? ''),
-          question: String(q.question ?? ''),
-          evidence: String(q.evidence ?? ''),
-          candidates: Array.isArray(q.candidates) ? q.candidates.map((c) => String(c)) : []
-        }))
-      : []
-    const rules = Array.isArray(parsed.rules)
-      ? parsed.rules.filter(isRecord).map((r) => ({
-          ruleId: String(r.ruleId ?? ''),
-          target: String(r.target ?? ''),
-          status: isRuleStatus(r.status) ? r.status : ('na' as const),
-          evidence: String(r.evidence ?? ''),
-          issue: String(r.issue ?? ''),
-          suggestion: String(r.suggestion ?? ''),
-          factSource: isFactSource(r.factSource) ? r.factSource : ('original' as const)
-        }))
-      : []
-    return { rules, projects, questions }
+    try {
+      return parseDiagnosisReply(reply)
+    } catch (err) {
+      if (err instanceof ContentOptimizeError) throw err
+      throw new ContentOptimizeError(
+        'bad-json',
+        err instanceof Error ? err.message : '诊断输出结构非法'
+      )
+    }
   }
 
   /** 解析改写轮输出：JSON 结构 + resume 过 schema 校验。 */
@@ -689,18 +655,6 @@ function phaseFromResumeTo(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-function isVerdict(value: unknown): value is 'keep' | 'rewrite' | 'needs-info' {
-  return value === 'keep' || value === 'rewrite' || value === 'needs-info'
-}
-
-function isRuleStatus(value: unknown): value is 'pass' | 'improve' | 'insufficient' | 'na' {
-  return value === 'pass' || value === 'improve' || value === 'insufficient' || value === 'na'
-}
-
-function isFactSource(value: unknown): value is 'original' | 'user-answer' | 'inferred' {
-  return value === 'original' || value === 'user-answer' || value === 'inferred'
 }
 
 function isChangeSource(value: unknown): value is 'original' | 'user-answer' | 'inferred' {

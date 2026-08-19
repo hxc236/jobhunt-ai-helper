@@ -5,6 +5,7 @@ import type { ResumeDraft, ContentOptimizeTask } from '@shared/types'
 import { CONTENT_STATUS_LABELS } from '@shared/types'
 import { IpcEvent } from '@shared/protocol'
 import { defaultBaseTitle, emptyResumeForm, formToResume, issueSection, keepEmptyRows, resumeToForm, SKILL_CATEGORIES, type ResumeForm } from '../resume-form'
+import { FACT_SOURCE_LABELS, PROJECT_VERDICT_LABELS, RULE_STATUS_LABELS, ruleName } from '../content-diagnosis-view'
 import Modal from '../components/Modal.vue'
 import Resizer from '../components/Resizer.vue'
 import Icon from '../components/Icon.vue'
@@ -475,6 +476,13 @@ function contentResumeTitle(task: ContentOptimizeTask): string {
   return resume?.meta.title ?? '（简历已删除）'
 }
 
+/** 项目显示名（#93 任务卡片诊断区：projectId → 项目名，缺失回退 id）。 */
+function projectDisplayName(task: ContentOptimizeTask, projectId: string): string {
+  const resume = resumes.value.find((r) => r.meta.id === task.resumeId)
+  const project = resume?.projects?.find((p) => p.id === projectId)
+  return project?.name ?? projectId
+}
+
 async function loadContentTasks(): Promise<void> {
   try {
     contentTasks.value = await window.api.contentOptimize.list()
@@ -919,6 +927,38 @@ onMounted(() => {
         </div>
         <div class="opt-task-progress">{{ t.progress }}</div>
         <p v-if="t.error" class="opt-task-error">{{ t.error }}</p>
+        <!-- #93/T03 规则判定与项目判定展示（证据/问题/建议；R2 全局维度作用对象=global） -->
+        <div
+          v-if="t.diagnosis && (t.diagnosis.rules.length > 0 || t.diagnosis.projects.length > 0)"
+          class="opt-diagnosis"
+        >
+          <template v-if="t.diagnosis.projects.length > 0">
+            <div class="opt-diag-heading">项目判定</div>
+            <div class="opt-diag-projects">
+              <div v-for="p in t.diagnosis.projects" :key="p.projectId" class="opt-diag-project">
+                <span class="opt-diag-project-name" :title="p.projectId">{{ projectDisplayName(t, p.projectId) }}</span>
+                <Pill tone="ghost">{{ PROJECT_VERDICT_LABELS[p.verdict] }}</Pill>
+              </div>
+            </div>
+          </template>
+          <template v-if="t.diagnosis.rules.length > 0">
+            <div class="opt-diag-heading">规则判定</div>
+            <div class="opt-diag-rules">
+              <div v-for="(r, i) in t.diagnosis.rules" :key="`${r.ruleId}:${r.target}:${i}`" class="opt-diag-rule">
+                <div class="opt-diag-rule-head">
+                  <span class="opt-diag-rule-id">{{ r.ruleId }}</span>
+                  <span class="opt-diag-rule-name">{{ ruleName(r.ruleId) }}</span>
+                  <span class="opt-diag-rule-status" :class="`st-${r.status}`">{{ RULE_STATUS_LABELS[r.status] }}</span>
+                </div>
+                <p v-if="r.target" class="opt-diag-line">作用对象：{{ r.target }}</p>
+                <p v-if="r.evidence" class="opt-diag-line">原文证据：{{ r.evidence }}</p>
+                <p v-if="r.issue" class="opt-diag-line">问题：{{ r.issue }}</p>
+                <p v-if="r.suggestion" class="opt-diag-line">建议：{{ r.suggestion }}</p>
+                <p class="opt-diag-line">事实来源：{{ FACT_SOURCE_LABELS[r.factSource] }}</p>
+              </div>
+            </div>
+          </template>
+        </div>
         <div v-if="t.status === 'ready_for_review' && t.noChanges" class="opt-task-note">
           无需修改——确认后不创建新版本。
         </div>
@@ -1975,6 +2015,91 @@ onMounted(() => {
   font-size: 12px;
   color: #059669;
   margin-top: 4px;
+}
+
+/* #93/T03 规则判定与项目判定展示 */
+.opt-diagnosis {
+  margin-top: 8px;
+  border-top: 1px dashed var(--border, rgba(128, 128, 128, 0.3));
+  padding-top: 8px;
+}
+.opt-diag-heading {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.opt-diag-projects {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-bottom: 6px;
+}
+.opt-diag-project {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+}
+.opt-diag-project-name {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.opt-diag-rule {
+  padding: 6px 8px;
+  border: 1px solid rgba(128, 128, 128, 0.22);
+  border-radius: 6px;
+  margin-bottom: 6px;
+  background: rgba(128, 128, 128, 0.06);
+}
+.opt-diag-rule-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.opt-diag-rule-id {
+  font-size: 11px;
+  font-weight: 700;
+  color: #2563eb;
+  background: rgba(37, 99, 235, 0.1);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.opt-diag-rule-name {
+  font-size: 12px;
+  font-weight: 500;
+}
+.opt-diag-rule-status {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+.opt-diag-rule-status.st-pass {
+  color: #059669;
+  background: rgba(5, 150, 105, 0.1);
+}
+.opt-diag-rule-status.st-improve {
+  color: #d97706;
+  background: rgba(217, 119, 6, 0.12);
+}
+.opt-diag-rule-status.st-insufficient {
+  color: #dc2626;
+  background: rgba(220, 38, 38, 0.1);
+}
+.opt-diag-rule-status.st-na {
+  color: var(--muted);
+  background: rgba(128, 128, 128, 0.12);
+}
+.opt-diag-line {
+  font-size: 11.5px;
+  color: var(--muted);
+  margin: 3px 0 0;
+  word-break: break-word;
 }
 
 .opt-task-actions {
