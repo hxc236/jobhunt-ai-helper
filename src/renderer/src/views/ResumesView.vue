@@ -809,12 +809,19 @@ async function onToggleInferred(task: ContentOptimizeTask, changeId: string | un
   await persistReview(task)
 }
 
-/** 持久化确认决策/勾选（IPC set-review；失败提示但不阻塞本地草稿）。 */
+/** 持久化确认决策/勾选（IPC set-review；失败提示但不阻塞本地草稿）。
+ * 注意：草稿存于 Vue 响应式 ref，对象被 Proxy 包装——Electron contextBridge 结构化克隆
+ * 无法克隆 Proxy（"An object could not be cloned"），必须在发送前展平为普通对象/数组。 */
 async function persistReview(task: ContentOptimizeTask): Promise<void> {
   const draft = reviewDrafts.value[task.id]
   if (draft === undefined) return
   try {
-    await window.api.contentOptimize.setReview(task.id, draft.decisions, draft.inferredConfirmed)
+    // 展平响应式 Proxy → 普通对象/数组（值均为字符串，浅拷贝即安全）
+    await window.api.contentOptimize.setReview(
+      task.id,
+      { ...draft.decisions },
+      [...draft.inferredConfirmed]
+    )
   } catch (err) {
     contentTaskError.value = `保存确认决策失败：${String(err)}`
   }

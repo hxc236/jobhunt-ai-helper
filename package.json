@@ -20,6 +20,8 @@
     "e2e:content-optimize": "node scripts/e2e-run.mjs",
     "e2e:content-optimize:answers": "node scripts/e2e-run.mjs --answers",
     "e2e:content-optimize:promotion": "node scripts/e2e-run.mjs --promotion",
+    "e2e:content-optimize:full": "node scripts/e2e-run.mjs --full",
+    "e2e:content-optimize:real": "node scripts/e2e-run.mjs --real",
     "postinstall": "node node_modules/electron/install.js"
   },
   "dependencies": {

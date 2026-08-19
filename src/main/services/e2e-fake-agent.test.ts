@@ -110,6 +110,70 @@ describe('E2E 假 agent（#90/T02：dev 模式开关）', () => {
     }
   })
 
+  it('#99 全流程场景：诊断返回带稳定 id 的追问（needs-info + questions）', async () => {
+    const provider = createContentOptimizeFakeProvider({ scenario: 'full' })
+    const agent = new AgentService(provider)
+    const session = await agent.createSession('content_optimize')
+    try {
+      const reply = await session.prompt(
+        ['[内容优化 1/2：规则诊断]', '简历 JSON：', JSON.stringify({ projects: [{ id: 'proj-1', name: '平台', description: 'C2C 二手交易系统' }] })].join('\n')
+      )
+      const parsed = JSON.parse(reply) as {
+        projects: Array<{ projectId: string; verdict: string }>
+        questions: Array<{ id: string; projectId: string; field: string }>
+      }
+      expect(parsed.projects).toEqual([{ projectId: 'proj-1', verdict: 'needs-info' }])
+      expect(parsed.questions).toHaveLength(2)
+      expect(parsed.questions[0]).toMatchObject({ id: 'q1', projectId: 'proj-1', field: '难点' })
+    } finally {
+      session.dispose()
+    }
+  })
+
+  it('#99 全流程场景：改写轮返回含 inferred 改动的 ContentRewrite（驱动推断-待确认勾选门禁）', async () => {
+    const provider = createContentOptimizeFakeProvider({ scenario: 'full' })
+    const agent = new AgentService(provider)
+    const session = await agent.createSession('content_optimize')
+    try {
+      const reply = await session.prompt(
+        ['[内容优化 2/2：项目改写]', '简历 JSON：', JSON.stringify({ projects: [{ id: 'proj-1', name: '平台', description: 'C2C 二手交易系统' }] })].join('\n')
+      )
+      const parsed = JSON.parse(reply) as {
+        resume: { projects: Array<{ id: string; description: string; highlights?: string[] }> }
+        changes: Array<{ projectId: string; section: string; source: string; before: string; after: string }>
+      }
+      // 改写稿对项目做真实改动：description 融合回答 + 新增 inferred 要点
+      expect(parsed.resume.projects[0]?.description).toContain('高并发秒杀压测优化')
+      expect(parsed.resume.projects[0]?.highlights).toContain('压测 QPS 从 800 提升至 3200')
+      // changes：1 条 user-answer（融合回答）+ 1 条 inferred（新增无来源事实）
+      expect(parsed.changes).toHaveLength(2)
+      const sources = parsed.changes.map((c) => c.source)
+      expect(sources).toContain('user-answer')
+      expect(sources).toContain('inferred')
+      const inferred = parsed.changes.find((c) => c.source === 'inferred')!
+      expect(inferred.projectId).toBe('proj-1')
+      expect(inferred.section).toBe('highlights')
+      expect(inferred.before).toBe('')
+    } finally {
+      session.dispose()
+    }
+  })
+
+  it('#99 全流程场景显式选择；默认仍为空诊断（向后兼容）', async () => {
+    const provider = createContentOptimizeFakeProvider({ scenario: 'empty' })
+    const agent = new AgentService(provider)
+    const session = await agent.createSession('content_optimize')
+    try {
+      const reply = await session.prompt(
+        ['[内容优化 1/2：规则诊断]', '简历 JSON：', JSON.stringify({ projects: [{ id: 'proj-1', name: '平台' }] })].join('\n')
+      )
+      const parsed = JSON.parse(reply) as { questions: unknown[] }
+      expect(parsed.questions).toEqual([])
+    } finally {
+      session.dispose()
+    }
+  })
+
   it('FakeAgentProvider 默认回显与 failNextPrompt 兼容（底层假 agent 可注入脚本）', async () => {
     const provider = new FakeAgentProvider()
     const agent = new AgentService(provider)

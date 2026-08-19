@@ -186,9 +186,13 @@ app.whenReady().then(() => {
   // 中断续接（AC-3）：上次运行在诊断/改写轮次中被杀掉的任务，启动后重新入队执行。
   contentOptimize.recoverInFlight()
 
-  // E2E 基建（#90/T02）：JOBHUNT_E2E_SEED=1 且假 agent 模式下预置一份基准简历
-  // （真实启动冒烟用；正常使用路径不受影响）。
-  if (fakeAgentEnabled && process.env['JOBHUNT_E2E_SEED'] === '1' && resumes.list().length === 0) {
+  // E2E 基建（#90/T02）：JOBHUNT_E2E_SEED=1 且假 agent（或 T09 真实 agent 冒烟入口
+  // JOBHUNT_E2E_REAL=1）模式下预置一份基准简历（真实启动冒烟用；正常使用路径不受影响）。
+  if (
+    (fakeAgentEnabled || process.env['JOBHUNT_E2E_REAL'] === '1') &&
+    process.env['JOBHUNT_E2E_SEED'] === '1' &&
+    resumes.list().length === 0
+  ) {
     resumes.create({
       meta: { title: '基准简历（E2E）' },
       basics: { name: '张伟', phone: '13800001234', email: 'z@example.com' },
