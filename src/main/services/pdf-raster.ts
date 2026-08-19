@@ -3,6 +3,7 @@ import { readFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { renderHtmlTemplate } from './pdf-raster-template'
 
 /**
  * PDF 逐页栅格化（#81）：隐藏 BrowserWindow + pdfjs（浏览器 canvas）→ PNG。
@@ -10,6 +11,7 @@ import { pathToFileURL } from 'node:url'
  * - pdfjs 的 Node 构建无 canvas，故用隐藏窗口加载 pdfjs（真实 Chromium canvas）；
  * - pdfjs 文件经自定义协议 ocr-raster://lib/ 提供（node_modules/pdfjs-dist/legacy/build），
  *   render.html 与其同源，动态 import './pdf.mjs'；worker 以 blob URL 提供；
+ * - 模板见 pdf-raster-template.ts（#84：必须动态导入，防 electron-vite 正则污染，回归测试覆盖）。
  * - PDF 文档缓存在窗口内（open → render 多页 → close），避免逐页重复加载；
  * - 真实 Windows OCR 冒烟在 scripts/ocr-smoke.mjs（#79）与 #83 Computer Use 验收覆盖，
  *   本模块不做跨平台单元测试（与 printToPDF 同约定：真实 Electron 路径手动冒烟）。
@@ -37,44 +39,7 @@ function renderHtmlPath(): string {
   const dir = join(tmpdir(), 'jobhunt-ocr-raster')
   mkdirSync(dir, { recursive: true })
   const file = join(dir, 'render.html')
-  const html = `<!DOCTYPE html>
-<html><head><meta charset="UTF-8"></head><body>
-<script type="module">
-import * as pdfjs from './pdf.mjs'
-// worker 用 blob URL（自定义协议建 Worker 受限；首次调用时惰性初始化，避免顶层 await 阻塞函数挂载）
-let workerReady = null
-const ensureWorker = () => {
-  workerReady ??= (async () => {
-    const wt = await (await fetch('./pdf.worker.mjs')).text()
-    pdfjs.GlobalWorkerOptions.workerSrc = URL.createObjectURL(new Blob([wt], { type: 'text/javascript' }))
-  })()
-  return workerReady
-}
-let cachedDoc = null
-window.__openPdf = async (pdfB64) => {
-  await ensureWorker()
-  const bin = atob(pdfB64)
-  const data = new Uint8Array(bin.length)
-  for (let i = 0; i < bin.length; i++) data[i] = bin.charCodeAt(i)
-  cachedDoc = await pdfjs.getDocument({ data }).promise
-  return cachedDoc.numPages
-}
-window.__renderPdfPage = async (pageNo, scale) => {
-  if (cachedDoc === null) throw new Error('PDF 未打开')
-  const page = await cachedDoc.getPage(pageNo)
-  const viewport = page.getViewport({ scale })
-  const canvas = document.createElement('canvas')
-  canvas.width = Math.ceil(viewport.width)
-  canvas.height = Math.ceil(viewport.height)
-  await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise
-  return canvas.toDataURL('image/png')
-}
-window.__closePdf = async () => {
-  if (cachedDoc !== null) { await cachedDoc.destroy(); cachedDoc = null }
-  return true
-}
-</script></body></html>`
-  writeFileSync(file, html)
+  writeFileSync(file, renderHtmlTemplate())
   return file
 }
 
