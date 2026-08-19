@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import type { Resume, StoredResume } from '@shared/types/resume'
-import type { ResumeDraft, ContentOptimizeTask, ContentOptimizeStatus } from '@shared/types'
+import type { ResumeDraft, ContentOptimizeTask } from '@shared/types'
+import { CONTENT_STATUS_LABELS } from '@shared/types'
 import { IpcEvent } from '@shared/protocol'
 import { defaultBaseTitle, emptyResumeForm, formToResume, issueSection, keepEmptyRows, resumeToForm, SKILL_CATEGORIES, type ResumeForm } from '../resume-form'
 import Modal from '../components/Modal.vue'
@@ -467,18 +468,6 @@ const editingExisting = computed(() => editingId.value !== null && editingId.val
 /** 内容优化任务（#90/T02）：任务卡片列表（按创建时间倒序）。 */
 const contentTasks = ref<ContentOptimizeTask[]>([])
 const contentTaskError = ref('')
-
-/** 任务状态中文标签（阶段流转展示）。 */
-const CONTENT_STATUS_LABELS: Record<ContentOptimizeStatus, string> = {
-  created: '已创建',
-  diagnosing: '诊断中',
-  awaiting_answers: '等待回答',
-  rewriting: '改写中',
-  ready_for_review: '可确认',
-  confirmed: '已确认',
-  failed: '失败',
-  cancelled: '已取消'
-}
 
 /** 某任务关联的简历标题（任务卡片展示）。 */
 function contentResumeTitle(task: ContentOptimizeTask): string {

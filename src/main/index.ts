@@ -183,6 +183,8 @@ app.whenReady().then(() => {
   const contentOptimize = new ContentOptimizeService(db, resumes, agent, {
     emit: (task) => pushEvent(IpcEvent.ContentOptimizeChanged, { task })
   })
+  // 中断续接（AC-3）：上次运行在诊断/改写轮次中被杀掉的任务，启动后重新入队执行。
+  contentOptimize.recoverInFlight()
 
   // E2E 基建（#90/T02）：JOBHUNT_E2E_SEED=1 且假 agent 模式下预置一份基准简历
   // （真实启动冒烟用；正常使用路径不受影响）。

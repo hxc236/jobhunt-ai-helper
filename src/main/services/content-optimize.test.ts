@@ -40,6 +40,9 @@ interface Harness {
   queue: LlmRoundQueue
 }
 
+/** 可轮询查询任务状态的最小接口（真实服务或重启后的服务实例均可用）。 */
+type TaskQuery = Pick<ContentOptimizeService, 'get'>
+
 /** 构造测试环境：内存库 + 脚本化 fake agent + 独立轮次队列。 */
 function makeHarness(options: {
   /** 诊断轮回复（默认空诊断）；可传函数按提示词动态回复。 */
@@ -95,9 +98,19 @@ async function waitForStatus(
   predicate: (t: ContentOptimizeTask) => boolean,
   timeoutMs = 2000
 ): Promise<ContentOptimizeTask> {
+  return waitForTaskStatus(harness.service, taskId, predicate, timeoutMs)
+}
+
+/** 等待任务到达目标状态（对任意任务查询接口轮询，供重启/恢复场景用）。 */
+async function waitForTaskStatus(
+  query: TaskQuery,
+  taskId: string,
+  predicate: (t: ContentOptimizeTask) => boolean,
+  timeoutMs = 5000
+): Promise<ContentOptimizeTask> {
   const deadline = Date.now() + timeoutMs
   for (;;) {
-    const task = harness.service.get(taskId)
+    const task = query.get(taskId)
     if (task !== undefined && predicate(task)) return task
     if (Date.now() > deadline) throw new Error(`等待任务状态超时：${taskId}`)
     await new Promise((resolve) => setTimeout(resolve, 10))
@@ -133,14 +146,15 @@ describe('ContentOptimizeService — 任务状态机与持久化（T02/#92）', 
   })
 
   it('同一基准同一时间仅一个进行中任务（AC：单基准单草稿）', async () => {
-    const h = makeHarness()
-    h.service.start(h.resumeId)
-    // 任务仍在诊断中 → 第二次 start 拒绝
-    await waitForStatus(h, h.service.list()[0]!.id, () => true)
-    const task = h.service.list()[0]!
-    if (task.status !== 'ready_for_review' && task.status !== 'confirmed') {
-      expect(() => h.service.start(h.resumeId)).toThrowError(/已有进行中的内容优化任务/)
-    }
+    const h = makeHarness({ delayMs: 120 })
+    const first = h.service.start(h.resumeId)
+    // 等任务离开 created（进入进行中轮次/等待状态），确保第二次 start 被真实拒绝而非空转
+    await waitForStatus(h, first.id, (t) => t.status !== 'created')
+    const current = h.service.get(first.id)!
+    expect(['created', 'diagnosing', 'awaiting_answers', 'rewriting', 'ready_for_review']).toContain(
+      current.status
+    )
+    expect(() => h.service.start(h.resumeId)).toThrowError(/已有进行中的内容优化任务/)
   })
 
   it('非基准简历（按 JD 优化稿）拒绝触发', async () => {
@@ -247,8 +261,20 @@ describe('ContentOptimizeService — 任务状态机与持久化（T02/#92）', 
     expect(again.status).toBe('created')
   })
 
-  it('LLM 轮次全局串行：两个任务不会并发执行轮次', async () => {
-    const h = makeHarness({ delayMs: 60 })
+  it('LLM 轮次全局串行：两个任务不会并发执行轮次（断言无重叠）', async () => {
+    let active = 0
+    let maxActive = 0
+    const h = makeHarness({
+      delayMs: 30,
+      diagnosis: async () => {
+        // 并发计数：轮次执行期间进入/离开；若队列未串行，maxActive 会超过 1
+        active++
+        maxActive = Math.max(maxActive, active)
+        await new Promise((resolve) => setTimeout(resolve, 40))
+        active--
+        return EMPTY_DIAGNOSIS_REPLY
+      }
+    })
     const r2 = h.resumes.create({ ...BASE_RESUME, meta: { title: '基准简历二' } })
     const t1 = h.service.start(h.resumeId)
     const t2 = h.service.start(r2.meta.id as string)
@@ -257,6 +283,75 @@ describe('ContentOptimizeService — 任务状态机与持久化（T02/#92）', 
     const ready2 = await waitForStatus(h, t2.id, (t) => t.status === 'ready_for_review' || t.status === 'failed')
     expect(['ready_for_review', 'failed']).toContain(ready1.status)
     expect(['ready_for_review', 'failed']).toContain(ready2.status)
+    // 串行保证：两个诊断轮次绝不能同时执行
+    expect(maxActive).toBe(1)
+  })
+
+  it('取消在轮次中且轮次失败 → 取消优先（cancelled 而非 failed），重试路径不被遗留取消标记劫持', async () => {
+    // 诊断轮先延迟再抛错：确保 cancel 落在轮次进行中，随后轮次失败走 fail() 路径
+    const h = makeHarness({
+      diagnosis: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 60))
+        throw new Error('LLM 断连')
+      }
+    })
+    const task = h.service.start(h.resumeId)
+    await waitForStatus(h, task.id, (t) => t.status === 'diagnosing')
+    // 诊断轮进行中 → 取消
+    h.service.cancel(task.id)
+    const cancelled = await waitForStatus(h, task.id, (t) => t.status === 'cancelled' || t.status === 'failed')
+    // 取消已置位时，轮次结束后取消优先 → cancelled
+    expect(cancelled.status).toBe('cancelled')
+    // 不再处于 failed，不会出现「点重试却变成取消」的尴尬路径
+    expect(h.service.get(task.id)?.error).toBeNull()
+  })
+
+  it('取消在轮次中且轮次成功 → 已得结果保留，取消后任务为 cancelled 可续接', async () => {
+    const h = makeHarness({ delayMs: 120 })
+    const task = h.service.start(h.resumeId)
+    h.service.cancel(task.id)
+    const cancelled = await waitForStatus(h, task.id, (t) => t.status === 'cancelled')
+    expect(cancelled.status).toBe('cancelled')
+  })
+
+  it('开始任务时自动补齐存量简历：项目 id/highlights/sectionOrder 落库且幂等', async () => {
+    const h = makeHarness()
+    // 另一份未补齐形状的存量简历（无项目 id/highlights/sectionOrder）
+    const legacy = h.resumes.create({ ...BASE_RESUME, meta: { title: '存量简历' } })
+    const task = h.service.start(legacy.meta.id as string)
+    await waitForStatus(h, task.id, (t) => t.status === 'ready_for_review')
+
+    const stored = h.resumes.get(legacy.meta.id as string)!
+    expect(stored.projects?.[0]?.id).toBeTruthy() // 稳定 ID 已生成
+    expect(stored.projects?.[0]?.highlights?.length).toBeGreaterThan(0) // description 迁移为要点
+    expect(stored.sectionOrder).toBeDefined() // 模块顺序已推断
+
+    // 幂等：确认后再次触发不重复补齐（无缺失字段 → changed=false 不落库）
+    h.service.confirm(task.id) // 空诊断路径：确认不创建新版本
+    const second = h.service.start(legacy.meta.id as string)
+    await waitForStatus(h, second.id, (t) => t.status === 'ready_for_review')
+    const again = h.resumes.get(legacy.meta.id as string)!
+    expect(again.projects?.[0]?.id).toBe(stored.projects?.[0]?.id)
+  })
+
+  it('启动恢复：轮次阶段任务（应用被杀中断）重新入队执行，非轮次阶段不动', async () => {
+    const h = makeHarness({ delayMs: 60 })
+    const task = h.service.start(h.resumeId)
+    // 等任务进入 diagnosing 轮次（应用被杀时停留在该阶段）
+    await waitForStatus(h, task.id, (t) => t.status === 'diagnosing')
+
+    // 模拟应用重启：新服务实例 + 新队列（无进行中轮次），DB 保留 diagnosing 任务
+    const service2 = new ContentOptimizeService(h.db, h.resumes, new AgentService(h.provider), {
+      emit: () => undefined,
+      queue: new LlmRoundQueue()
+    })
+    expect(service2.get(task.id)?.status).toBe('diagnosing')
+
+    // 非轮次阶段的任务（如 confirmed）不应被重复驱动
+    service2.recoverInFlight()
+    // 轮次阶段任务被重新驱动 → 到达 ready_for_review
+    const recovered = await waitForTaskStatus(service2, task.id, (t) => t.status === 'ready_for_review')
+    expect(recovered.noChanges).toBe(true)
   })
 
   it('空诊断 E2E 路径的回复解析：全部保持 → 无需修改', async () => {

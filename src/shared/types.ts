@@ -564,6 +564,18 @@ export const CONTENT_OPTIMIZE_STATUSES = [
 ] as const
 export type ContentOptimizeStatus = (typeof CONTENT_OPTIMIZE_STATUSES)[number]
 
+/** 任务状态中文标签（服务端进度文案与 Resumes 视图任务卡片共用，单一来源）。 */
+export const CONTENT_STATUS_LABELS: Record<ContentOptimizeStatus, string> = {
+  created: '已创建',
+  diagnosing: '诊断中',
+  awaiting_answers: '等待回答',
+  rewriting: '改写中',
+  ready_for_review: '可确认',
+  confirmed: '已确认',
+  failed: '失败',
+  cancelled: '已取消'
+}
+
 /** 规则判定状态（每维度：通过 / 需改进 / 信息不足 / 不适用）。 */
 export type ContentRuleStatus = 'pass' | 'improve' | 'insufficient' | 'na'
 

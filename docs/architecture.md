@@ -51,6 +51,7 @@ src/
 - **ResumeService**: `list() / get(id) / create(resume) / update(id, resume)`（schema 校验）· `delete(id)`（删除基准不影响已存派生稿——独立副本，F-12 已实现）· `parseUpload(filePath): Draft`（docx/pdf）· `confirmDraft(draft): id` · `renderHtml(id): string`（A4 模板）· `exportPdf(id): path`
 - **ScoreEngine**（纯函数，无依赖）: `score({jdAnalysis, resume}): {total, dimensions[{name,score,evidence}], hits, misses}`
 - **OptimizeService**: `run(jobId, resumeId, mode): OptimizeTask`（三轮 agent：JD 解析→评估→生成优化稿+changes[]；写 jd_analysis 缓存；`optimizationMode: strict|balanced`）
+- **ContentOptimizeService**（#90 业务① / T02）: `start(resumeId)`（校验基准简历 + 单基准单草稿；首次自动补齐项目 id/highlights/sectionOrder）· `list()/get()/forResume()` · `submitAnswers`（awaiting_answers→rewriting）· `confirm(taskId)`（无改动不建版本；有改写建新基准简历）· `cancel(taskId)`（当前 LLM 轮结束后停止，已得结果保留）· `retry(taskId)`（failed→对应阶段轮）· `resume(taskId)`（cancelled→取消前阶段）· `voidTask(taskId)`（作废释放约束）· `recoverInFlight()`（应用启动恢复中断的轮次阶段任务）；状态机 `created→diagnosing→awaiting_answers→rewriting→ready_for_review→confirmed`；LLM 轮次全局串行队列，每轮超时 60s、重试 1 次仍失败→failed；任务记录存 `content_optimize_tasks` 表（诊断/追问/回答/确认独立存储）
 - **TopicService**: `generateFromJob(jobId)`（jd_analysis + 缺口 + 项目 techStack，优先级 1-5；无缺口来源时降级）· `create/update/delete(id)` · `setStatus(id, status)`
 - **InterviewService**: `start(jobId, style): {sessionId}`（注入 JD 分析/优化简历/learned 清单）· `answer(sessionId, text)`（agent 回复流）· `interrupt(sessionId)` · `end(sessionId): Review`（LLM 复盘 + suggestLearn 入 topics）· `history()`
 - **CrawlService**: `run(source, mode, filter): Preview{candidates, inserted, updated, missingFields}`（节流/重试/上限）· `confirmImport(previewId)`（upsert）· `runs()`
@@ -68,12 +69,16 @@ src/
   resumes:list · resumes:create · resumes:update · resumes:delete · resumes:upload-parse
   resumes:render-html · resumes:export-pdf
   optimize:run · topics:generate · topics:update
+  content-optimize:start · content-optimize:list · content-optimize:get
+  content-optimize:submit-answers · content-optimize:confirm · content-optimize:cancel
+  content-optimize:retry · content-optimize:resume · content-optimize:void
   interview:start · interview:answer · interview:interrupt · interview:end · interview:history
   crawl:run · crawl:confirm-import · crawl:runs
   asr:start · asr:stop
 
 事件推送（主 → 渲染）：
   agent:delta（流式文本）· agent:status · interview:turn-end · crawl:progress
+  content-optimize:changed（任务状态/进度/失败/取消推送）
 ```
 
 渲染进程通过 `api` 客户端对象调用（每个 channel 一个类型化方法），不裸调 `ipcRenderer.invoke`。
@@ -81,8 +86,8 @@ src/
 ## db 层
 
 - better-sqlite3 主进程直连；`migrations = [sql, sql, ...]` + `PRAGMA user_version` 递增执行
-- 表：positions / applications / topics / interviews / crawl_runs（ADR-0005 定稿）+ **settings**（key-value，非敏感设置）
-- `jd_analysis` 为 positions 的 JSON 列；`transcript`/`review` 为 interviews 的 JSON 列
+- 表：positions / applications / topics / interviews / crawl_runs（ADR-0005 定稿）+ content_optimize_tasks（v11，#90 业务① 任务独立存储）+ **settings**（key-value，非敏感设置）
+- `jd_analysis` 为 positions 的 JSON 列；`transcript`/`review` 为 interviews 的 JSON 列；`diagnosis_json`/`answers_json`/`rewrite_json` 为 content_optimize_tasks 的 JSON 列
 
 ## 渲染层
 

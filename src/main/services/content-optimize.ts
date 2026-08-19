@@ -2,11 +2,12 @@ import { randomUUID } from 'node:crypto'
 import type { Db } from '../db/migrations'
 import type { AgentService } from './agent'
 import type { ResumeService } from './resume'
-import type {
-  ContentDiagnosis,
-  ContentOptimizeStatus,
-  ContentOptimizeTask,
-  ContentRewrite
+import {
+  CONTENT_STATUS_LABELS,
+  type ContentDiagnosis,
+  type ContentOptimizeStatus,
+  type ContentOptimizeTask,
+  type ContentRewrite
 } from '../../shared/types'
 import type { Resume } from '../../shared/types/resume'
 import { extractJson } from './optimize'
@@ -32,17 +33,8 @@ import { assertValidResume } from './resume-schema'
  * 规则诊断引擎（R1–R4）由 T03 填充；改写轮由 T05 填充；本卡实现状态机 + 轮次骨架。
  */
 
-/** 阶段进度文案。 */
-export const CONTENT_PHASE_LABELS: Record<ContentOptimizeStatus, string> = {
-  created: '已创建',
-  diagnosing: '诊断中',
-  awaiting_answers: '等待回答',
-  rewriting: '改写中',
-  ready_for_review: '可确认',
-  confirmed: '已确认',
-  failed: '失败',
-  cancelled: '已取消'
-}
+/** 阶段进度文案（单一来源 shared/types.ts CONTENT_STATUS_LABELS，服务端旧名兼容）。 */
+export const CONTENT_PHASE_LABELS = CONTENT_STATUS_LABELS
 
 /** 单轮 LLM 超时（毫秒）。 */
 export const LLM_ROUND_TIMEOUT_MS = 60_000
@@ -191,6 +183,22 @@ export class ContentOptimizeService {
   }
 
   /**
+   * 启动恢复（AC-3 支持中断续接）：上次运行在轮次阶段（diagnosing/rewriting）
+   * 被杀掉的进行中任务，重新入队执行对应阶段轮（应用启动后调用）。
+   * 非轮次阶段（created/awaiting_answers/ready_for_review/failed/cancelled/confirmed）
+   * 不动——诊断/回答/确认均已持久化，等待用户操作或手动重试/续接即可。
+   */
+  recoverInFlight(): void {
+    const rows = this.db
+      .prepare("SELECT id, status FROM content_optimize_tasks WHERE status IN ('diagnosing', 'rewriting')")
+      .all() as Array<{ id: string; status: ContentOptimizeStatus }>
+    for (const row of rows) {
+      const phase = row.status === 'rewriting' ? 'rewriting' : 'diagnosing'
+      this.queue.enqueue(() => this.runPhase(row.id, phase))
+    }
+  }
+
+  /**
    * 开始内容优化任务：校验基准简历 + 单基准单草稿约束，创建任务并启动诊断轮。
    * 异步轮次在后台执行；任务卡片经 emit 事件实时推送阶段流转。
    */
@@ -202,6 +210,12 @@ export class ContentOptimizeService {
     // #90-27：内容优化不接受「按 JD 生成的优化简历」作为输入（只对基准简历开放）
     if (resume.meta.baseResumeId != null || resume.meta.targetJobId != null) {
       throw new ContentOptimizeError('not-base-resume', '内容优化仅支持基准简历——请选择一份基准简历')
+    }
+    // #91→T02 接线：首次进入内容优化自动补齐项目稳定 ID/≤4 条要点/sectionOrder（幂等，
+    // 无缺失字段时 changed=false 不改动；补齐结果先落库再创建任务）。
+    const backfill = this.resumes.prepareContentOptimization(resumeId)
+    if (backfill.changed) {
+      this.resumes.update(resumeId, backfill.resume)
     }
     const active = this.forResume(resumeId).find(
       (t) => t.status !== 'confirmed' && t.status !== 'cancelled'
@@ -467,6 +481,9 @@ export class ContentOptimizeService {
   }
 
   private fail(taskId: string, err: unknown): void {
+    // 取消在轮次进行中已置位：轮次已结束（无论成败），取消优先 → cancelled，
+    // 避免 failed 状态下重试被遗留的取消标记立即再取消（取消 = 当前 LLM 轮结束后停止）。
+    if (this.isCancelled(taskId)) return this.finishCancelled(taskId)
     const task = this.requireTask(taskId)
     const message = err instanceof Error ? err.message : String(err)
     const phase = isRoundPhase(task.status) ? task.status : phaseFromResumeTo(this.readResumeTo(taskId), task)
@@ -643,13 +660,6 @@ export class ContentOptimizeService {
       : []
     return { resume: parsed.resume as unknown as Resume, changes }
   }
-}
-
-/** 空诊断（T02 垂直切片：规则判定空、项目全部保持、无追问）。 */
-export const EMPTY_DIAGNOSIS: ContentDiagnosis = {
-  rules: [],
-  projects: [],
-  questions: []
 }
 
 const SELECT_BY_ID = 'SELECT * FROM content_optimize_tasks WHERE id = ?'

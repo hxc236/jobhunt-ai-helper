@@ -123,13 +123,15 @@ async function main() {
     console.log('  任务卡片：')
     console.log('  ' + taskCard.split('\n').join('\n  '))
 
-    // 点击确认
-    await page.locator('.opt-task-card button', { hasText: '确认' }).first().click()
+    // 点击确认 —— 改用键盘驱动：聚焦确认按钮 + Enter（验证键盘模拟通道，等价于 OS 级按键）
+    const confirmBtn = page.locator('.opt-task-card button', { hasText: '确认' }).first()
+    await confirmBtn.focus()
+    await page.keyboard.press('Enter')
     await page.waitForFunction(() => {
       const card = document.querySelector('.opt-task-card')
       return card !== null && card.textContent.includes('已确认')
     }, undefined, { timeout: 10_000 })
-    console.log('  确认后任务卡片状态 = 已确认 ✓')
+    console.log('  确认后任务卡片状态 = 已确认（键盘 Enter 驱动）✓')
 
     // 截图 + 无障碍快照断言（ariaSnapshot：role/name 结构断言，等价于无障碍树）
     const shotPath = join(userDataDir, 'task-card-confirmed.png')
