@@ -9,6 +9,7 @@ import {
   type ContentOptimizeTask,
   type ContentRewrite
 } from '../../shared/types'
+import { contentQuestionKeys } from '../../shared/content-answers'
 import type { Resume } from '../../shared/types/resume'
 import { extractJson } from './optimize'
 import {
@@ -55,6 +56,7 @@ export class ContentOptimizeError extends Error {
       | 'task-not-found'
       | 'bad-json'
       | 'invalid-state'
+      | 'invalid-answers'
       | 'no-rewrite',
     message: string
   ) {
@@ -256,11 +258,18 @@ export class ContentOptimizeService {
   /**
    * 提交追问回答：awaiting_answers → rewriting，随后执行改写轮。
    * T04 追问表单填充 answers；T02 空诊断路径不会到达此状态。
+   * 校验：只接受已知问题键（容忍部分回答——未答项允许缺失；不属实/无法补充用哨兵值）。
    */
   submitAnswers(taskId: string, answers: Record<string, string>): ContentOptimizeTask {
     const task = this.requireTask(taskId)
     if (task.status !== 'awaiting_answers') {
       throw new ContentOptimizeError('invalid-state', `当前状态不可提交回答：${task.status}`)
+    }
+    const questions = task.diagnosis?.questions ?? []
+    const known = new Set(contentQuestionKeys(questions))
+    const unknown = Object.keys(answers).filter((key) => !known.has(key))
+    if (unknown.length > 0) {
+      throw new ContentOptimizeError('invalid-answers', `包含未知问题键：${unknown.join(', ')}`)
     }
     const next = this.mutate(task, {
       answers,

@@ -220,7 +220,7 @@ describe('ContentOptimizeService — 任务状态机与持久化（T02/#92）', 
     expect(awaiting.diagnosis?.questions.length).toBe(1)
     expect(awaiting.progress).toContain('等待回答')
 
-    const submitted = h.service.submitAnswers(task.id, { q1: '我的答案是分布式锁' })
+    const submitted = h.service.submitAnswers(task.id, { q0: '我的答案是分布式锁' })
     expect(submitted.status).toBe('rewriting')
     // 改写轮（T05 骨架）：fake 返回合法 resume → ready_for_review
     const ready = await waitForStatus(h, task.id, (t) => t.status === 'ready_for_review')
@@ -231,6 +231,54 @@ describe('ContentOptimizeService — 任务状态机与持久化（T02/#92）', 
     const { createdResumeId } = h.service.confirm(task.id)
     expect(createdResumeId).not.toBeNull()
     expect(h.resumes.list().length).toBe(before + 1)
+  })
+
+  describe('submitAnswers 追问回答校验（#94/T04）', () => {
+    it('部分回答可提交（未答项允许缺失），哨兵值（不属实/无法补充）原样存入', async () => {
+      const h = makeHarness({
+        diagnosis: () =>
+          JSON.stringify({
+            rules: [],
+            projects: [{ projectId: 'proj-1', verdict: 'needs-info' }],
+            questions: [
+              { id: 'q1', projectId: 'proj-1', field: '难点', question: '最大的技术难点？', evidence: 'e', candidates: ['分布式锁'] },
+              { id: 'q2', projectId: 'proj-1', field: '结果', question: '结果？', evidence: 'e', candidates: [] }
+            ]
+          })
+      })
+      const task = h.service.start(h.resumeId)
+      await waitForStatus(h, task.id, (t) => t.status === 'awaiting_answers')
+
+      // 只答 q1（确认候选），q2 标记无法补充；q1 未答项不提交
+      const submitted = h.service.submitAnswers(task.id, {
+        q1: '分布式锁',
+        q2: '[无法补充]'
+      })
+      expect(submitted.status).toBe('rewriting')
+      const persisted = h.service.get(task.id)
+      expect(persisted?.answers).toEqual({ q1: '分布式锁', q2: '[无法补充]' })
+      const ready = await waitForStatus(h, task.id, (t) => t.status === 'ready_for_review')
+      expect(ready.answers).toEqual({ q1: '分布式锁', q2: '[无法补充]' })
+    })
+
+    it('包含未知问题键 → 拒绝（invalid-answers），任务状态不变', async () => {
+      const h = makeHarness({ diagnosis: () => JSON.stringify(withQuestions()) })
+      const task = h.service.start(h.resumeId)
+      await waitForStatus(h, task.id, (t) => t.status === 'awaiting_answers')
+      expect(() => h.service.submitAnswers(task.id, { nope: 'x' })).toThrowError(ContentOptimizeError)
+      expect(() => h.service.submitAnswers(task.id, { nope: 'x' })).toThrowError(/未知问题/)
+      expect(h.service.get(task.id)?.status).toBe('awaiting_answers')
+    })
+
+    it('空回答（未答全部）允许提交 → 进入改写轮', async () => {
+      const h = makeHarness({ diagnosis: () => JSON.stringify(withQuestions()) })
+      const task = h.service.start(h.resumeId)
+      await waitForStatus(h, task.id, (t) => t.status === 'awaiting_answers')
+      const submitted = h.service.submitAnswers(task.id, {})
+      expect(submitted.status).toBe('rewriting')
+      const ready = await waitForStatus(h, task.id, (t) => t.status === 'ready_for_review')
+      expect(ready.answers).toEqual({})
+    })
   })
 
   it('任务记录持久化：诊断/回答/状态可查询（中断续接基础）', async () => {

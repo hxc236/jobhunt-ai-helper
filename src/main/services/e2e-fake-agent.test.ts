@@ -57,6 +57,54 @@ describe('E2E 假 agent（#90/T02：dev 模式开关）', () => {
     }
   })
 
+  it('#94 追问场景：诊断返回带稳定 id 的追问（needs-info + questions），改写轮返回合法 ContentRewrite', async () => {
+    const provider = createContentOptimizeFakeProvider({ scenario: 'questions' })
+    const agent = new AgentService(provider)
+    const resume = {
+      basics: { name: '张伟' },
+      projects: [{ id: 'proj-1', name: '平台', description: 'C2C 二手交易系统' }]
+    }
+    const session = await agent.createSession('content_optimize')
+    try {
+      const diag = JSON.parse(
+        await session.prompt(
+          ['[内容优化 1/2：规则诊断]', '简历 JSON：', JSON.stringify(resume)].join('\n')
+        )
+      ) as {
+        projects: Array<{ projectId: string; verdict: string }>
+        questions: Array<{ id: string; projectId: string; field: string; candidates: string[] }>
+      }
+      expect(diag.projects).toEqual([{ projectId: 'proj-1', verdict: 'needs-info' }])
+      expect(diag.questions.length).toBe(2)
+      expect(diag.questions[0]).toMatchObject({ id: 'q1', projectId: 'proj-1', field: '难点' })
+      expect(diag.questions[0]!.candidates.length).toBeGreaterThan(0)
+
+      const rewrite = await session.prompt(
+        ['[内容优化 2/2：项目改写]', '简历 JSON：', JSON.stringify(resume)].join('\n')
+      )
+      const parsed = JSON.parse(rewrite) as { resume: unknown; changes: Array<{ projectId: string }> }
+      expect(parsed.resume).toEqual(resume)
+      expect(parsed.changes[0]?.projectId).toBe('proj-1')
+    } finally {
+      session.dispose()
+    }
+  })
+
+  it('#94 追问场景可显式选择；默认仍为空诊断（向后兼容）', async () => {
+    const provider = createContentOptimizeFakeProvider({ scenario: 'empty' })
+    const agent = new AgentService(provider)
+    const session = await agent.createSession('content_optimize')
+    try {
+      const reply = await session.prompt(
+        ['[内容优化 1/2：规则诊断]', '简历 JSON：', JSON.stringify({ projects: [{ id: 'proj-1', name: '平台' }] })].join('\n')
+      )
+      const parsed = JSON.parse(reply) as { questions: unknown[] }
+      expect(parsed.questions).toEqual([])
+    } finally {
+      session.dispose()
+    }
+  })
+
   it('FakeAgentProvider 默认回显与 failNextPrompt 兼容（底层假 agent 可注入脚本）', async () => {
     const provider = new FakeAgentProvider()
     const agent = new AgentService(provider)
