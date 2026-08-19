@@ -195,6 +195,10 @@ export function registerIpcHandlers({ settings, agent, positions, resumes, resum
   handleRequest(IpcChannel.ResumesImportCancel, (request) => resumeImport.cancel(request.token))
   handleRequest(IpcChannel.ResumesImportConfirm, (request) => resumeImport.confirm(request.token, request.resume))
   handleRequest(IpcChannel.ResumesImportDispose, (request) => resumeImport.dispose(request.token))
+  // #77：Agent 决策（隐私同意/超时等待）——#84 遗留：此前漏注册导致 consent 无法答复、导入无限挂起
+  handleRequest(IpcChannel.ResumesImportAgentDecide, (request) =>
+    resumeImport.decide(request.token, request.kind, request.choice)
+  )
   // F-15（#30）：A4 渲染（纯函数）与 PDF 导出（printToPDF + 保存对话框）
   handleRequest(IpcChannel.ResumesRenderHtml, (request) => resumes.renderHtml(request.id))
   handleRequest(IpcChannel.ResumesRenderFromResume, (request) => resumes.renderFromResume(request.resume))

@@ -198,7 +198,7 @@ describe('createRendererApi（渲染侧 api 客户端）', () => {
     expect(fake.invocations).toEqual([{ channel: IpcChannel.CsvImportTemplate, args: [] }])
   })
 
-  it('resumes.importDocx 映射 start/cancel/confirm/dispose 四个通道', async () => {
+  it('resumes.importDocx 映射 start/cancel/confirm/dispose/decide 五个通道', async () => {
     const fake = makeFakeBridge()
     const api = createRendererApi(fake.bridge)
     await api.resumes.importDocx.start('C:/tmp/resume.docx')
@@ -206,11 +206,13 @@ describe('createRendererApi（渲染侧 api 客户端）', () => {
     const resume = { meta: {}, basics: { name: '张伟' }, education: [] }
     await api.resumes.importDocx.confirm('tok-1', resume)
     await api.resumes.importDocx.dispose('tok-1')
+    await api.resumes.importDocx.decide('tok-1', 'consent', 'agree')
     expect(fake.invocations).toEqual([
       { channel: IpcChannel.ResumesImportStart, args: [{ filePath: 'C:/tmp/resume.docx' }] },
       { channel: IpcChannel.ResumesImportCancel, args: [{ token: 'tok-1' }] },
       { channel: IpcChannel.ResumesImportConfirm, args: [{ token: 'tok-1', resume }] },
-      { channel: IpcChannel.ResumesImportDispose, args: [{ token: 'tok-1' }] }
+      { channel: IpcChannel.ResumesImportDispose, args: [{ token: 'tok-1' }] },
+      { channel: IpcChannel.ResumesImportAgentDecide, args: [{ token: 'tok-1', kind: 'consent', choice: 'agree' }] }
     ])
   })
 
