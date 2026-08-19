@@ -3,6 +3,7 @@ import type { Db } from '../db/migrations'
 import type { AgentService } from './agent'
 import type { ResumeService } from './resume'
 import {
+  CONTENT_CONFIRMED_NO_CHANGES_LABEL,
   CONTENT_STATUS_LABELS,
   type ContentDiagnosis,
   type ContentIntegrationSummary,
@@ -418,7 +419,7 @@ export class ContentOptimizeService {
         // 未应用任何改动（如全部拒绝）：不创建新版本（US20），仍保留「仍有未解决项目」等汇总
         this.mutate(task, {
           status: 'confirmed',
-          progress: '已确认（未应用改动）',
+          progress: CONTENT_CONFIRMED_NO_CHANGES_LABEL,
           summary,
           archivedAt: new Date().toISOString()
         })

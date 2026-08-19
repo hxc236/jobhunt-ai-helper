@@ -279,11 +279,17 @@ async function load(): Promise<void> {
     position.value = await window.api.positions.get(props.positionId)
     application.value = await window.api.positions.getApplication(props.positionId)
     resumes.value = await window.api.resumes.list()
-    // T07/#97：加载已完成内容优化的基准集合（供「建议先做内容优化」提示）。
-    const tasks = await window.api.contentOptimize.list()
-    contentOptimizedResumeIds.value = new Set(
-      tasks.filter((t) => t.archivedAt != null).map((t) => t.resumeId)
-    )
+    // T07/#97：已完成内容优化的基准集合（供「建议先做内容优化」提示）。
+    // 单一来源：服务端 hasCompletedContentOptimization（status=confirmed ∧ 已归档），
+    // 避免渲染层按 archivedAt 过滤造成判定漂移。
+    const completed = new Set<string>()
+    for (const r of resumes.value) {
+      if (r.meta.baseResumeId != null) continue
+      if (await window.api.contentOptimize.hasCompleted(r.meta.id as string)) {
+        completed.add(r.meta.id as string)
+      }
+    }
+    contentOptimizedResumeIds.value = completed
     fillAppForm()
   } catch (err) {
     errorMessage.value = `加载职位详情失败：${String(err)}`
