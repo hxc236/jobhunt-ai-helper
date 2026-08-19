@@ -62,7 +62,8 @@ function backfillProject(project: ResumeProject): { project: ResumeProject; chan
     next = { ...next, id: generateProjectId() }
     didChange = true
   }
-  if (next.highlights === undefined) {
+  if (next.highlights === undefined || next.highlights.length === 0) {
+    // 空数组（schema 合法）视作未补齐：仍由 description 迁移；description 为空时 descriptionToHighlights 返回 undefined，保持幂等
     const highlights = descriptionToHighlights(next.description)
     if (highlights !== undefined) {
       next = { ...next, highlights }

@@ -143,6 +143,35 @@ describe('backfillContentOptimizationData', () => {
     expect(resume.projects?.[0]?.highlights).toBeUndefined()
   })
 
+  it('#91 highlights: []（空数组，schema 合法）视作未补齐 → 由 description 迁移，二次运行幂等', () => {
+    const input: Resume = {
+      meta: {},
+      basics: { name: '张伟' },
+      education: [],
+      projects: [
+        {
+          id: 'proj-empty',
+          name: '平台',
+          description: '面向校内学生的 C2C 二手交易平台\n日均 500+ 访问\n接口 p95 < 200ms',
+          highlights: [],
+          techStack: ['Java']
+        }
+      ]
+    }
+    const once = backfillContentOptimizationData(input)
+    expect(once.changed).toBe(true)
+    expect(once.resume.projects?.[0]?.id).toBe('proj-empty')
+    expect(once.resume.projects?.[0]?.highlights).toEqual([
+      '面向校内学生的 C2C 二手交易平台',
+      '日均 500+ 访问',
+      '接口 p95 < 200ms'
+    ])
+
+    const twice = backfillContentOptimizationData(once.resume)
+    expect(twice.changed).toBe(false)
+    expect(twice.resume).toEqual(once.resume)
+  })
+
   it('补齐结果通过 resume schema 校验（id/highlights/sectionOrder 均合法）', () => {
     const { resume } = backfillContentOptimizationData(legacyResume)
     // 通过 shared schema 校验（import 触发编译期类型，运行时校验见 resume.test.ts）
