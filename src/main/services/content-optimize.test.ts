@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { openDatabase } from '../db/database'
 import { FakeAgentProvider } from './fake-agent-provider'
+import { extractResumeFromPrompt } from './e2e-fake-agent'
 import { AgentService } from './agent'
 import { ResumeService } from './resume'
 import {
@@ -74,7 +75,9 @@ function makeHarness(options: {
         if (options.rewrite !== undefined) return options.rewrite(prompt)
         return JSON.stringify({
           resume: BASE_RESUME,
-          changes: [{ section: 'projects', before: 'a', after: 'b', reason: 'r', source: 'original' }]
+          changes: [
+            { section: 'projects', before: 'C2C 二手交易', after: 'C2C 二手交易（含高并发难点与解决行动）', reason: 'R1 补充难点与解决行动', source: 'user-answer' }
+          ]
         })
       }
       return `echo: ${prompt}`
@@ -330,6 +333,93 @@ describe('ContentOptimizeService — 任务状态机与持久化（T02/#92）', 
       expect(submitted.status).toBe('rewriting')
       const ready = await waitForStatus(h, task.id, (t) => t.status === 'ready_for_review')
       expect(ready.answers).toEqual({ q1: '[不属实]', q2: '[无法补充]' })
+    })
+  })
+
+  describe('改写轮（T05/#95 逐项目改写与事实溯源）', () => {
+    it('改写回复 before 未命中原文 → 任务 failed（bad-json 可重试）', async () => {
+      const h = makeHarness({
+        diagnosis: () => JSON.stringify(withQuestions()),
+        rewrite: () =>
+          JSON.stringify({
+            resume: BASE_RESUME,
+            changes: [{ section: 'highlights', before: '完全不存在的内容', after: 'x', reason: 'r', source: 'original' }]
+          })
+      })
+      const task = h.service.start(h.resumeId)
+      await waitForStatus(h, task.id, (t) => t.status === 'awaiting_answers')
+      h.service.submitAnswers(task.id, { q0: '分布式锁' })
+      const failed = await waitForStatus(h, task.id, (t) => t.status === 'failed')
+      expect(failed.error).toContain('before')
+      // 已存状态保留：诊断仍在（可重试回改写阶段）
+      expect(failed.diagnosis).not.toBeNull()
+    })
+
+    it('改写回复含哨兵冲突（使用了被标记不属实的候选）→ 任务 failed', async () => {
+      const h = makeHarness({
+        diagnosis: (prompt) => {
+          const resume = extractResumeFromPrompt(prompt)
+          const pid = resume?.projects?.[0]?.id ?? 'proj-1'
+          return JSON.stringify({
+            rules: [],
+            projects: [{ projectId: pid, verdict: 'rewrite' }],
+            questions: [{ id: 'q1', projectId: pid, field: '难点', question: '最大的技术难点？', evidence: 'e', candidates: ['分布式锁保证一致性'] }]
+          })
+        },
+        rewrite: (prompt) => {
+          const resume = extractResumeFromPrompt(prompt)
+          const pid = resume?.projects?.[0]?.id ?? 'proj-1'
+          return JSON.stringify({
+            // 原简历原样 + 被拒候选被新增 → 哨兵校验拒绝
+            resume: {
+              ...resume,
+              projects: (resume?.projects ?? []).map((p, i) =>
+                i === 0 ? { ...p, highlights: [...(p.highlights ?? []), '分布式锁保证一致性'] } : p
+              )
+            },
+            changes: [{ projectId: pid, section: 'highlights', before: 'C2C 二手交易', after: 'C2C 二手交易（分布式锁保证一致性）', reason: 'R1', source: 'user-answer' }]
+          })
+        }
+      })
+      const task = h.service.start(h.resumeId)
+      await waitForStatus(h, task.id, (t) => t.status === 'awaiting_answers')
+      h.service.submitAnswers(task.id, { q1: '[不属实]' })
+      const failed = await waitForStatus(h, task.id, (t) => t.status === 'failed')
+      expect(failed.error).toContain('不属实')
+    })
+
+    it('改写成功 → ready_for_review 且 rewrite 持久化（含事实溯源来源）', async () => {
+      const h = makeHarness({
+        diagnosis: (prompt) => {
+          const resume = extractResumeFromPrompt(prompt)
+          const pid = resume?.projects?.[0]?.id ?? 'proj-1'
+          return JSON.stringify({
+            rules: [],
+            projects: [{ projectId: pid, verdict: 'rewrite' }],
+            questions: [{ id: 'q1', projectId: pid, field: '难点', question: '最大的技术难点？', evidence: 'e', candidates: ['高并发难点'] }]
+          })
+        },
+        rewrite: (prompt) => {
+          const resume = extractResumeFromPrompt(prompt)
+          const pid = resume?.projects?.[0]?.id ?? 'proj-1'
+          return JSON.stringify({
+            resume,
+            changes: [{ projectId: pid, section: 'highlights', before: 'C2C 二手交易', after: 'C2C 二手交易（含高并发难点与解决行动）', reason: 'R1', source: 'user-answer' }]
+          })
+        }
+      })
+      const task = h.service.start(h.resumeId)
+      await waitForStatus(h, task.id, (t) => t.status === 'awaiting_answers')
+      h.service.submitAnswers(task.id, { q1: '高并发难点' })
+      const ready = await waitForStatus(h, task.id, (t) => t.status === 'ready_for_review')
+      expect(ready.rewrite).not.toBeNull()
+      expect(ready.rewrite?.changes[0]?.source).toBe('user-answer')
+      expect(ready.noChanges).toBe(false)
+      // 重启后可从 DB 读回 rewrite（中断续接不丢已存结果）
+      const restored = new ContentOptimizeService(h.db, h.resumes, new AgentService(h.provider), {
+        queue: h.queue
+      })
+      expect(restored.get(task.id)?.rewrite).not.toBeNull()
     })
   })
 
