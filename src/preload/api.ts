@@ -84,6 +84,18 @@ export function createRendererApi(bridge: IpcBridge): Omit<RendererApi, 'getPath
       run: (jobId, resumeId, mode) =>
         bridge.invoke(IpcChannel.OptimizeRun, { jobId, resumeId, mode })
     },
+    contentOptimize: {
+      start: (resumeId) => bridge.invoke(IpcChannel.ContentOptimizeStart, { resumeId }),
+      list: () => bridge.invoke(IpcChannel.ContentOptimizeList),
+      get: (taskId) => bridge.invoke(IpcChannel.ContentOptimizeGet, { taskId }),
+      submitAnswers: (taskId, answers) =>
+        bridge.invoke(IpcChannel.ContentOptimizeSubmitAnswers, { taskId, answers }),
+      confirm: (taskId) => bridge.invoke(IpcChannel.ContentOptimizeConfirm, { taskId }),
+      cancel: (taskId) => bridge.invoke(IpcChannel.ContentOptimizeCancel, { taskId }),
+      retry: (taskId) => bridge.invoke(IpcChannel.ContentOptimizeRetry, { taskId }),
+      resume: (taskId) => bridge.invoke(IpcChannel.ContentOptimizeResume, { taskId }),
+      void: (taskId) => bridge.invoke(IpcChannel.ContentOptimizeVoid, { taskId })
+    },
     learn: {
       start: (topicId) => bridge.invoke(IpcChannel.LearnStart, { topicId }),
       send: (sessionId, text) => bridge.invoke(IpcChannel.LearnSend, { sessionId, text })

@@ -59,7 +59,9 @@ const TASK_STRATEGIES: Record<AgentTaskType, TaskStrategy> = {
   // Agent 通道（issue #59）：决策循环单次会话，无工具（只输出动作 JSON，driver 执行）
   agent_channel: { continueRecent: false },
   // 简历导入（#77）：独立无工具内存态会话，只接收文本（不开放文件系统/工具）
-  resume_import: { continueRecent: false }
+  resume_import: { continueRecent: false },
+  // 内容优化（#90）：每轮新建内存态会话，无工具（纯文本诊断/改写），ADR-0002
+  content_optimize: { continueRecent: false }
 }
 
 /** auth.json 里 api_key 凭据的最小形状（与 pi 的 Credential 兼容）。 */

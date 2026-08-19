@@ -13,6 +13,8 @@ import { CrawlAgentChannelImpl } from './services/crawl-agent-channel'
 import { PlaywrightCdpDriver } from './services/crawl-driver'
 import { CrawlPresetService } from './services/crawl-presets'
 import { OptimizeService } from './services/optimize'
+import { ContentOptimizeService } from './services/content-optimize'
+import { createContentOptimizeFakeProvider } from './services/e2e-fake-agent'
 import { migrateLegacyResumes } from './services/resume-migrate'
 import { PhotoStore } from './services/photo-store'
 import { TopicService } from './services/topic'
@@ -87,6 +89,12 @@ function createWindow(): void {
 // userData/DevToolsActivePort），playwright-core connectOverCDP 驱动应用自带 Chromium。
 app.commandLine.appendSwitch('remote-debugging-port', '0')
 
+// E2E 基建（#90/T02）：JOBHUNT_USER_DATA_DIR 覆盖 userData 目录——测试隔离（临时目录），
+// 配合 JOBHUNT_FAKE_AGENT=1 假 agent 开关做真实启动的确定性冒烟。
+if (process.env['JOBHUNT_USER_DATA_DIR'] !== undefined) {
+  app.setPath('userData', process.env['JOBHUNT_USER_DATA_DIR'])
+}
+
 app.whenReady().then(() => {
   // 单文件本地库：userData/jobhunt.db（EF-02；测试注入 :memory: 见 db/database.ts）
   const db = openDatabase(join(app.getPath('userData'), 'jobhunt.db'))
@@ -104,12 +112,17 @@ app.whenReady().then(() => {
   const resumes = new ResumeService(db, resumePhotos)
   // EF-04：AgentService（pi SDK 封装 + fake 可注入）。认证目录为应用自有 userData/pi
   // （auth.json/models.json/sessions），不依赖用户 ~/.pi/agent；teach 技能用仓库内置副本。
+  // #90/T02 E2E 基建：JOBHUNT_FAKE_AGENT=1 时注入脚本化假 agent（内容优化返回空诊断），
+  // 真实启动应用 + 鼠标/键盘驱动可确定性跑通「触发 → 无需修改 → 确认」链路。
+  const fakeAgentEnabled = process.env['JOBHUNT_FAKE_AGENT'] === '1'
   const agent = new AgentService(
-    new PiAgentProvider({
-      dataDir: join(app.getPath('userData'), 'pi'),
-      teachSkillDir: join(app.getAppPath(), 'resources', 'teach'),
-      settings
-    }),
+    fakeAgentEnabled
+      ? createContentOptimizeFakeProvider()
+      : new PiAgentProvider({
+          dataDir: join(app.getPath('userData'), 'pi'),
+          teachSkillDir: join(app.getAppPath(), 'resources', 'teach'),
+          settings
+        }),
     { onEvent: forwardAgentEvent }
   )
   // issue #59：Agent 通道（决策循环 + playwright-core CDP 驱动；登录/异常场景介入）
@@ -166,6 +179,22 @@ app.whenReady().then(() => {
     onProgress: ({ jobId, round, phase }) => pushEvent(IpcEvent.OptimizeProgress, { jobId, round, phase }),
     photos: resumePhotos
   })
+  // #90 业务①（T02）：内容优化异步任务（状态机 + 持久化 + 全局串行 LLM 队列）
+  const contentOptimize = new ContentOptimizeService(db, resumes, agent, {
+    emit: (task) => pushEvent(IpcEvent.ContentOptimizeChanged, { task })
+  })
+
+  // E2E 基建（#90/T02）：JOBHUNT_E2E_SEED=1 且假 agent 模式下预置一份基准简历
+  // （真实启动冒烟用；正常使用路径不受影响）。
+  if (fakeAgentEnabled && process.env['JOBHUNT_E2E_SEED'] === '1' && resumes.list().length === 0) {
+    resumes.create({
+      meta: { title: '基准简历（E2E）' },
+      basics: { name: '张伟', phone: '13800001234', email: 'z@example.com' },
+      education: [{ school: '北京理工大学', degree: '本科', major: '计算机科学与技术' }],
+      skills: [{ category: '工程能力', text: 'Java、Spring Boot 服务端开发' }],
+      projects: [{ name: '二手交易平台', description: 'C2C 二手交易系统', techStack: ['Java', 'Spring Boot'] }]
+    })
+  }
   // F-19（#33）：学习清单服务（jd_analysis → 优先级 1-5 清单 + 人工 CRUD + 三态）
   const topics = new TopicService(db, positions)
   // F-22（#36）：teach 聊天会话（learn 任务 /skill:teach + continueRecent 跨次续接）
@@ -211,7 +240,7 @@ app.whenReady().then(() => {
     }
   })
 
-  registerIpcHandlers({ settings, agent, positions, resumes, resumeImport, crawls, bossLogin, crawlPresets, optimize, topics, learn, interview, asr, csvImport })
+  registerIpcHandlers({ settings, agent, positions, resumes, resumeImport, crawls, bossLogin, crawlPresets, optimize, contentOptimize, topics, learn, interview, asr, csvImport })
   createWindow()
 
   app.on('activate', () => {
