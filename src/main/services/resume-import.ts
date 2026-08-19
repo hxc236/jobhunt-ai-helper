@@ -282,7 +282,10 @@ export class ResumeImportService {
     }
     entry.agentSession = session
     try {
-      const promptText = buildStructurePrompt(localDraft.text)
+      const promptText = buildStructurePrompt(
+        localDraft.text,
+        importTitleFromFileName(localDraft.fileName) || '基准简历'
+      )
       let reply: string
       try {
         reply = await this.promptWithDecision(entry, session, promptText)
@@ -488,27 +491,35 @@ export function missingFieldsOf(resume: Resume): string[] {
  * #77 结构化提示：只接收提取文本；约束只映射/归一原文、禁止补写事实，
  * 姓名/电话/邮箱/学校/日期/数字不得猜测修改；输出须符合简历 Schema。
  */
-export function buildStructurePrompt(text: string): string {
+export function buildStructurePrompt(text: string, title = '基准简历'): string {
+  const encodedTitle = JSON.stringify(title)
   return [
     '[简历导入结构化] 你是简历信息整理助手。不要调用任何工具，不要查找或读取任何文件。',
     '下面是用户简历的提取全文（可能含 OCR 或排版噪声）。请直接输出一份简历 JSON（严格 JSON 对象，不要用 markdown 代码块包裹，不要输出其他内容）。',
     '',
-    '目标 JSON 字段结构（resume.schema.json v2）：',
+    '目标 JSON 必须严格符合当前 resume.schema.json v2；只输出下列字段，不要使用旧版字段：',
     '{',
-    '  "meta": { "title": "基准简历" },',
-    '  "basics": { "name": 必填, "phone": "", "email": "", "gender": "男"|"女", "birthday": "YYYY-MM", "politicalStatus": "中共党员"等, "location": "", "hometown": "", "jobIntention": { "position": "", "city": [""] }, "links": [{"label":"","url":""}] },',
-    '  "education": [ { "school": "", "degree": "", "major": "", "period": "YYYY-MM ~ YYYY-MM" } ] 非空必填,',
-    '  "projects": [ { "name": "", "role": "", "period": "", "description": "" } ],',
-    '  "experience": [ { "title": "", "organization": "", "period": "", "description": "" } ],',
-    '  "honors": [ { "name": "", "year": "" } ],',
-    '  "skills": [ { "category": "工程能力"|"科研能力"|"其他能力", "text": "" } ]',
+    `  "meta": { "title": ${encodedTitle} },`,
+    '  "basics": { "name": 必填, "phone": "", "email": "", "location": "", "birthday": "YYYY-MM", "gender": "男"|"女", "politicalStatus": "", "hometown": "", "jobIntention": { "position": "", "city": [""], "salary": "" }, "links": [{ "label": "", "url": "" }] },',
+    '  "education": [ { "school": "", "degree": "", "major": "", "startDate": "YYYY-MM", "endDate": "YYYY-MM"|null, "gpa": "", "rank": "", "courses": [""] } ],',
+    '  "projects": [ { "name": "", "startDate": "YYYY-MM", "endDate": "YYYY-MM", "description": "", "techStack": [""] } ],',
+    '  "experience": [ { "company": "", "title": "", "startDate": "YYYY-MM", "endDate": "YYYY-MM", "highlights": [""], "techStack": [""] } ],',
+    '  "research": [ { "title": "", "startDate": "YYYY-MM", "endDate": "YYYY-MM", "description": "", "achievement": "" } ],',
+    '  "honors": ["竞赛、奖学金、证书或其他荣誉"],',
+    '  "skills": [ { "category": "工程能力"|"科研能力"|"其他能力", "text": "该类别的一段完整原文" } ],',
+    '  "selfAssessment": ""',
     '}',
     '',
+    '语义归类规则：',
+    '1. 只要原文有的文字都应尽量保留；如果原文没有直接对应的字段，请选择语义最近的 schema 字段归类，不要静默丢弃。',
+    '2. 例如：语言能力、证书等可归入 skills 的「其他能力」；技术栈归入 techStack；项目简介、难点、个人工作量归入 description/highlights；课程、GPA、排名归入 education；个人主页归入 basics.links。',
+    '3. 可以合并断行、去除排版标签、把项目要点组织成段落，但不得改变事实含义。',
+    '',
     '严格遵守：',
-    '1. 只能映射、归一和组织原文证据；禁止补写原文不存在的教育、项目、经历、技能、数字或任何事实，不得润色或虚构。',
+    '1. 只能映射、归一和组织原文证据；禁止补写原文不存在的教育、项目、经历、技能、数字或任何事实。',
     '2. 姓名、电话、邮箱、学校、日期和数字必须与原文一致，不得猜测修改。',
-    '3. 原文无法表示的条目（证书、语言成绩、校园经历等）不要塞进任何字段，忽略即可。',
-    '4. 只要原文有的内容就完整映射；姓名从原文中提取（注意原文姓名字符间可能带空格，如「侯 祥 晨」应输出「侯祥晨」）。',
+    '3. 日期只能从原文提取；原文没有的日期、公司、岗位、成果和数字不要填写。',
+    '4. 姓名从原文中提取，注意字符间可能带空格，如「侯 祥 晨」应输出「侯祥晨」。',
     '',
     '提取全文：',
     text

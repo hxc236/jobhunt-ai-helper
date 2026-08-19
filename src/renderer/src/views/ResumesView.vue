@@ -60,6 +60,8 @@ const importDraft = ref<{
   token: string
   fileName: string
   draft: ResumeDraft
+  /** Agent 最终结构化结果；fallback 时为本地 Resume。 */
+  resume: Resume
   agent: { used: boolean; failedReason?: string }
 } | null>(null)
 /** Agent 未使用原因文案（#77 降级展示）。 */
@@ -88,19 +90,23 @@ const PAGE_RISK_LABEL: Record<string, string> = {
 
 /** 核对面板：某字段的解析值预览（教育/技能为拼接展示）。 */
 function fieldPreview(key: string): string {
-  const f = importDraft.value?.draft.fields
-  if (f === undefined) return ''
+  const resume = importDraft.value?.resume
+  if (resume === undefined) return ''
   switch (key) {
-    case 'name': return f.name ?? ''
-    case 'phone': return f.phone ?? ''
-    case 'email': return f.email ?? ''
-    case 'birthday': return f.birthday ?? ''
-    case 'gender': return f.gender ?? ''
+    case 'name': return resume.basics.name
+    case 'phone': return resume.basics.phone ?? ''
+    case 'email': return resume.basics.email ?? ''
+    case 'birthday': return resume.basics.birthday ?? ''
+    case 'gender': return resume.basics.gender ?? ''
     case 'education':
-      return f.education.map((e) => [e.school, e.degree, e.major].filter((v) => v !== undefined && v !== '').join(' ')).join('；')
-    case 'skills': return f.skills.join('、')
+      return resume.education.map((e) => [e.school, e.degree, e.major].filter((v) => v !== undefined && v !== '').join(' ')).join('；')
+    case 'skills': return (resume.skills ?? []).map((s) => `${s.category}：${s.text}`).join('；')
     default: return ''
   }
+}
+
+function formatResume(resume: Resume): string {
+  return JSON.stringify(resume, null, 2)
 }
 /** 导入进度阶段文案（主进程 phase 码 → 展示）。 */
 const IMPORT_PHASE_LABEL: Record<string, string> = {
@@ -186,7 +192,7 @@ function openImportEditor(
   formDirty = false
   editingId.value = ''
   jsonMode.value = false
-  importDraft.value = draft
+  importDraft.value = { ...draft, resume: mapped }
 }
 
 /** 导入事件订阅（onMounted 注册 / onUnmounted 注销；按 token 过滤）。 */
@@ -514,7 +520,8 @@ watch(
 )
 
 function scheduleAutosave(): void {
-  if (!formDirty || saving.value) return
+  // 导入草稿必须显式点击「确认并创建基准简历」，不能被编辑器自动保存提前入库。
+  if (importDraft.value !== null || !formDirty || saving.value) return
   if (autosaveTimer !== undefined) clearTimeout(autosaveTimer)
   autosaveTimer = setTimeout(() => {
     autosaveTimer = undefined
@@ -575,12 +582,16 @@ async function save(): Promise<boolean> {
   const closed = editingId.value === null // 保存期间用户已返回列表（自动保存竞态）
   try {
     const targetId = editingId.value
+    const importToken = importDraft.value?.token
     const stored =
-      targetId !== null && targetId !== ''
-        ? await window.api.resumes.update(targetId, resume)
-        : await window.api.resumes.create(resume)
+      importToken !== undefined
+        ? await window.api.resumes.importDocx.confirm(importToken, resume)
+        : targetId !== null && targetId !== ''
+          ? await window.api.resumes.update(targetId, resume)
+          : await window.api.resumes.create(resume)
     if (closed) return false // 已关闭：不回填表单、不重新打开编辑器
     successMessage.value = `已保存「${stored.meta.title ?? stored.meta.id}」`
+    if (importToken !== undefined) importDraft.value = null
     loadingForm = true
     // 回填保留空行：自动保存/手动保存不会清掉用户刚添加的空表单（keepEmptyRows）
     Object.assign(form, keepEmptyRows(form, resumeToForm(stored)))
@@ -906,6 +917,8 @@ onMounted(() => {
               <pre class="audit-text">{{ importDraft.draft.text }}</pre>
             </div>
             <div class="audit-col">
+              <h4>Agent 结构化结果</h4>
+              <pre class="audit-json">{{ formatResume(importDraft.resume) }}</pre>
               <h4>字段来源</h4>
               <table class="audit-table">
                 <tr v-for="(status, key) in importDraft.draft.fieldStatus" :key="key">
@@ -1671,6 +1684,21 @@ onMounted(() => {
   line-height: 1.7;
   white-space: pre-wrap;
   word-break: break-all;
+}
+
+.audit-json {
+  max-height: 420px;
+  overflow: auto;
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .audit-table {

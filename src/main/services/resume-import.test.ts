@@ -316,4 +316,14 @@ describe('ResumeService.createImported（#75 溯源）', () => {
     expect(stored.meta.targetJobId).toBeNull()
     expect(stored.meta.importedFrom?.fileName).toBe('a.docx')
   })
+
+  it('导入简历名称冲突时按最小可用序号追加后缀', () => {
+    const resumes = new ResumeService(openDatabase(':memory:'))
+    const provenance = { fileName: 'a.docx', fileType: 'docx' as const, parsePath: 'text' as const, importedAt: '2026-01-01T00:00:00Z' }
+    const input: Resume = { meta: { title: '技术向简历' }, basics: { name: '李四' }, education: [] }
+
+    expect(resumes.createImported(input, provenance).meta.title).toBe('技术向简历')
+    expect(resumes.createImported(input, provenance).meta.title).toBe('技术向简历(1)')
+    expect(resumes.createImported(input, provenance).meta.title).toBe('技术向简历(2)')
+  })
 })

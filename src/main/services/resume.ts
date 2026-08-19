@@ -50,6 +50,17 @@ function parseStored(json: string): StoredResume {
   return JSON.parse(json) as StoredResume
 }
 
+/** 导入简历标题：空标题回退到「姓名-基准简历」，冲突时追加最小可用序号。 */
+function nextImportedTitle(input: Resume, existing: StoredResume[]): string {
+  const name = input.basics?.name?.trim() ?? ''
+  const base = input.meta.title?.trim() || (name === '' ? '基准简历' : `${name}-基准简历`)
+  const titles = new Set(existing.map((resume) => resume.meta.title?.trim()).filter((title): title is string => title !== undefined && title !== ''))
+  if (!titles.has(base)) return base
+  let index = 1
+  while (titles.has(`${base}(${index})`)) index++
+  return `${base}(${index})`
+}
+
 /**
  * resumes 表访问层（F-12 / issue #19）。
  * - 入库前强制 resume.schema.json 校验（拒绝非法 JSON，防幻觉字段入库）；
@@ -99,6 +110,7 @@ export class ResumeService {
       ...input,
       meta: {
         ...input.meta,
+        title: nextImportedTitle(input, this.list()),
         id: `res-${randomUUID()}`,
         updatedAt: new Date().toISOString(),
         baseResumeId: null,

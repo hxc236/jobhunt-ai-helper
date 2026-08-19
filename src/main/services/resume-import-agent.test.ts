@@ -53,6 +53,29 @@ const AGENT_RESUME: Resume = {
   skills: [{ category: '工程能力', text: '熟悉 Java、Spring Boot、TypeScript 开发。' }]
 }
 
+const FULL_V2_AGENT_RESUME: Resume = {
+  meta: { title: '技术向简历' },
+  basics: {
+    name: '张伟',
+    phone: '13800001234',
+    email: 'zhangwei@example.com',
+    birthday: '2002-03',
+    politicalStatus: '中共党员',
+    jobIntention: { position: '全栈工程师', city: ['北京'] },
+    links: [{ label: 'Github', url: 'https://github.com/example' }]
+  },
+  education: [{ school: '北京理工大学', degree: '本科', major: '计算机科学与技术', startDate: '2022-09', endDate: '2026-06', rank: '前10%', courses: ['数据结构'] }],
+  projects: [{ name: '求职助手', startDate: '2025-01', endDate: '2025-06', description: '开发本地桌面求职助手。', techStack: ['Electron', 'TypeScript'] }],
+  experience: [{ company: '示例公司', title: '开发实习生', startDate: '2025-06', endDate: '2025-08', highlights: ['完成系统开发'], techStack: ['Vue'] }],
+  research: [{ title: '图像生成研究', startDate: '2024-09', endDate: '2026-04', description: '研究多模态图像生成。', achievement: '论文在投' }],
+  honors: ['一等奖学金'],
+  skills: [
+    { category: '工程能力', text: '熟悉 TypeScript。' },
+    { category: '科研能力', text: '熟悉深度学习。' },
+    { category: '其他能力', text: '英语 CET-6。' }
+  ]
+}
+
 interface Harness {
   svc: ResumeImportService
   fake: FakeAgentProvider
@@ -184,7 +207,7 @@ describe('ResumeImportService Agent 结构化（#77）', () => {
     expect(done2?.agent?.failedReason).toBe('agent-disabled')
   })
 
-  it('提示约束 Agent 只映射原文、禁止补写事实（prompt 含约束关键词）', async () => {
+  it('提示词使用当前 v2 schema，并允许 Agent 按语义归类原文内容', async () => {
     const h = makeHarness()
     h.settings.set(AGENT_IMPORT_CONSENT, new Date().toISOString())
     const prompts: string[] = []
@@ -199,10 +222,33 @@ describe('ResumeImportService Agent 结构化（#77）', () => {
     expect(prompt).toContain('禁止补写')
     expect(prompt).toContain('原文')
     expect(prompt).toContain('不得猜测修改')
+    expect(prompt).toContain('"company"')
+    expect(prompt).toContain('"techStack"')
+    expect(prompt).toContain('"research"')
+    expect(prompt).toContain('"honors": ["')
+    expect(prompt).toContain('语义最近')
+    expect(prompt).not.toContain('"role"')
+    expect(prompt).not.toContain('"organization"')
     // 只接收文本：提示中含提取全文的关键内容（无图片/页面信息）
     expect(prompt).toContain('张伟')
     expect(prompt).toContain('138-0000-1234')
     expect(prompt).toContain('北京理工大学')
+  })
+
+  it('Agent 按当前 v2 schema 输出完整内容时，项目/经历/科研/荣誉/技能均保留', async () => {
+    const h = makeHarness()
+    h.settings.set(AGENT_IMPORT_CONSENT, new Date().toISOString())
+    h.fake.onPrompt = () => JSON.stringify(FULL_V2_AGENT_RESUME)
+    const token = h.svc.start(writeFixture(h.dir, 'full.docx', await makeDocx(SAMPLE_TEXT)))
+    await settle(h.svc, token)
+
+    const done = doneEvent(h, token)
+    expect(done?.agent?.used).toBe(true)
+    expect(done?.resume.projects?.[0]?.name).toBe('求职助手')
+    expect(done?.resume.experience?.[0]?.company).toBe('示例公司')
+    expect(done?.resume.research?.[0]?.title).toBe('图像生成研究')
+    expect(done?.resume.honors).toEqual(['一等奖学金'])
+    expect(done?.resume.skills).toHaveLength(3)
   })
 
   it('Agent 输出非法 → 带校验问题修正一轮后成功（修正 prompt 含定位）', async () => {
