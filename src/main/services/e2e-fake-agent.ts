@@ -13,16 +13,24 @@ import type { Resume } from '../../shared/types/resume'
  *     questions 带稳定 id）→ awaiting_answers → 追问表单 → 提交回答 → 改写轮；
  *   - `promotion`（JOBHUNT_E2E_SCENARIO=promotion）：honors 含大赛（种子简历带荣誉）→
  *     输出大赛提升建议 → 追问表单确认提升 → 重新诊断（提升后 honors 已无大赛 → 全部保持）；
- * - 内容优化改写轮（提示词含 `[内容优化 2/2`）：questions 场景返回合法最小 ContentRewrite
- *   （原简历原样 + 一条 change），empty 场景不会触发；
+ *   - `full`（JOBHUNT_E2E_SCENARIO=full）：全流程冒烟（T09）——追问流程 + 改写轮产出
+ *     含 source=inferred 的改动（新增无来源事实 → 「推断-待确认」勾选门禁），
+ *     走通 触发 → 诊断进度 → 追问作答 → 逐项确认（接受改写 + inferred 勾选）→ 入库新基准；
+ * - 内容优化改写轮（提示词含 `[内容优化 2/2`）：questions/full 场景返回合法最小 ContentRewrite
+ *   （原简历原样 + 一条 change；full 另含一条 inferred 改动），empty 场景不会触发；
  * - 其他任务类型回显（不会在 E2E 中触发真实模型）。
  */
 
-/** E2E 假 agent 场景：empty=空诊断（T02 垂直切片）；questions=追问流程（T04）；promotion=大赛提升（T08）。 */
-export type E2eContentScenario = 'empty' | 'questions' | 'promotion'
+/** E2E 假 agent 场景：empty=空诊断（T02）；questions=追问（T04）；promotion=大赛提升（T08）；full=全流程（T09）。 */
+export type E2eContentScenario = 'empty' | 'questions' | 'promotion' | 'full'
 
 /** 大赛/竞赛特征词（种子简历 honors 判定；真实场景由 LLM 判定）。 */
 const COMPETITION_PATTERN = /大赛|竞赛|挑战赛|比赛|杯赛|杯/
+
+/** 延时（T09 full 场景诊断轮留出「诊断中…」进度可见窗口用）。 */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
 
 /** 从 honors 中找第一个大赛条目下标（无则 -1）。 */
 export function findCompetitionHonorIndex(honors: string[] | undefined): number {
@@ -69,9 +77,12 @@ export function createContentOptimizeFakeProvider(
 ): FakeAgentProvider {
   const envScenario = process.env['JOBHUNT_E2E_SCENARIO']
   const scenario: E2eContentScenario =
-    options.scenario ?? (envScenario === 'questions' || envScenario === 'promotion' ? envScenario : 'empty')
+    options.scenario ??
+    (envScenario === 'questions' || envScenario === 'promotion' || envScenario === 'full'
+      ? envScenario
+      : 'empty')
   return new FakeAgentProvider({
-    onPrompt: (prompt, session) => {
+    onPrompt: async (prompt, session) => {
       if (session.task !== 'content_optimize') return `echo: ${prompt}`
       if (prompt.includes('[内容优化 1/2')) {
         const resume = extractResumeFromPrompt(prompt)
@@ -101,9 +112,14 @@ export function createContentOptimizeFakeProvider(
           }
           return JSON.stringify({ rules: [], projects, questions: [], promotions: [] })
         }
-        if (scenario === 'questions' && projects.length > 0) {
-          // T04 追问场景：首个项目需补充信息（难点/结果），带稳定 id 的追问
+        if ((scenario === 'questions' || scenario === 'full') && projects.length > 0) {
+          // T04/T09 追问场景：首个项目需补充信息（难点/结果），带稳定 id 的追问
           const pid = projects[0]!.projectId
+          if (scenario === 'full') {
+            // T09 全流程：诊断轮留出可见窗口（任务卡片「诊断中…」进度可断言），
+            // 走通 触发 → 进度 → 追问作答 → 逐项确认 → 入库。
+            await sleep(1500)
+          }
           return JSON.stringify({
             rules: [
               { ruleId: 'R1', target: `project:${pid}`, status: 'improve', evidence: '原文：C2C 二手交易系统', issue: '缺难点与解决行动', suggestion: '补充技术难点与解决行动', factSource: 'original' },
@@ -141,6 +157,46 @@ export function createContentOptimizeFakeProvider(
                 after: 'C2C 二手交易系统（含高并发难点与可量化结果）',
                 reason: '融合用户回答补充难点与可量化结果',
                 source: 'user-answer'
+              }
+            ]
+          })
+        }
+        if (scenario === 'full') {
+          // T09 全流程：改写稿对项目做真实改动（description 融合回答 + 新增 inferred 要点），
+          // changes 含 1 条 user-answer（融合回答）+ 1 条 inferred（新增无来源事实，US16/US17）——
+          // 驱动 T06 逐项确认：接受改写 + 推断-待确认勾选门禁。
+          const resume = extractResumeFromPrompt(prompt)
+          const pid = resume?.projects?.[0]?.id ?? ''
+          const rewritten = {
+            ...resume,
+            projects: (resume?.projects ?? []).map((p, i) =>
+              i === 0
+                ? {
+                    ...p,
+                    description: 'C2C 二手交易系统（技术难点：高并发秒杀压测优化；可量化结果：接口 P95 180ms）',
+                    highlights: ['压测 QPS 从 800 提升至 3200']
+                  }
+                : p
+            )
+          }
+          return JSON.stringify({
+            resume: rewritten,
+            changes: [
+              {
+                projectId: pid,
+                section: 'projects',
+                before: 'C2C 二手交易系统',
+                after: 'C2C 二手交易系统（技术难点：高并发秒杀压测优化；可量化结果：接口 P95 180ms）',
+                reason: '融合用户回答补充难点与可量化结果',
+                source: 'user-answer'
+              },
+              {
+                projectId: pid,
+                section: 'highlights',
+                before: '',
+                after: '压测 QPS 从 800 提升至 3200',
+                reason: '推断的量化结果',
+                source: 'inferred'
               }
             ]
           })
