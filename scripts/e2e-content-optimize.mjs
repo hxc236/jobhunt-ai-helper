@@ -62,7 +62,9 @@ async function readDevToolsPort(userDataDir) {
 function readTaskRow(userDataDir) {
   const db = new Database(join(userDataDir, 'jobhunt.db'), { readonly: true })
   try {
-    return db.prepare('SELECT * FROM content_optimize_tasks LIMIT 1').get()
+    return db
+      .prepare('SELECT * FROM content_optimize_tasks ORDER BY created_at DESC, id DESC LIMIT 1')
+      .get()
   } finally {
     db.close()
   }
@@ -75,7 +77,9 @@ async function waitForInferredPersisted(userDataDir, changeId) {
       const db = new Database(join(userDataDir, 'jobhunt.db'), { readonly: true })
       try {
         const row = db
-          .prepare('SELECT inferred_confirmed_json FROM content_optimize_tasks LIMIT 1')
+          .prepare(
+            'SELECT inferred_confirmed_json FROM content_optimize_tasks ORDER BY created_at DESC, id DESC LIMIT 1'
+          )
           .get()
         if (row !== undefined) {
           const confirmed = JSON.parse(row.inferred_confirmed_json ?? 'null')
@@ -639,11 +643,17 @@ async function main() {
     if (build.status !== 0) process.exit(build.status ?? 1)
   }
 
-  // 真实 agent 冒烟（T09/AC4）：JOBHUNT_E2E_USER_DATA 指定持久 userData（预先配置过 agent）；
+  // 真实 agent 冒烟（T09/AC4）：JOBHUNT_E2E_USER_DATA 必须指定持久 userData（预先配置过 agent）；
   // 假 agent 场景一律使用临时目录（隔离）。
-  const userDataDir =
-    process.env['JOBHUNT_E2E_USER_DATA'] ?? mkdtempSync(join(tmpdir(), 'jh-e2e-content-optimize-'))
-  console.log(`临时 userData：${userDataDir}（场景：${scenario}${realAgent ? '，真实 agent 冒烟' : ''}）`)
+  const configuredUserData = process.env['JOBHUNT_E2E_USER_DATA']
+  if (realAgent && configuredUserData === undefined) {
+    throw new Error(
+      '真实 agent 冒烟需要 JOBHUNT_E2E_USER_DATA 指向已配置 agent 的持久 userData 目录（见 scripts/e2e-content-optimize-real.md）'
+    )
+  }
+  const userDataDir = configuredUserData ?? mkdtempSync(join(tmpdir(), 'jh-e2e-content-optimize-'))
+  const cleanupUserData = configuredUserData === undefined
+  console.log(`userData：${userDataDir}（场景：${scenario}${realAgent ? '，真实 agent 冒烟' : ''}）`)
 
   // 真实启动应用（假 agent + E2E 种子）——子进程必须是真应用，不能继承 ELECTRON_RUN_AS_NODE
   // T09/AC4：JOBHUNT_E2E_REAL=1 时不注入假 agent（真实 agent 冒烟入口，手动运行）
@@ -703,11 +713,14 @@ async function main() {
       console.log('--- 结束 ---')
     }
     await sleep(500)
-    // 等待退出后清理（DB 文件可能仍被占用）
-    try {
-      rmSync(userDataDir, { recursive: true, force: true })
-    } catch {
-      // 清理失败不阻塞（Windows 句柄释放延迟）
+    // 等待退出后清理（DB 文件可能仍被占用）——仅清理本脚本创建的临时目录；
+    // JOBHUNT_E2E_USER_DATA 指定的持久目录（真实 agent 冒烟，含已配置的 agent 凭据）绝不删除。
+    if (cleanupUserData) {
+      try {
+        rmSync(userDataDir, { recursive: true, force: true })
+      } catch {
+        // 清理失败不阻塞（Windows 句柄释放延迟）
+      }
     }
   }
 }
