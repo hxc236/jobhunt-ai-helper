@@ -664,7 +664,7 @@ export class ContentOptimizeService {
     buildPrompt: (task: ContentOptimizeTask) => string,
     parse: (reply: string) => T
   ): Promise<T> {
-    const session = await this.agent.createSession('content_optimize')
+    let session = await this.agent.createSession('content_optimize')
     try {
       const prompt = buildPrompt(task)
       let lastError: unknown = null
@@ -674,6 +674,20 @@ export class ContentOptimizeService {
           return parse(reply)
         } catch (err) {
           lastError = err
+          // #100：超时/失败后不得在同一个 session 上重试。
+          // withTimeout 只是 Promise.race 超时，底层 prompt 可能仍在处理（pi SDK
+          // isStreaming=true），复用同一 session 会抛
+          // 「Agent is already processing. Specify streamingBehavior ...」。
+          // 重试前先 abort 并丢弃旧会话，改用全新会话（每轮幂等，重跑无害）。
+          if (attempt < this.roundRetries) {
+            try {
+              await session.abort()
+            } catch {
+              // abort 失败不阻塞重试（旧会话随后 dispose）
+            }
+            session.dispose()
+            session = await this.agent.createSession('content_optimize')
+          }
         }
       }
       throw lastError ?? new Error('LLM 轮次失败')

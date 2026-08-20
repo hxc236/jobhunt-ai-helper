@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { openDatabase } from '../db/database'
-import { FakeAgentProvider } from './fake-agent-provider'
+import { FakeAgentProvider, FakeAgentSession } from './fake-agent-provider'
 import { extractResumeFromPrompt } from './e2e-fake-agent'
 import { AgentService } from './agent'
 import { ResumeService } from './resume'
@@ -1017,6 +1017,81 @@ describe('确认入库与血缘（T07/#97）', () => {
   })
 })
 
+describe('LLM 轮次超时重试（#100 bug 回归）', () => {
+  /**
+   * #100：超时后不得在同一个 session 上重试。
+   * 复现用户症状：真实 pi SDK 中 `session.prompt()` 未结束时 isStreaming=true，
+   * 再次调用同一 session 的 prompt 抛
+   * 「Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message.」
+   * 这里用挂起的首次调用 + 同 session 第二次调用抛 SDK 错误来模拟。
+   */
+  it('超时重试切换到新 session，不再触发 SDK already-processing（修复前 failed，修复后正常完成）', async () => {
+    const h = makeHarness({ roundTimeoutMs: 80, roundRetries: 1 })
+
+    // 包装 createSession：捕获所有会话引用（dispose 会把自己从 provider.sessions
+    // 移除，不能依赖该数组），并同步注入故障——第一个会话的 prompt 模拟 pi SDK 语义：
+    // 第一次调用挂起（长思考，永不 resolve → withTimeout 超时）；
+    // 同 session 第二次调用抛 SDK「Agent is already processing」。
+    // （注：必须在 createSession 内注入，避免与轮次执行的竞态——fake 无延迟时
+    //   诊断轮可能在等待循环的第一次 await 前就跑完。）
+    const origCreate = h.provider.createSession.bind(h.provider)
+    const created: FakeAgentSession[] = []
+    let faultInjected = false
+    h.provider.createSession = async (task, options) => {
+      const s = (await origCreate(task, options)) as FakeAgentSession
+      created.push(s)
+      if (!faultInjected) {
+        faultInjected = true
+        let firstCall = true
+        ;(s as unknown as { prompt: (text: string) => Promise<string> }).prompt = async () => {
+          if (firstCall) {
+            firstCall = false
+            // 永不 resolve：模拟单轮 LLM 处理超过超时阈值的场景
+            return new Promise<string>(() => {})
+          }
+          throw new Error(
+            "Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message."
+          )
+        }
+      }
+      return s
+    }
+
+    const task = h.service.start(h.resumeId)
+    const done = await waitForStatus(
+      h,
+      task.id,
+      (t) => t.status === 'ready_for_review' || t.status === 'failed',
+      3000
+    )
+    // 修复后：重试在新建 session 上执行 → 空诊断 → ready_for_review（无需修改）
+    expect(done.status).toBe('ready_for_review')
+    expect(done.error).toBeNull()
+    // 重试确实新建了 session（不复用同一 session）
+    expect(created.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('超时重试仍遵守语义：重试也用尽后任务 failed 且保留错误（非 SDK already-processing 竞态）', async () => {
+    // 所有 session 都挂起（永不 resolve）→ 超时重试 1 次后仍失败 → failed
+    const h = makeHarness({ roundTimeoutMs: 60, roundRetries: 1 })
+    const provider = h.provider
+    const origCreate = provider.createSession.bind(provider)
+    const created: FakeAgentSession[] = []
+    provider.createSession = async (task, options) => {
+      const s = (await origCreate(task, options)) as FakeAgentSession
+      created.push(s)
+      ;(s as unknown as { prompt: (text: string) => Promise<string> }).prompt = () =>
+        new Promise<string>(() => {})
+      return s
+    }
+    const task = h.service.start(h.resumeId)
+    const done = await waitForStatus(h, task.id, (t) => t.status === 'failed', 3000)
+    expect(done.status).toBe('failed')
+    expect(done.error).toMatch(/超时/) // 超时语义保持（60s/1 重试）
+    expect(done.error).not.toMatch(/already processing/)
+    expect(created.length).toBeGreaterThanOrEqual(2) // 重试确实换了 session
+  })
+})
 describe('ContentQuestion 类型约束', () => {
   it('question 结构：projectId/field/question/evidence/candidates', () => {
     const q: ContentQuestion = {
