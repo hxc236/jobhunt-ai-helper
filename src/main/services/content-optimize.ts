@@ -69,7 +69,9 @@ import {
 export const CONTENT_PHASE_LABELS = CONTENT_STATUS_LABELS
 
 /** 单轮 LLM 超时（毫秒）。 */
-export const LLM_ROUND_TIMEOUT_MS = 60_000
+// 真实模型实测（#101）：deepseek 改写轮（提示词含诊断+回答+整份简历，长思考）常超 60s。
+// 60s 对诊断轮够用、对改写轮不足——统一提高至 180s；重试 1 次语义不变。
+export const LLM_ROUND_TIMEOUT_MS = 180_000
 /** 单轮失败后的重试次数（仍失败 → failed）。 */
 export const LLM_ROUND_RETRIES = 1
 
